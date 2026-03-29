@@ -5,5 +5,5 @@ package network
 import "log/slog"
 
 func newLinuxProvider(logger *slog.Logger) Provider {
-	return NewRoutingProvider(logger)
+	return NewContainerProxyProvider(logger)
 }
