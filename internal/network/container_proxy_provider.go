@@ -110,6 +110,13 @@ func (p *ContainerProxyProvider) PrepareHost(ctx context.Context, spec HostNetwo
 		return fmt.Errorf("gateway: configure worker routes/DNS: %w", err)
 	}
 
+	if cpID, _ := os.Hostname(); cpID != "" {
+		if err := dockerNetworkConnect(ctx, netName, cpID, ""); err != nil {
+			p.logger.Warn("container-proxy: connect control-plane to isolated network failed (VNC may not work)",
+				"host_id", hostID, "error", err)
+		}
+	}
+
 	p.logger.Info("container-proxy: sidecar gateway ready",
 		"host_id", hostID,
 		"network", netName,
@@ -132,6 +139,9 @@ func (p *ContainerProxyProvider) teardownGateway(ctx context.Context, hostID str
 	gwName := gatewayContainerName(hostID)
 	workerName := workerContainerName(hostID)
 
+	if cpID, _ := os.Hostname(); cpID != "" {
+		_ = exec.CommandContext(ctx, "docker", "network", "disconnect", "-f", netName, cpID).Run()
+	}
 	_ = exec.CommandContext(ctx, "docker", "network", "disconnect", "-f", netName, workerName).Run()
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", gwName).Run()
 	_ = exec.CommandContext(ctx, "docker", "network", "rm", netName).Run()
