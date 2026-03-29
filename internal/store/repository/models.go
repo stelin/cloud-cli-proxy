@@ -179,6 +179,13 @@ type UserHostDetail struct {
 	CreatedAt      time.Time           `json:"created_at"`
 	UpdatedAt      time.Time           `json:"updated_at"`
 	EgressBindings []UserEgressBinding `json:"egress_bindings"`
+	ConnectionInfo *ConnectionInfo     `json:"connection_info,omitempty"`
+}
+
+type ConnectionInfo struct {
+	CurlCommand string `json:"curl_command"`
+	SSHCommand  string `json:"ssh_command"`
+	SSHPort     int    `json:"ssh_port"`
 }
 
 type UserEgressBinding struct {

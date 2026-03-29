@@ -14,6 +14,12 @@ export interface PortalEgressBinding {
   tunnel_type: string;
 }
 
+export interface ConnectionInfo {
+  curl_command: string;
+  ssh_command: string;
+  ssh_port: number;
+}
+
 export interface PortalHostDetail {
   id: string;
   hostname: string;
@@ -22,6 +28,7 @@ export interface PortalHostDetail {
   created_at: string;
   updated_at: string;
   egress_bindings: PortalEgressBinding[];
+  connection_info?: ConnectionInfo;
 }
 
 export function useMyHosts() {

@@ -32,6 +32,8 @@ services:
       ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:?Set ADMIN_JWT_SECRET in .env}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${SSH_PROXY_PORT:-2222}:2222"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/cloud-cli-proxy:/var/lib/cloud-cli-proxy

@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, Globe, Shield } from "lucide-react";
+import { ArrowLeft, Globe, Shield, Monitor, Terminal, Copy, Check } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import {
   useMyHostDetail,
@@ -180,6 +181,60 @@ function PortalHostDetail() {
         </CardContent>
       </Card>
 
+      {/* Quick Access */}
+      {host.status === "running" && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">快速访问</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Button
+              onClick={() => {
+                const token = localStorage.getItem("admin_token") || "";
+                const wsPath = encodeURIComponent(
+                  `v1/user/hosts/${host.id}/vnc/`
+                );
+                window.open(
+                  `/v1/user/hosts/${host.id}/vnc/vnc.html?autoconnect=true&resize=remote&path=${wsPath}&token=${token}`,
+                  "_blank"
+                );
+              }}
+              className="w-full justify-start gap-2"
+              variant="outline"
+            >
+              <Monitor className="h-4 w-4" />
+              打开桌面（VNC）
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Connection Info */}
+      {host.connection_info && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Terminal className="h-5 w-5" />
+              SSH 连接
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">
+                在终端中运行以下命令，一键连接到你的云主机：
+              </p>
+              <CopyableCommand command={host.connection_info.curl_command} />
+            </div>
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">
+                或者使用 SSH 直连（需要用入口密码）：
+              </p>
+              <CopyableCommand command={host.connection_info.ssh_command} />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Actions */}
       <Card>
         <CardHeader>
@@ -215,6 +270,38 @@ function PortalHostDetail() {
           </AlertDialog>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function CopyableCommand({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(command).then(() => {
+      setCopied(true);
+      toast.success("已复制到剪贴板");
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  return (
+    <div className="flex items-center gap-2 rounded-lg border bg-muted/50 p-3">
+      <code className="flex-1 overflow-x-auto text-sm font-mono">
+        {command}
+      </code>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8 shrink-0"
+        onClick={handleCopy}
+      >
+        {copied ? (
+          <Check className="h-4 w-4 text-green-600" />
+        ) : (
+          <Copy className="h-4 w-4" />
+        )}
+      </Button>
     </div>
   );
 }

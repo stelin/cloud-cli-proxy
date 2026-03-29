@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	nethttp "net/http"
 
@@ -17,6 +18,7 @@ type UserHostStore interface {
 	ListHostsWithEgressByUserID(context.Context, string) ([]repository.UserHostSummary, error)
 	GetHost(context.Context, string) (repository.Host, error)
 	GetHostDetail(context.Context, string) (repository.HostDetail, error)
+	GetUser(context.Context, string) (repository.User, error)
 }
 
 // UserHostsHandler handles user self-service host endpoints.
@@ -107,6 +109,19 @@ func (h *UserHostsHandler) Get() nethttp.Handler {
 			CreatedAt:      detail.Host.CreatedAt,
 			UpdatedAt:      detail.Host.UpdatedAt,
 			EgressBindings: bindings,
+		}
+
+		if user, err := h.store.GetUser(r.Context(), userID); err == nil && user.ShortID != "" {
+			scheme := "https"
+			if r.TLS == nil {
+				scheme = "http"
+			}
+			baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
+			resp.ConnectionInfo = &repository.ConnectionInfo{
+				CurlCommand: fmt.Sprintf("curl -sSL %s/entry/%s | bash", baseURL, user.ShortID),
+				SSHCommand:  fmt.Sprintf("ssh %s@%s -p 2222", user.ShortID, r.Host),
+				SSHPort:     2222,
+			}
 		}
 
 		writeJSON(w, nethttp.StatusOK, resp)
