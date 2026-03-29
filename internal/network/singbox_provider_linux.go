@@ -123,13 +123,14 @@ func (sp *SingBoxProvider) PrepareHost(ctx context.Context, spec HostNetworkSpec
 		}
 	}
 
-	// Step 9: write config into container filesystem
-	if err := writeSingBoxConfig(spec.ContainerPID, configJSON); err != nil {
+	// Step 9: write config to host-local path
+	configPath, err := writeSingBoxConfig(spec.HostID, configJSON)
+	if err != nil {
 		return err
 	}
 
-	// Step 10: start sing-box inside container netns
-	if err := startSingBox(ctx, spec.ContainerPID); err != nil {
+	// Step 10: start sing-box in container's network namespace only
+	if err := startSingBox(ctx, spec.ContainerPID, configPath); err != nil {
 		return &NetworkError{
 			Type:    ErrTunnelSetupFailed,
 			Message: fmt.Sprintf("start sing-box: %v", err),
@@ -207,16 +208,14 @@ func (sp *SingBoxProvider) CleanupHost(_ context.Context, spec HostNetworkSpec) 
 		}
 	}
 
-	containerName := fmt.Sprintf("cloudproxy-%s", spec.HostID)
-	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Pid}}", containerName).Output()
-	if err == nil {
-		pidStr := strconv.FormatUint(mustParseUint(out), 10)
-		if pidStr != "0" {
-			killCmd := exec.Command("nsenter", "-t", pidStr, "-n", "-p", "--", "pkill", "-f", "sing-box")
-			if err := killCmd.Run(); err != nil {
-				sp.logger.Warn("failed to kill sing-box process", "host_id", spec.HostID, "error", err)
-			}
-		}
+	killCmd := exec.Command("pkill", "-f", fmt.Sprintf("sing-box.*%s", spec.HostID))
+	if err := killCmd.Run(); err != nil {
+		sp.logger.Warn("failed to kill sing-box process", "host_id", spec.HostID, "error", err)
+	}
+
+	configDir := singBoxConfigDir(spec.HostID)
+	if err := os.RemoveAll(configDir); err != nil {
+		sp.logger.Warn("failed to remove sing-box config", "host_id", spec.HostID, "error", err)
 	}
 
 	return nil
@@ -263,35 +262,40 @@ func addProxyServerRoute(containerNS, hostNS netns.NsHandle, proxyServerIP strin
 	return nil
 }
 
-// writeSingBoxConfig writes the sing-box JSON configuration into the container
-// filesystem via /proc/<pid>/root.
-func writeSingBoxConfig(containerPID uint32, config []byte) error {
-	dir := filepath.Join("/proc", fmt.Sprintf("%d", containerPID), "root", "etc", "sing-box")
+// singBoxConfigDir returns the host-local directory for a container's sing-box config.
+func singBoxConfigDir(hostID string) string {
+	return filepath.Join("/var/lib/cloud-cli-proxy/sing-box", hostID)
+}
+
+// writeSingBoxConfig writes the sing-box JSON configuration to a host-local
+// directory, keeping it out of the user container's filesystem.
+func writeSingBoxConfig(hostID string, config []byte) (string, error) {
+	dir := singBoxConfigDir(hostID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return &NetworkError{
+		return "", &NetworkError{
 			Type:    ErrTunnelSetupFailed,
 			Message: fmt.Sprintf("create sing-box config dir: %v", err),
 		}
 	}
 
-	path := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(path, config, 0o644); err != nil {
-		return &NetworkError{
+	configPath := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(configPath, config, 0o644); err != nil {
+		return "", &NetworkError{
 			Type:    ErrTunnelSetupFailed,
 			Message: fmt.Sprintf("write sing-box config: %v", err),
 		}
 	}
 
-	return nil
+	return configPath, nil
 }
 
-// startSingBox launches the sing-box process inside the container's network,
-// mount, and PID namespaces via nsenter.
-func startSingBox(ctx context.Context, containerPID uint32) error {
+// startSingBox launches the sing-box process in the container's network
+// namespace only (-n). The binary and config stay on the host side.
+func startSingBox(ctx context.Context, containerPID uint32, configPath string) error {
 	pidStr := strconv.FormatUint(uint64(containerPID), 10)
 	cmd := exec.CommandContext(ctx,
-		"nsenter", "-t", pidStr, "-n", "-m", "-p", "--",
-		"/usr/local/bin/sing-box", "run", "-c", "/etc/sing-box/config.json",
+		"nsenter", "-t", pidStr, "-n", "--",
+		"/usr/local/bin/sing-box", "run", "-c", configPath,
 	)
 
 	if err := cmd.Start(); err != nil {
