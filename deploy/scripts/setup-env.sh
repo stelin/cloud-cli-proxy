@@ -101,10 +101,6 @@ fi
 # ── 控制面和管理员 ──────────────────────────────────────────
 
 echo ""
-printf "控制面端口 [8080]: "
-read -r CP_PORT
-CP_PORT="${CP_PORT:-8080}"
-
 printf "管理后台端口 [3000]: "
 read -r ADMIN_PORT
 ADMIN_PORT="${ADMIN_PORT:-3000}"
@@ -147,7 +143,6 @@ EOF
 DATABASE_URL=${DATABASE_URL}
 
 # Control Plane
-CONTROL_PLANE_PORT=${CP_PORT}
 ADMIN_PORT=${ADMIN_PORT}
 ADMIN_USERNAME=${ADMIN_USER}
 ADMIN_PASSWORD=${ADMIN_PASSWORD}
