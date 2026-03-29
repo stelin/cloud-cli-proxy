@@ -1,0 +1,14 @@
+Port 22
+Protocol 2
+AddressFamily any
+ListenAddress 0.0.0.0
+PermitRootLogin no
+PasswordAuthentication no
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+UsePAM no
+X11Forwarding no
+PrintMotd no
+AuthorizedKeysFile .ssh/authorized_keys
+PidFile /var/run/sshd.pid
+Subsystem sftp /usr/lib/openssh/sftp-server

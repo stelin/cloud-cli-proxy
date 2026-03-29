@@ -1,0 +1,290 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/crypto/bcrypt"
+
+	"github.com/zanel1u/cloud-cli-proxy/internal/agentapi"
+	cphttp "github.com/zanel1u/cloud-cli-proxy/internal/controlplane/http"
+	"github.com/zanel1u/cloud-cli-proxy/internal/controlplane/scheduler"
+	"github.com/zanel1u/cloud-cli-proxy/internal/network"
+	"github.com/zanel1u/cloud-cli-proxy/internal/runtime"
+	runtimetasks "github.com/zanel1u/cloud-cli-proxy/internal/runtime/tasks"
+	"github.com/zanel1u/cloud-cli-proxy/internal/sshproxy"
+	"github.com/zanel1u/cloud-cli-proxy/internal/store/migrator"
+	"github.com/zanel1u/cloud-cli-proxy/internal/store/repository"
+)
+
+type Config struct {
+	Addr               string
+	DatabaseURL        string
+	MigrationDir       string
+	AdminUsername       string
+	AdminPassword      string
+	AdminJWTSecret     string
+	ExpiryScanInterval time.Duration
+	ReconcileInterval  time.Duration
+
+	SSHProxyAddr              string
+	SSHProxyContainerUser     string
+	SSHProxyContainerPassword string
+}
+
+type App struct {
+	cfg            Config
+	logger         *slog.Logger
+	db             *pgxpool.Pool
+	repo           *repository.Repository
+	migrator       func(context.Context, *pgxpool.Pool, string) error
+	handler        http.Handler
+	expiryScanner  *scheduler.ExpiryScanner
+	reconciler     *scheduler.Reconciler
+	sshProxy       *sshproxy.Server
+}
+
+func newLogger() *slog.Logger {
+	level := slog.LevelInfo
+	if lvl := os.Getenv("LOG_LEVEL"); lvl != "" {
+		var l slog.Level
+		if err := l.UnmarshalText([]byte(lvl)); err == nil {
+			level = l
+		}
+	}
+	opts := &slog.HandlerOptions{Level: level}
+	if os.Getenv("LOG_FORMAT") == "json" {
+		return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+	}
+	return slog.New(slog.NewTextHandler(os.Stdout, opts))
+}
+
+func New(ctx context.Context, cfg Config) (*App, error) {
+	logger := newLogger()
+
+	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse database url: %w", err)
+	}
+	poolCfg.MaxConns = 10
+	poolCfg.MinConns = 2
+	poolCfg.MaxConnLifetime = 30 * time.Minute
+	poolCfg.MaxConnIdleTime = 5 * time.Minute
+	db, err := pgxpool.NewWithConfig(ctx, poolCfg)
+	if err != nil {
+		return nil, fmt.Errorf("connect database: %w", err)
+	}
+
+	repo := repository.New(db)
+
+	type dispatcherIface interface {
+		Dispatch(context.Context, agentapi.HostActionRequest) (agentapi.HostActionResponse, error)
+	}
+
+	var dispatcher dispatcherIface
+	var agentHealth cphttp.AgentHealthChecker
+
+	embeddedMode := os.Getenv("HOST_AGENT_MODE") == "embedded"
+	if embeddedMode {
+		logger.Info("host-agent mode: embedded (in-process worker)")
+		worker := runtimetasks.NewWorker(repo, network.NewProvider(logger))
+		dispatcher = runtimetasks.NewEmbeddedDispatcher(worker)
+	} else {
+		socketPath := agentapi.DefaultSocketPath
+		if p := os.Getenv("HOST_AGENT_SOCKET"); p != "" {
+			socketPath = p
+		}
+		agentClient := agentapi.NewClient(socketPath)
+		dispatcher = runtimetasks.NewDispatcher(agentClient)
+		agentHealth = agentClient
+	}
+
+	runtimeService := runtime.NewService(repo, dispatcher, runtime.DefaultImageLockPath)
+
+	var adminCfg *repository.AdminConfig
+	if cfg.AdminJWTSecret != "" {
+		adminCfg = &repository.AdminConfig{
+			Username:  cfg.AdminUsername,
+			Password:  cfg.AdminPassword,
+			JWTSecret: []byte(cfg.AdminJWTSecret),
+		}
+	}
+
+	expiryScanner := scheduler.NewExpiryScanner(logger, repo, runtimeService)
+
+	var reconciler *scheduler.Reconciler
+	if !embeddedMode {
+		socketPath := agentapi.DefaultSocketPath
+		if p := os.Getenv("HOST_AGENT_SOCKET"); p != "" {
+			socketPath = p
+		}
+		reconciler = scheduler.NewReconciler(logger, repo, agentapi.NewClient(socketPath), 0)
+	}
+
+	router := cphttp.NewRouter(cphttp.Dependencies{
+		Logger:         logger,
+		Health:         repo,
+		AgentHealth:    agentHealth,
+		Users:          repo,
+		Hosts:          repo,
+		HostActions:    runtimeService,
+		Tasks:          repo,
+		TasksHandler:   cphttp.NewTasksHandler(cphttp.TasksHandlerDependencies{Logger: logger, Tasks: repo}),
+		Admin:          adminCfg,
+		AuthStore:      repo,
+		DashboardStats: repo,
+		AdminUsers:     repo,
+		AdminEgressIPs: repo,
+		AdminBindings:  repo,
+		AdminHosts:     repo,
+		AdminEvents:    repo,
+		EventRecorder:  repo,
+		EntryStore:     repo,
+		UserHosts:      repo,
+	})
+
+	var sshProxySrv *sshproxy.Server
+	if cfg.SSHProxyAddr != "" {
+		resolver := sshproxy.NewRepoResolver(repo)
+		srv, err := sshproxy.NewServer(
+			cfg.SSHProxyAddr,
+			cfg.SSHProxyContainerUser,
+			cfg.SSHProxyContainerPassword,
+			resolver,
+			logger.With("component", "ssh-proxy"),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("create ssh proxy: %w", err)
+		}
+		sshProxySrv = srv
+	}
+
+	return &App{
+		cfg:           cfg,
+		logger:        logger,
+		db:            db,
+		repo:          repo,
+		migrator:      migrator.RunMigrations,
+		handler:       router,
+		expiryScanner: expiryScanner,
+		reconciler:    reconciler,
+		sshProxy:      sshProxySrv,
+	}, nil
+}
+
+func (a *App) ensureSeedAdmin(ctx context.Context) error {
+	if a.cfg.AdminUsername == "" || a.cfg.AdminPassword == "" {
+		a.logger.Warn("seed admin: ADMIN_USERNAME or ADMIN_PASSWORD not set, skipping")
+		return nil
+	}
+	_, err := a.repo.GetUserByShortIDForAuth(ctx, a.cfg.AdminUsername)
+	if err == nil {
+		return nil // 已存在
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("check seed admin: %w", err)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(a.cfg.AdminPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash admin password: %w", err)
+	}
+	_, err = a.repo.CreateUserWithRole(ctx, repository.CreateUserWithRoleParams{
+		Username:     a.cfg.AdminUsername,
+		PasswordHash: string(hash),
+		ShortID:      a.cfg.AdminUsername,
+		Role:         "admin",
+	})
+	if err != nil {
+		return fmt.Errorf("create seed admin: %w", err)
+	}
+	a.logger.Info("seed admin created", "short_id", a.cfg.AdminUsername)
+	return nil
+}
+
+func (a *App) Run(ctx context.Context) error {
+	defer a.db.Close()
+
+	if err := a.migrator(ctx, a.db, a.cfg.MigrationDir); err != nil {
+		return fmt.Errorf("run migrations: %w", err)
+	}
+
+	if err := a.ensureSeedAdmin(ctx); err != nil {
+		return fmt.Errorf("ensure seed admin: %w", err)
+	}
+
+	expiryInterval := a.cfg.ExpiryScanInterval
+	if expiryInterval == 0 {
+		expiryInterval = 60 * time.Second
+	}
+
+	reconcileInterval := a.cfg.ReconcileInterval
+	if reconcileInterval == 0 {
+		reconcileInterval = 60 * time.Second
+	}
+
+	jobs := []scheduler.Job{
+		{Name: "expiry-scan", Interval: expiryInterval, Fn: a.expiryScanner.Scan},
+	}
+	if a.reconciler != nil {
+		jobs = append(jobs, scheduler.Job{Name: "reconcile", Interval: reconcileInterval, Fn: a.reconciler.Run})
+	}
+	sched := scheduler.New(a.logger, jobs)
+
+	schedCtx, schedCancel := context.WithCancel(ctx)
+	schedDone := make(chan struct{})
+	go func() {
+		sched.Run(schedCtx)
+		close(schedDone)
+	}()
+
+	if a.sshProxy != nil {
+		go func() {
+			if err := a.sshProxy.ListenAndServe(ctx); err != nil {
+				a.logger.Error("SSH proxy stopped with error", "error", err)
+			}
+		}()
+	}
+
+	server := &http.Server{
+		Addr:              a.cfg.Addr,
+		Handler:           a.handler,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		a.logger.Info("control-plane listening", "addr", a.cfg.Addr)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+			return
+		}
+
+		errCh <- nil
+	}()
+
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			a.logger.Error("shutdown server failed", "error", err)
+		}
+
+		schedCancel()
+		<-schedDone
+
+		return ctx.Err()
+	case err := <-errCh:
+		schedCancel()
+		<-schedDone
+		return err
+	}
+}

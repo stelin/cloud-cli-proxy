@@ -1,0 +1,9 @@
+image_name: ghcr.io/zanel1u/cloud-cli-proxy/managed-user:v1.2.0
+local_dev_image_name: ghcr.io/zanel1u/cloud-cli-proxy/managed-user:v1.2.0
+base_image: ubuntu:24.04
+pull_policy: never-implicit-latest
+ssh_port: 22
+home_mount: /workspace
+default_user: workspace
+rebuild_mode_default: preserve-home
+factory_reset_mode: wipe-/workspace

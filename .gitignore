@@ -1,0 +1,45 @@
+# Compiled binaries
+bin/
+control-plane
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go build cache
+/vendor/
+
+# Node
+node_modules/
+web/admin/dist/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment / Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets/
+
+# Logs
+*.log
+
+# Dev data
+.data/
+
+host-agent

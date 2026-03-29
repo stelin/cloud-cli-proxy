@@ -1,0 +1,140 @@
+package http
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	nethttp "net/http"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/zanel1u/cloud-cli-proxy/internal/store/repository"
+)
+
+type AdminBindingStore interface {
+	GetHost(context.Context, string) (repository.Host, error)
+	BindEgressIPToHost(context.Context, string, string) (repository.HostBinding, error)
+	UnbindEgressIPFromHost(context.Context, string) error
+	GetBindingHostID(context.Context, string) (string, error)
+}
+
+type AdminBindingsHandler struct {
+	logger *slog.Logger
+	store  AdminBindingStore
+	events EventRecorder
+}
+
+func NewAdminBindingsHandler(logger *slog.Logger, store AdminBindingStore, events EventRecorder) *AdminBindingsHandler {
+	return &AdminBindingsHandler{logger: logger, store: store, events: events}
+}
+
+type bindRequest struct {
+	HostID     string `json:"host_id"`
+	EgressIPID string `json:"egress_ip_id"`
+}
+
+func (h *AdminBindingsHandler) Bind() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		var req bindRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+
+		if req.HostID == "" || req.EgressIPID == "" {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "host_id and egress_ip_id are required"})
+			return
+		}
+
+		host, err := h.store.GetHost(r.Context(), req.HostID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "host not found"})
+				return
+			}
+			h.logger.Error("get host for binding check failed", "host_id", req.HostID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "check host status failed"})
+			return
+		}
+
+		if host.Status == "running" {
+			writeJSON(w, nethttp.StatusConflict, map[string]string{"error": "cannot bind egress IP to running host, stop host first"})
+			return
+		}
+
+		binding, err := h.store.BindEgressIPToHost(r.Context(), req.HostID, req.EgressIPID)
+		if err != nil {
+			h.logger.Error("bind egress ip failed", "host_id", req.HostID, "egress_ip_id", req.EgressIPID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "bind egress ip failed"})
+			return
+		}
+
+		if h.events != nil {
+			if _, err := h.events.RecordEvent(r.Context(), repository.RecordEventParams{
+				HostID:   &req.HostID,
+				Level:    "info",
+				Type:     "admin.binding.created",
+				Message:  "管理员创建出口 IP 绑定",
+				Metadata: map[string]any{"operator": "admin", "egress_ip_id": req.EgressIPID, "binding_id": binding.BindingID},
+			}); err != nil {
+				h.logger.Error("record event failed", "type", "admin.binding.created", "error", err)
+			}
+		}
+
+		writeJSON(w, nethttp.StatusCreated, map[string]any{"binding": binding})
+	})
+}
+
+func (h *AdminBindingsHandler) Unbind() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		bindingID := r.PathValue("bindingID")
+
+		hostID, err := h.store.GetBindingHostID(r.Context(), bindingID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "binding not found"})
+				return
+			}
+			h.logger.Error("get binding host id failed", "binding_id", bindingID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "check binding failed"})
+			return
+		}
+
+		host, err := h.store.GetHost(r.Context(), hostID)
+		if err != nil {
+			h.logger.Error("get host for unbind check failed", "host_id", hostID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "check host status failed"})
+			return
+		}
+
+		if host.Status == "running" {
+			writeJSON(w, nethttp.StatusConflict, map[string]string{"error": "cannot unbind egress IP from running host, stop host first"})
+			return
+		}
+
+		if err := h.store.UnbindEgressIPFromHost(r.Context(), bindingID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "binding not found"})
+				return
+			}
+			h.logger.Error("unbind egress ip failed", "binding_id", bindingID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "unbind egress ip failed"})
+			return
+		}
+
+		if h.events != nil {
+			if _, err := h.events.RecordEvent(r.Context(), repository.RecordEventParams{
+				HostID:   &hostID,
+				Level:    "info",
+				Type:     "admin.binding.deleted",
+				Message:  "管理员删除出口 IP 绑定",
+				Metadata: map[string]any{"operator": "admin", "binding_id": bindingID},
+			}); err != nil {
+				h.logger.Error("record event failed", "type", "admin.binding.deleted", "error", err)
+			}
+		}
+
+		w.WriteHeader(nethttp.StatusNoContent)
+	})
+}

@@ -1,0 +1,220 @@
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { ArrowLeft, Globe, Shield } from "lucide-react";
+import { toast } from "sonner";
+import {
+  useMyHostDetail,
+  useRebuildHost,
+} from "@/hooks/use-portal-hosts";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+
+export const Route = createFileRoute("/_portal/portal/hosts/$hostId")({
+  component: PortalHostDetail,
+});
+
+function formatDateTime(dateStr: string): string {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+const statusConfig: Record<
+  string,
+  { label: string; variant: "default" | "secondary" | "destructive" | "outline" }
+> = {
+  running: { label: "运行中", variant: "default" },
+  stopped: { label: "已停止", variant: "secondary" },
+  rebuilding: { label: "重建中", variant: "outline" },
+  pending: { label: "等待中", variant: "outline" },
+};
+
+const tunnelTypeLabels: Record<string, string> = {
+  wireguard: "WireGuard",
+  proxy: "代理隧道",
+};
+
+function PortalHostDetail() {
+  const { hostId } = Route.useParams();
+  const rebuildMutation = useRebuildHost();
+
+  const isRebuilding = (status: string) =>
+    status === "rebuilding" || status === "pending";
+
+  const { data: host, isLoading } = useMyHostDetail(hostId, {
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status && isRebuilding(status) ? 3000 : false;
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <div className="h-6 w-32 animate-pulse rounded bg-muted" />
+        <div className="h-48 animate-pulse rounded bg-muted" />
+      </div>
+    );
+  }
+
+  if (!host) {
+    return (
+      <div className="space-y-4">
+        <Link
+          to="/portal"
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          返回主机列表
+        </Link>
+        <p className="text-muted-foreground">主机未找到</p>
+      </div>
+    );
+  }
+
+  const sc = statusConfig[host.status] ?? {
+    label: host.status,
+    variant: "outline" as const,
+  };
+
+  function handleRebuild() {
+    rebuildMutation.mutate(hostId, {
+      onSuccess: () => {
+        toast.success("重建任务已提交");
+      },
+      onError: () => {
+        toast.error("重建请求失败，请稍后重试");
+      },
+    });
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Link
+          to="/portal"
+          className="inline-flex items-center gap-1 hover:text-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          我的主机
+        </Link>
+        <span>/</span>
+        <span className="text-foreground">{host.hostname || "主机详情"}</span>
+      </div>
+
+      {/* Basic info */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-xl">{host.hostname || "未命名主机"}</CardTitle>
+          <Badge variant={sc.variant}>{sc.label}</Badge>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <dt className="text-sm font-medium text-muted-foreground">时区</dt>
+              <dd className="mt-1 text-sm">{host.timezone || "未设置"}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-muted-foreground">创建时间</dt>
+              <dd className="mt-1 text-sm">{formatDateTime(host.created_at)}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-muted-foreground">更新时间</dt>
+              <dd className="mt-1 text-sm">{formatDateTime(host.updated_at)}</dd>
+            </div>
+          </dl>
+        </CardContent>
+      </Card>
+
+      {/* Egress bindings */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">出口 IP</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {host.egress_bindings.length === 0 ? (
+            <p className="text-sm text-muted-foreground">暂无绑定的出口 IP</p>
+          ) : (
+            <div className="space-y-3">
+              {host.egress_bindings.map((binding, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between rounded-lg border p-3"
+                >
+                  <div className="flex items-center gap-2">
+                    <Globe className="h-4 w-4 text-muted-foreground" />
+                    <span className="font-mono text-sm">{binding.ip_address}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Shield className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-sm text-muted-foreground">
+                      {tunnelTypeLabels[binding.tunnel_type] ?? binding.tunnel_type}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Actions */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">操作</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="outline"
+                disabled={rebuildMutation.isPending || isRebuilding(host.status)}
+              >
+                {rebuildMutation.isPending ? "提交中..." : "重建主机"}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>确认重建主机？</AlertDialogTitle>
+                <AlertDialogDescription>
+                  重建将重置容器环境，home 目录数据保留。重建过程中主机将暂时不可访问。
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>取消</AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={rebuildMutation.isPending}
+                  onClick={handleRebuild}
+                >
+                  {rebuildMutation.isPending ? "重建中..." : "确认重建"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

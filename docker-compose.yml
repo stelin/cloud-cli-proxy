@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:18.3
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cloudproxy}
+      POSTGRES_USER: ${POSTGRES_USER:-cloudproxy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env or use external DB}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cloudproxy} -d ${POSTGRES_DB:-cloudproxy}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - cloudproxy-postgres:/var/lib/postgresql
+
+  control-plane:
+    build:
+      context: .
+      dockerfile: deploy/docker/control-plane/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      CONTROL_PLANE_ADDR: ":8080"
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:?Set ADMIN_JWT_SECRET in .env}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "${CONTROL_PLANE_PORT:-8080}:8080"
+
+  admin:
+    build:
+      context: .
+      dockerfile: deploy/docker/admin/Dockerfile
+      args:
+        API_URL: http://control-plane:8080
+    restart: unless-stopped
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    ports:
+      - "${ADMIN_PORT:-3000}:80"
+
+volumes:
+  cloudproxy-postgres:

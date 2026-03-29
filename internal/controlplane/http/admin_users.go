@@ -1,0 +1,361 @@
+package http
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"math/big"
+	nethttp "net/http"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"golang.org/x/crypto/bcrypt"
+
+	"github.com/zanel1u/cloud-cli-proxy/internal/store/repository"
+)
+
+type AdminUserStore interface {
+	ListUsers(context.Context) ([]repository.User, error)
+	GetUser(context.Context, string) (repository.User, error)
+	CreateUser(context.Context, repository.CreateUserParams) (repository.User, error)
+	UpdateUserStatus(context.Context, string, string) (repository.User, error)
+	DeleteUser(context.Context, string) error
+	UpdateUserPassword(context.Context, string, string) error
+	ListHostsByUserID(context.Context, string) ([]repository.Host, error)
+	UpdateUserExpiry(context.Context, string, *time.Time) (repository.User, error)
+}
+
+type AdminUsersHandler struct {
+	logger *slog.Logger
+	store  AdminUserStore
+	events EventRecorder
+}
+
+func NewAdminUsersHandler(logger *slog.Logger, store AdminUserStore, events EventRecorder) *AdminUsersHandler {
+	return &AdminUsersHandler{logger: logger, store: store, events: events}
+}
+
+func (h *AdminUsersHandler) List() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		users, err := h.store.ListUsers(r.Context())
+		if err != nil {
+			h.logger.Error("list users failed", "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "list users failed"})
+			return
+		}
+		writeJSON(w, nethttp.StatusOK, map[string]any{"users": users})
+	})
+}
+
+func (h *AdminUsersHandler) Get() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		userID := r.PathValue("userID")
+
+		user, err := h.store.GetUser(r.Context(), userID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "user not found"})
+				return
+			}
+			h.logger.Error("get user failed", "user_id", userID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "get user failed"})
+			return
+		}
+
+		hosts, err := h.store.ListHostsByUserID(r.Context(), userID)
+		if err != nil {
+			h.logger.Error("list hosts by user failed", "user_id", userID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "list hosts failed"})
+			return
+		}
+
+		writeJSON(w, nethttp.StatusOK, map[string]any{"user": user, "hosts": hosts})
+	})
+}
+
+type createUserRequest struct {
+	Username string `json:"username"`
+}
+
+func generateRandomString(length int, charset string) string {
+	b := make([]byte, length)
+	for i := range b {
+		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		b[i] = charset[n.Int64()]
+	}
+	return string(b)
+}
+
+func generateShortID() string {
+	return generateRandomString(6, "abcdefghijklmnopqrstuvwxyz0123456789")
+}
+
+func generateEntryPassword() string {
+	return generateRandomString(8, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+}
+
+func generateLoginPassword() string {
+	return generateRandomString(16, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*")
+}
+
+func (h *AdminUsersHandler) Create() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		var req createUserRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+
+		req.Username = strings.TrimSpace(req.Username)
+		if len(req.Username) < 3 || len(req.Username) > 50 {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "username must be 3-50 characters"})
+			return
+		}
+
+		plainPassword := generateLoginPassword()
+		hash, err := bcrypt.GenerateFromPassword([]byte(plainPassword), bcrypt.DefaultCost)
+		if err != nil {
+			h.logger.Error("hash password failed", "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+
+		shortID := generateShortID()
+		entryPassword := generateEntryPassword()
+
+		const maxRetries = 5
+		var user repository.User
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			user, err = h.store.CreateUser(r.Context(), repository.CreateUserParams{
+				Username:      req.Username,
+				PasswordHash:  string(hash),
+				ShortID:       shortID,
+				EntryPassword: entryPassword,
+			})
+			if err == nil {
+				break
+			}
+			if strings.Contains(err.Error(), "short_id") && (strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate")) {
+				shortID = generateShortID()
+				continue
+			}
+			break
+		}
+		if err != nil {
+			if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+				writeJSON(w, nethttp.StatusConflict, map[string]string{"error": "username already exists"})
+				return
+			}
+			h.logger.Error("create user failed", "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "create user failed"})
+			return
+		}
+
+		if h.events != nil {
+			if _, err := h.events.RecordEvent(r.Context(), repository.RecordEventParams{
+				UserID:   &user.ID,
+				Level:    "info",
+				Type:     "admin.user.created",
+				Message:  "管理员创建用户",
+				Metadata: map[string]any{"operator": "admin", "username": user.Username},
+			}); err != nil {
+				h.logger.Error("record event failed", "type", "admin.user.created", "error", err)
+			}
+		}
+
+		writeJSON(w, nethttp.StatusCreated, map[string]any{
+			"user":           user,
+			"short_id":       user.ShortID,
+			"entry_password": user.EntryPassword,
+			"password":       plainPassword,
+		})
+	})
+}
+
+type updateStatusRequest struct {
+	Status string `json:"status"`
+}
+
+func (h *AdminUsersHandler) UpdateStatus() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		userID := r.PathValue("userID")
+
+		var req updateStatusRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+
+		if req.Status != "active" && req.Status != "disabled" {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "status must be active or disabled"})
+			return
+		}
+
+		user, err := h.store.UpdateUserStatus(r.Context(), userID, req.Status)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "user not found"})
+				return
+			}
+			h.logger.Error("update user status failed", "user_id", userID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "update status failed"})
+			return
+		}
+
+		if h.events != nil {
+			if _, err := h.events.RecordEvent(r.Context(), repository.RecordEventParams{
+				UserID:   &user.ID,
+				Level:    "info",
+				Type:     "admin.user.updated",
+				Message:  "管理员修改用户状态",
+				Metadata: map[string]any{"operator": "admin", "new_status": req.Status},
+			}); err != nil {
+				h.logger.Error("record event failed", "type", "admin.user.updated", "error", err)
+			}
+		}
+
+		writeJSON(w, nethttp.StatusOK, map[string]any{"user": user})
+	})
+}
+
+type updateExpiryRequest struct {
+	ExpiresAt *string `json:"expires_at"`
+}
+
+func (h *AdminUsersHandler) UpdateExpiry() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		userID := r.PathValue("userID")
+
+		var req updateExpiryRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+
+		var expiresAt *time.Time
+		if req.ExpiresAt != nil {
+			t, err := time.Parse(time.RFC3339, *req.ExpiresAt)
+			if err != nil {
+				writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "expires_at must be RFC3339 format"})
+				return
+			}
+			if t.Before(time.Now()) {
+				writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "expires_at must be in the future"})
+				return
+			}
+			expiresAt = &t
+		}
+
+		user, err := h.store.UpdateUserExpiry(r.Context(), userID, expiresAt)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "user not found"})
+				return
+			}
+			h.logger.Error("update user expiry failed", "user_id", userID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "update expiry failed"})
+			return
+		}
+
+		if h.events != nil {
+			var expiryVal any
+			if expiresAt != nil {
+				expiryVal = expiresAt.Format(time.RFC3339)
+			}
+			if _, err := h.events.RecordEvent(r.Context(), repository.RecordEventParams{
+				UserID:   &user.ID,
+				Level:    "info",
+				Type:     "admin.user.updated",
+				Message:  "管理员修改用户到期时间",
+				Metadata: map[string]any{"operator": "admin", "expires_at": expiryVal},
+			}); err != nil {
+				h.logger.Error("record event failed", "type", "admin.user.updated", "error", err)
+			}
+		}
+
+		writeJSON(w, nethttp.StatusOK, map[string]any{"user": user})
+	})
+}
+
+func (h *AdminUsersHandler) Delete() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		userID := r.PathValue("userID")
+
+		if err := h.store.DeleteUser(r.Context(), userID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "user not found"})
+				return
+			}
+			h.logger.Error("delete user failed", "user_id", userID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "delete user failed"})
+			return
+		}
+
+		if h.events != nil {
+			if _, err := h.events.RecordEvent(r.Context(), repository.RecordEventParams{
+				UserID:   &userID,
+				Level:    "info",
+				Type:     "admin.user.deleted",
+				Message:  "管理员删除用户",
+				Metadata: map[string]any{"operator": "admin"},
+			}); err != nil {
+				h.logger.Error("record event failed", "type", "admin.user.deleted", "error", err)
+			}
+		}
+
+		w.WriteHeader(nethttp.StatusNoContent)
+	})
+}
+
+func (h *AdminUsersHandler) RotatePassword() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		userID := r.PathValue("userID")
+
+		const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*"
+		b := make([]byte, 20)
+		for i := range b {
+			n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+			if err != nil {
+				h.logger.Error("generate random password failed", "error", err)
+				writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "internal error"})
+				return
+			}
+			b[i] = charset[n.Int64()]
+		}
+		newPassword := string(b)
+
+		hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+		if err != nil {
+			h.logger.Error("hash password failed", "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+
+		if err := h.store.UpdateUserPassword(r.Context(), userID, string(hash)); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "user not found"})
+				return
+			}
+			h.logger.Error("rotate password failed", "user_id", userID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "rotate password failed"})
+			return
+		}
+
+		if h.events != nil {
+			if _, err := h.events.RecordEvent(r.Context(), repository.RecordEventParams{
+				UserID:   &userID,
+				Level:    "info",
+				Type:     "admin.user.password_rotated",
+				Message:  "管理员轮换用户密码",
+				Metadata: map[string]any{"operator": "admin"},
+			}); err != nil {
+				h.logger.Error("record event failed", "type", "admin.user.password_rotated", "error", err)
+			}
+		}
+
+		writeJSON(w, nethttp.StatusOK, map[string]any{"new_password": newPassword})
+	})
+}

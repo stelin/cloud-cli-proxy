@@ -1,0 +1,8 @@
+# GSD toolchain — vendor code, exclude from GitHub language stats
+.claude/get-shit-done/** linguist-vendored
+.codex/get-shit-done/** linguist-vendored
+.cursor/get-shit-done/** linguist-vendored
+.claude/hooks/** linguist-vendored
+
+# Planning artifacts — documentation, not code
+.planning/** linguist-documentation

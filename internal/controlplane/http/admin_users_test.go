@@ -1,0 +1,345 @@
+package http
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	nethttp "net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/zanel1u/cloud-cli-proxy/internal/store/repository"
+)
+
+type stubUserStore struct {
+	users         []repository.User
+	user          repository.User
+	hosts         []repository.Host
+	err           error
+	deleteErr     error
+	updatePwdErr  error
+	createErr     error
+	statusErr     error
+	expiryErr     error
+	expiryUser    repository.User
+	statusUser    repository.User
+	createUser    repository.User
+}
+
+func (s *stubUserStore) ListUsers(_ context.Context) ([]repository.User, error) {
+	return s.users, s.err
+}
+
+func (s *stubUserStore) GetUser(_ context.Context, _ string) (repository.User, error) {
+	return s.user, s.err
+}
+
+func (s *stubUserStore) CreateUser(_ context.Context, _ repository.CreateUserParams) (repository.User, error) {
+	if s.createErr != nil {
+		return repository.User{}, s.createErr
+	}
+	return s.createUser, nil
+}
+
+func (s *stubUserStore) UpdateUserStatus(_ context.Context, _ string, _ string) (repository.User, error) {
+	if s.statusErr != nil {
+		return repository.User{}, s.statusErr
+	}
+	return s.statusUser, nil
+}
+
+func (s *stubUserStore) DeleteUser(_ context.Context, _ string) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	return nil
+}
+
+func (s *stubUserStore) UpdateUserPassword(_ context.Context, _ string, _ string) error {
+	return s.updatePwdErr
+}
+
+func (s *stubUserStore) ListHostsByUserID(_ context.Context, _ string) ([]repository.Host, error) {
+	return s.hosts, nil
+}
+
+func (s *stubUserStore) UpdateUserExpiry(_ context.Context, _ string, _ *time.Time) (repository.User, error) {
+	if s.expiryErr != nil {
+		return repository.User{}, s.expiryErr
+	}
+	return s.expiryUser, nil
+}
+
+type stubEventRecorder struct {
+	called bool
+}
+
+func (s *stubEventRecorder) RecordEvent(_ context.Context, _ repository.RecordEventParams) (repository.Event, error) {
+	s.called = true
+	return repository.Event{}, nil
+}
+
+var testJWTSecret = []byte("test-jwt-secret-for-admin-api")
+
+func validAdminToken(t *testing.T) string {
+	t.Helper()
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   "admin",
+		Issuer:    "cloud-cli-proxy",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	})
+	s, err := token.SignedString(testJWTSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func adminTestRouter(t *testing.T, deps Dependencies) nethttp.Handler {
+	t.Helper()
+	if deps.Logger == nil {
+		deps.Logger = slog.Default()
+	}
+	if deps.Admin == nil {
+		deps.Admin = &repository.AdminConfig{
+			Username:  "admin",
+			Password:  "adminpass",
+			JWTSecret: testJWTSecret,
+		}
+	}
+	return NewRouter(deps)
+}
+
+func TestAdminUsersHandler(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	sampleUser := repository.User{
+		ID: "u1", Username: "testuser", Status: "active",
+		CreatedAt: now, UpdatedAt: now,
+	}
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		body       any
+		store      *stubUserStore
+		wantStatus int
+		wantField  string
+		wantValue  any
+	}{
+		{
+			name:       "List users 200",
+			method:     "GET",
+			path:       "/v1/admin/users",
+			store:      &stubUserStore{users: []repository.User{sampleUser}},
+			wantStatus: 200,
+			wantField:  "users",
+		},
+		{
+			name:       "List users store error 500",
+			method:     "GET",
+			path:       "/v1/admin/users",
+			store:      &stubUserStore{err: fmt.Errorf("db down")},
+			wantStatus: 500,
+		},
+		{
+			name:       "Create user 201",
+			method:     "POST",
+			path:       "/v1/admin/users",
+			body:       map[string]string{"username": "newuser", "password": "pass1234"},
+			store:      &stubUserStore{createUser: sampleUser},
+			wantStatus: 201,
+			wantField:  "user",
+		},
+		{
+			name:       "Create user missing username 400",
+			method:     "POST",
+			path:       "/v1/admin/users",
+			body:       map[string]string{"username": "ab", "password": "pass1234"},
+			store:      &stubUserStore{},
+			wantStatus: 400,
+		},
+		{
+			name:       "Create user missing password 400",
+			method:     "POST",
+			path:       "/v1/admin/users",
+			body:       map[string]string{"username": "newuser", "password": "short"},
+			store:      &stubUserStore{},
+			wantStatus: 400,
+		},
+		{
+			name:       "Get user 200",
+			method:     "GET",
+			path:       "/v1/admin/users/u1",
+			store:      &stubUserStore{user: sampleUser, hosts: []repository.Host{}},
+			wantStatus: 200,
+			wantField:  "user",
+		},
+		{
+			name:       "Get user 404",
+			method:     "GET",
+			path:       "/v1/admin/users/missing",
+			store:      &stubUserStore{err: pgx.ErrNoRows},
+			wantStatus: 404,
+		},
+		{
+			name:       "UpdateStatus disabled 200",
+			method:     "PATCH",
+			path:       "/v1/admin/users/u1",
+			body:       map[string]string{"status": "disabled"},
+			store:      &stubUserStore{statusUser: repository.User{ID: "u1", Status: "disabled"}},
+			wantStatus: 200,
+		},
+		{
+			name:       "UpdateStatus invalid 400",
+			method:     "PATCH",
+			path:       "/v1/admin/users/u1",
+			body:       map[string]string{"status": "unknown"},
+			store:      &stubUserStore{},
+			wantStatus: 400,
+		},
+		{
+			name:       "Delete user 204",
+			method:     "DELETE",
+			path:       "/v1/admin/users/u1",
+			store:      &stubUserStore{},
+			wantStatus: 204,
+		},
+		{
+			name:       "Delete user 404",
+			method:     "DELETE",
+			path:       "/v1/admin/users/missing",
+			store:      &stubUserStore{deleteErr: pgx.ErrNoRows},
+			wantStatus: 404,
+		},
+		{
+			name:       "RotatePassword 200",
+			method:     "POST",
+			path:       "/v1/admin/users/u1/rotate-password",
+			store:      &stubUserStore{},
+			wantStatus: 200,
+			wantField:  "new_password",
+		},
+		{
+			name:       "RotatePassword 404",
+			method:     "POST",
+			path:       "/v1/admin/users/missing/rotate-password",
+			store:      &stubUserStore{updatePwdErr: pgx.ErrNoRows},
+			wantStatus: 404,
+		},
+		{
+			name:       "UpdateExpiry set 200",
+			method:     "PUT",
+			path:       "/v1/admin/users/u1/expiry",
+			body:       map[string]string{"expires_at": time.Now().Add(365 * 24 * time.Hour).Format(time.RFC3339)},
+			store:      &stubUserStore{expiryUser: sampleUser},
+			wantStatus: 200,
+		},
+		{
+			name:       "UpdateExpiry clear 200",
+			method:     "PUT",
+			path:       "/v1/admin/users/u1/expiry",
+			body:       map[string]any{"expires_at": nil},
+			store:      &stubUserStore{expiryUser: sampleUser},
+			wantStatus: 200,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			events := &stubEventRecorder{}
+			router := adminTestRouter(t, Dependencies{
+				AdminUsers:    tt.store,
+				EventRecorder: events,
+			})
+			srv := httptest.NewServer(router)
+			defer srv.Close()
+
+			var body []byte
+			if tt.body != nil {
+				body, _ = json.Marshal(tt.body)
+			}
+
+			req, _ := nethttp.NewRequest(tt.method, srv.URL+tt.path, bytes.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+validAdminToken(t))
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, err := nethttp.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				var respBody map[string]any
+				json.NewDecoder(resp.Body).Decode(&respBody)
+				t.Errorf("status = %d, want %d; body = %v", resp.StatusCode, tt.wantStatus, respBody)
+				return
+			}
+
+			if tt.wantField != "" && resp.StatusCode != 204 {
+				var respBody map[string]any
+				if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+					t.Fatalf("decode response: %v", err)
+				}
+				if _, ok := respBody[tt.wantField]; !ok {
+					t.Errorf("response missing field %q: %v", tt.wantField, respBody)
+				}
+			}
+		})
+	}
+}
+
+func TestAdminAuthBoundary(t *testing.T) {
+	store := &stubUserStore{users: []repository.User{}}
+	router := adminTestRouter(t, Dependencies{AdminUsers: store})
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	tests := []struct {
+		name       string
+		auth       string
+		wantStatus int
+	}{
+		{
+			name:       "No Authorization header returns 401",
+			auth:       "",
+			wantStatus: 401,
+		},
+		{
+			name:       "Invalid token returns 401",
+			auth:       "Bearer invalid.token.here",
+			wantStatus: 401,
+		},
+		{
+			name:       "Valid token succeeds",
+			auth:       "Bearer " + func() string { s, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{Subject: "admin", Issuer: "cloud-cli-proxy", ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))}).SignedString(testJWTSecret); return s }(),
+			wantStatus: 200,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, _ := nethttp.NewRequest("GET", srv.URL+"/v1/admin/users", nil)
+			if tt.auth != "" {
+				req.Header.Set("Authorization", tt.auth)
+			}
+
+			resp, err := nethttp.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+		})
+	}
+}
