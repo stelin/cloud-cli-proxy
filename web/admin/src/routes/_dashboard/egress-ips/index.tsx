@@ -56,6 +56,7 @@ import {
 } from "@/components/ui/tooltip";
 import { EgressIPDrawer } from "@/components/egress-ips/egress-ip-drawer";
 import { TestResultDialog } from "@/components/egress-ips/test-result-dialog";
+import { egressProxyEntryDisplay } from "@/lib/egress-display";
 
 export const Route = createFileRoute("/_dashboard/egress-ips/")({
   component: EgressIPsPage,
@@ -200,10 +201,8 @@ function EgressIPsPage() {
                 return (
                   <TableRow key={ip.id}>
                     <TableCell className="font-medium">{ip.label}</TableCell>
-                    <TableCell className="font-mono text-sm">
-                      {ip.ip_address === "0.0.0.0"
-                        ? "—"
-                        : ip.ip_address}
+                    <TableCell className="break-all font-mono text-sm">
+                      {egressProxyEntryDisplay(ip)}
                     </TableCell>
                     <TableCell>
                       {testingIds.has(ip.id) ? (
@@ -297,6 +296,14 @@ function EgressIPsPage() {
             setEditIpId(null);
           }
         }}
+        onUpdated={(ipId) => {
+          setTestResults((prev) => {
+            const next = new Map(prev);
+            next.delete(ipId);
+            saveTestResults(next);
+            return next;
+          });
+        }}
       />
 
       <AlertDialog
@@ -310,7 +317,10 @@ function EgressIPsPage() {
             <AlertDialogTitle>确认删除</AlertDialogTitle>
             <AlertDialogDescription>
               确定要删除出口 IP「{deleteTarget?.label}」(
-              {deleteTarget?.ip_address}) 吗？此操作不可撤销。
+              {deleteTarget
+                ? egressProxyEntryDisplay(deleteTarget)
+                : ""}
+              ) 吗？此操作不可撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

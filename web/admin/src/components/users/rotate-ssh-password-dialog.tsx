@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Copy, Check, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
-import { useRotatePassword } from "@/hooks/use-users";
+import { useRotateSSHPassword } from "@/hooks/use-users";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,19 +15,19 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-interface RotatePasswordDialogProps {
+interface RotateSSHPasswordDialogProps {
   userId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-export function RotatePasswordDialog({
+export function RotateSSHPasswordDialog({
   userId,
   open,
   onOpenChange,
-}: RotatePasswordDialogProps) {
+}: RotateSSHPasswordDialogProps) {
   const qc = useQueryClient();
-  const rotate = useRotatePassword();
+  const rotate = useRotateSSHPassword();
   const [newPassword, setNewPassword] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [useCustom, setUseCustom] = useState(false);
@@ -36,8 +36,8 @@ export function RotatePasswordDialog({
   function handleRotate() {
     if (useCustom) {
       const t = customInput.trim();
-      if (t.length < 8) {
-        toast.error("登录密码至少 8 个字符");
+      if (t.length < 6) {
+        toast.error("自定义 SSH 密码至少 6 个字符");
         return;
       }
     }
@@ -51,7 +51,7 @@ export function RotatePasswordDialog({
           setNewPassword(data.new_password);
           void qc.invalidateQueries({ queryKey: ["users", userId] });
         },
-        onError: () => toast.error("密码轮换失败"),
+        onError: () => toast.error("重置 SSH 密码失败"),
       },
     );
   }
@@ -79,9 +79,9 @@ export function RotatePasswordDialog({
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>轮换登录密码</DialogTitle>
+          <DialogTitle>重置 SSH 密码</DialogTitle>
           <DialogDescription>
-            用于网页登录与 curl 入口（与 SSH 密码不同）。可随机生成或指定新密码。
+            用于 SSH 登录容器（与网页/登录密码不同）。可随机生成或指定新密码。
           </DialogDescription>
         </DialogHeader>
 
@@ -108,30 +108,30 @@ export function RotatePasswordDialog({
           <div className="space-y-4">
             <label className="flex cursor-pointer items-center gap-2 text-sm">
               <input
-                id="login-custom"
+                id="ssh-custom"
                 type="checkbox"
                 checked={useCustom}
                 onChange={(e) => setUseCustom(e.target.checked)}
                 className="h-4 w-4 rounded border border-input"
               />
-              <span>指定新登录密码（否则随机生成）</span>
+              <span>指定新 SSH 密码（否则随机生成）</span>
             </label>
             {useCustom && (
               <div className="space-y-2">
-                <Label htmlFor="login-pw">新登录密码</Label>
+                <Label htmlFor="ssh-pw">新 SSH 密码</Label>
                 <Input
-                  id="login-pw"
+                  id="ssh-pw"
                   type="password"
                   autoComplete="new-password"
                   value={customInput}
                   onChange={(e) => setCustomInput(e.target.value)}
-                  placeholder="8–128 个字符"
+                  placeholder="6–128 个字符"
                 />
               </div>
             )}
             {!useCustom && (
               <p className="text-sm text-muted-foreground">
-                点击下方按钮将生成随机强密码，旧密码将立即失效。
+                点击下方按钮将生成随机 SSH 密码。
               </p>
             )}
           </div>
@@ -146,7 +146,7 @@ export function RotatePasswordDialog({
                 取消
               </Button>
               <Button onClick={handleRotate} disabled={rotate.isPending}>
-                {rotate.isPending ? "生成中…" : "轮换密码"}
+                {rotate.isPending ? "处理中…" : "重置 SSH 密码"}
               </Button>
             </>
           )}

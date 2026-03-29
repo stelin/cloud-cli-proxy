@@ -111,6 +111,19 @@ func (r *Repository) UpdateUserPassword(ctx context.Context, userID string, pass
 	return nil
 }
 
+func (r *Repository) UpdateUserEntryPassword(ctx context.Context, userID string, entryPassword string) error {
+	result, err := r.db.Exec(ctx, `
+		UPDATE users SET entry_password = $1, updated_at = NOW() WHERE id = $2
+	`, entryPassword, userID)
+	if err != nil {
+		return fmt.Errorf("update user entry password: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("update user entry password: %w", pgx.ErrNoRows)
+	}
+	return nil
+}
+
 func (r *Repository) ListHostsByUserID(ctx context.Context, userID string) ([]Host, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id::text, user_id::text, status, template_image_ref, home_volume_name, slot_key, timezone, hostname, memory_limit_mb, cpu_limit, disk_limit_gb, created_at, updated_at

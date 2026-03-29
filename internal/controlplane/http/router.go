@@ -209,6 +209,7 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 			mux.Handle("PATCH /v1/admin/users/{userID}", adminGuard(usersHandler.UpdateStatus()))
 			mux.Handle("DELETE /v1/admin/users/{userID}", adminGuard(usersHandler.Delete()))
 			mux.Handle("POST /v1/admin/users/{userID}/rotate-password", adminGuard(usersHandler.RotatePassword()))
+			mux.Handle("POST /v1/admin/users/{userID}/rotate-ssh-password", adminGuard(usersHandler.RotateSSHPassword()))
 			mux.Handle("PUT /v1/admin/users/{userID}/expiry", adminGuard(usersHandler.UpdateExpiry()))
 		}
 
@@ -254,6 +255,12 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 		// User self-service endpoints (D-01: /v1/user/ prefix, D-02: user+admin roles)
 		userGuard := func(h nethttp.Handler) nethttp.Handler {
 			return authMw(RequireRole("user", "admin")(h))
+		}
+
+		if deps.AdminUsers != nil {
+			userPasswordHandler := NewUserPasswordHandler(deps.Logger, deps.AdminUsers)
+			mux.Handle("POST /v1/user/change-password", userGuard(userPasswordHandler.ChangePassword()))
+			mux.Handle("POST /v1/user/change-ssh-password", userGuard(userPasswordHandler.ChangeSSHPassword()))
 		}
 
 		if deps.UserHosts != nil {

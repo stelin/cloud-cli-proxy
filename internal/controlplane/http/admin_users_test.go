@@ -65,6 +65,10 @@ func (s *stubUserStore) UpdateUserPassword(_ context.Context, _ string, _ string
 	return s.updatePwdErr
 }
 
+func (s *stubUserStore) UpdateUserEntryPassword(_ context.Context, _ string, _ string) error {
+	return s.updatePwdErr
+}
+
 func (s *stubUserStore) ListHostsByUserID(_ context.Context, _ string) ([]repository.Host, error) {
 	return s.hosts, nil
 }

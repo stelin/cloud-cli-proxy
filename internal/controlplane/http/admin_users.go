@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"math/big"
 	nethttp "net/http"
@@ -24,6 +25,7 @@ type AdminUserStore interface {
 	UpdateUserStatus(context.Context, string, string) (repository.User, error)
 	DeleteUser(context.Context, string) error
 	UpdateUserPassword(context.Context, string, string) error
+	UpdateUserEntryPassword(context.Context, string, string) error
 	ListHostsByUserID(context.Context, string) ([]repository.Host, error)
 	UpdateUserExpiry(context.Context, string, *time.Time) (repository.User, error)
 }
@@ -310,22 +312,50 @@ func (h *AdminUsersHandler) Delete() nethttp.Handler {
 	})
 }
 
+type rotatePasswordRequest struct {
+	NewPassword *string `json:"new_password"`
+}
+
 func (h *AdminUsersHandler) RotatePassword() nethttp.Handler {
 	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		userID := r.PathValue("userID")
 
-		const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*"
-		b := make([]byte, 20)
-		for i := range b {
-			n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
-			if err != nil {
-				h.logger.Error("generate random password failed", "error", err)
-				writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "internal error"})
+		var req rotatePasswordRequest
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "read body failed"})
+			return
+		}
+		if len(strings.TrimSpace(string(body))) > 0 {
+			if err := json.Unmarshal(body, &req); err != nil {
+				writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "invalid request body"})
 				return
 			}
-			b[i] = charset[n.Int64()]
 		}
-		newPassword := string(b)
+
+		var newPassword string
+		if req.NewPassword != nil {
+			newPassword = strings.TrimSpace(*req.NewPassword)
+		}
+		if newPassword == "" {
+			const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*"
+			b := make([]byte, 20)
+			for i := range b {
+				n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+				if err != nil {
+					h.logger.Error("generate random password failed", "error", err)
+					writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "internal error"})
+					return
+				}
+				b[i] = charset[n.Int64()]
+			}
+			newPassword = string(b)
+		} else {
+			if len(newPassword) < 8 || len(newPassword) > 128 {
+				writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "login password must be 8-128 characters"})
+				return
+			}
+		}
 
 		hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 		if err != nil {
@@ -353,6 +383,66 @@ func (h *AdminUsersHandler) RotatePassword() nethttp.Handler {
 				Metadata: map[string]any{"operator": "admin"},
 			}); err != nil {
 				h.logger.Error("record event failed", "type", "admin.user.password_rotated", "error", err)
+			}
+		}
+
+		writeJSON(w, nethttp.StatusOK, map[string]any{"new_password": newPassword})
+	})
+}
+
+type rotateSSHPasswordRequest struct {
+	NewPassword *string `json:"new_password"`
+}
+
+func (h *AdminUsersHandler) RotateSSHPassword() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		userID := r.PathValue("userID")
+
+		var req rotateSSHPasswordRequest
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "read body failed"})
+			return
+		}
+		if len(strings.TrimSpace(string(body))) > 0 {
+			if err := json.Unmarshal(body, &req); err != nil {
+				writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "invalid request body"})
+				return
+			}
+		}
+
+		var newPassword string
+		if req.NewPassword != nil {
+			newPassword = strings.TrimSpace(*req.NewPassword)
+		}
+		if newPassword == "" {
+			newPassword = generateEntryPassword()
+		} else {
+			if len(newPassword) < 6 || len(newPassword) > 128 {
+				writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "ssh password must be 6-128 characters"})
+				return
+			}
+		}
+
+		if err := h.store.UpdateUserEntryPassword(r.Context(), userID, newPassword); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "user not found"})
+				return
+			}
+			h.logger.Error("rotate ssh password failed", "user_id", userID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "rotate ssh password failed"})
+			return
+		}
+
+		if h.events != nil {
+			if _, err := h.events.RecordEvent(r.Context(), repository.RecordEventParams{
+				UserID:   &userID,
+				Level:    "info",
+				Type:     "admin.user.ssh_password_rotated",
+				Message:  "管理员重置用户 SSH 密码",
+				Metadata: map[string]any{"operator": "admin"},
+			}); err != nil {
+				h.logger.Error("record event failed", "type", "admin.user.ssh_password_rotated", "error", err)
 			}
 		}
 

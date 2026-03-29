@@ -199,6 +199,8 @@ interface EgressIPDrawerProps {
   egressIpId: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** 更新成功后回调（用于清除列表中缓存的检测结果等） */
+  onUpdated?: (ipId: string) => void;
 }
 
 export function EgressIPDrawer({
@@ -206,6 +208,7 @@ export function EgressIPDrawer({
   egressIpId,
   open,
   onOpenChange,
+  onUpdated,
 }: EgressIPDrawerProps) {
   const { data: ipData } = useEgressIP(egressIpId ?? "");
   const createMutation = useCreateEgressIP();
@@ -348,6 +351,7 @@ export function EgressIPDrawer({
         {
           onSuccess: () => {
             toast.success("出口 IP 已更新");
+            if (egressIpId) onUpdated?.(egressIpId);
             onOpenChange(false);
           },
           onError: () => toast.error("更新失败"),
