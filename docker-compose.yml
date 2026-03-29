@@ -19,6 +19,8 @@ services:
       context: .
       dockerfile: deploy/docker/control-plane/Dockerfile
     restart: unless-stopped
+    privileged: true
+    pid: host
     depends_on:
       postgres:
         condition: service_healthy
