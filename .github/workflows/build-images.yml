@@ -1,26 +1,6 @@
 name: Build and Push Images
 
 on:
-  push:
-    branches: [main]
-    tags: ["v*"]
-    paths:
-      - "cmd/**"
-      - "internal/**"
-      - "web/admin/**"
-      - "deploy/docker/**"
-      - "go.mod"
-      - "go.sum"
-      - ".github/workflows/build-images.yml"
-  pull_request:
-    branches: [main]
-    paths:
-      - "cmd/**"
-      - "internal/**"
-      - "web/admin/**"
-      - "deploy/docker/**"
-      - "go.mod"
-      - "go.sum"
   workflow_call:
     inputs:
       version:
@@ -68,7 +48,6 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -82,14 +61,12 @@ jobs:
           images: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}
           tags: |
             type=sha,prefix=
-            type=ref,event=branch
-            type=ref,event=pr
             type=semver,pattern={{version}},value=${{ inputs.version }},enable=${{ inputs.version != '' }}
             type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version }},enable=${{ inputs.version != '' }}
             type=semver,pattern={{major}},value=${{ inputs.version }},enable=${{ inputs.version != '' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ inputs.version != '' }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -97,7 +74,7 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
