@@ -18,6 +18,7 @@ export interface ConnectionInfo {
   curl_command: string;
   ssh_command: string;
   ssh_port: number;
+  vnc_url?: string;
 }
 
 export interface PortalHostDetail {

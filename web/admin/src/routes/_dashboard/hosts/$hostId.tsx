@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, Check, Copy, Terminal } from "lucide-react";
+import { ArrowLeft, Check, Copy, KeyRound, Monitor, Terminal } from "lucide-react";
 import { toast } from "sonner";
+import { getToken } from "@/lib/auth";
 import { useHostDetail } from "@/hooks/use-hosts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,6 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { BindingManager } from "@/components/hosts/binding-manager";
 import { HostLifecycleActions } from "@/components/hosts/host-lifecycle-actions";
+import { RotatePasswordDialog } from "@/components/users/rotate-password-dialog";
+import { RotateHostSSHPasswordDialog } from "@/components/hosts/rotate-host-ssh-password-dialog";
 
 export const Route = createFileRoute("/_dashboard/hosts/$hostId")({
   component: HostDetailPage,
@@ -36,6 +39,8 @@ const statusConfig: Record<string, { label: string; variant: "default" | "second
 function HostDetailPage() {
   const { hostId } = Route.useParams();
   const { data, isLoading } = useHostDetail(hostId);
+  const [rotateLoginOpen, setRotateLoginOpen] = useState(false);
+  const [rotateSSHOpen, setRotateSSHOpen] = useState(false);
 
   if (isLoading) {
     return (
@@ -60,6 +65,15 @@ function HostDetailPage() {
     variant: "outline" as const,
   };
 
+  function openVNC() {
+    const token = getToken();
+    const wsPath = encodeURIComponent(`v1/admin/hosts/${host.id}/vnc/`);
+    window.open(
+      `/v1/admin/hosts/${host.id}/vnc/vnc.html?autoconnect=true&resize=remote&path=${wsPath}&token=${token}`,
+      "_blank",
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -81,6 +95,10 @@ function HostDetailPage() {
             <div>
               <dt className="text-muted-foreground">主机 ID</dt>
               <dd className="font-mono">{host.id}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">主机短 ID</dt>
+              <dd className="font-mono">{host.short_id || "—"}</dd>
             </div>
             <div>
               <dt className="text-muted-foreground">状态</dt>
@@ -105,8 +123,16 @@ function HostDetailPage() {
               <dd>{host.slot_key}</dd>
             </div>
             <div>
+              <dt className="text-muted-foreground">主机名</dt>
+              <dd>{host.hostname || "—"}</dd>
+            </div>
+            <div>
               <dt className="text-muted-foreground">镜像模板</dt>
               <dd className="font-mono text-xs">{host.template_image_ref}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">时区</dt>
+              <dd>{host.timezone || "—"}</dd>
             </div>
             <div>
               <dt className="text-muted-foreground">创建时间</dt>
@@ -137,10 +163,24 @@ function HostDetailPage() {
             </div>
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">
-                SSH 直连（需要用户 SSH 密码）：
+                SSH 直连（需要这台主机的 SSH 密码）：
               </p>
               <CopyableCommand command={data.connection_info.ssh_command} />
             </div>
+            {data.connection_info.vnc_url && (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  VNC 登录入口：
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <CopyableCommand command={data.connection_info.vnc_url} />
+                  <Button type="button" variant="outline" onClick={openVNC}>
+                    <Monitor className="mr-2 h-4 w-4" />
+                    打开桌面
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -161,17 +201,50 @@ function HostDetailPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>生命周期操作</CardTitle>
+            <CardTitle>生命周期与密码操作</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <HostLifecycleActions hostId={hostId} hostStatus={host.status} />
             <Separator className="my-4" />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setRotateSSHOpen(true)}
+              >
+                <KeyRound className="mr-2 h-4 w-4" />
+                重置主机 SSH 密码
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setRotateLoginOpen(true)}
+              >
+                <KeyRound className="mr-2 h-4 w-4" />
+                轮换用户登录密码
+              </Button>
+              <Button type="button" variant="outline" onClick={openVNC}>
+                <Monitor className="mr-2 h-4 w-4" />
+                打开 VNC 桌面
+              </Button>
+            </div>
             <p className="text-xs text-muted-foreground">
               操作提交后将异步执行，请在任务列表中查看进度。
             </p>
           </CardContent>
         </Card>
       </div>
+
+      <RotatePasswordDialog
+        userId={user.id}
+        open={rotateLoginOpen}
+        onOpenChange={setRotateLoginOpen}
+      />
+      <RotateHostSSHPasswordDialog
+        hostId={host.id}
+        open={rotateSSHOpen}
+        onOpenChange={setRotateSSHOpen}
+      />
     </div>
   );
 }

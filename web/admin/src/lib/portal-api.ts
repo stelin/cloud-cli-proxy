@@ -1,4 +1,5 @@
 import { ApiError } from "./api";
+import { clearCurrentSession, getToken } from "./auth";
 
 const PORTAL_API_BASE = "/v1/user";
 
@@ -6,7 +7,7 @@ export async function portalApiFetch<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const token = localStorage.getItem("admin_token");
+  const token = getToken();
   const res = await fetch(`${PORTAL_API_BASE}${path}`, {
     ...init,
     headers: {
@@ -17,7 +18,7 @@ export async function portalApiFetch<T>(
   });
 
   if (res.status === 401) {
-    localStorage.removeItem("admin_token");
+    clearCurrentSession();
     window.location.href = "/login";
     throw new ApiError(401, "Unauthorized");
   }

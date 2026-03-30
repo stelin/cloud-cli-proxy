@@ -4,20 +4,24 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 )
 
-// ContainerResolver maps an SSH login (short_id + entry_password)
+// ContainerResolver maps an SSH login (host_short_id + entry_password)
 // to the target container's SSH address (host:port).
 type ContainerResolver interface {
-	ResolveContainer(ctx context.Context, shortID, password string) (targetAddr string, err error)
+	ResolveContainer(ctx context.Context, hostShortID, password string) (targetAddr string, err error)
 }
 
 type Server struct {
@@ -30,14 +34,10 @@ type Server struct {
 	containerPassword string
 }
 
-func NewServer(addr, containerUser, containerPassword string, resolver ContainerResolver, logger *slog.Logger) (*Server, error) {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+func NewServer(addr, containerUser, containerPassword, hostKeyPath string, resolver ContainerResolver, logger *slog.Logger) (*Server, error) {
+	signer, err := loadOrGenerateHostKey(hostKeyPath, logger)
 	if err != nil {
-		return nil, fmt.Errorf("generate host key: %w", err)
-	}
-	signer, err := ssh.NewSignerFromKey(priv)
-	if err != nil {
-		return nil, fmt.Errorf("create signer: %w", err)
+		return nil, fmt.Errorf("host key: %w", err)
 	}
 
 	if containerUser == "" {
@@ -56,6 +56,52 @@ func NewServer(addr, containerUser, containerPassword string, resolver Container
 		containerUser:     containerUser,
 		containerPassword: containerPassword,
 	}, nil
+}
+
+func loadOrGenerateHostKey(path string, logger *slog.Logger) (ssh.Signer, error) {
+	if path != "" {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			signer, err := ssh.ParsePrivateKey(data)
+			if err != nil {
+				return nil, fmt.Errorf("parse host key %s: %w", path, err)
+			}
+			logger.Info("SSH proxy loaded persistent host key", "path", path)
+			return signer, nil
+		}
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("read host key %s: %w", path, err)
+		}
+	}
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("generate host key: %w", err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		return nil, fmt.Errorf("create signer: %w", err)
+	}
+
+	if path != "" {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			logger.Warn("cannot create host key directory", "path", path, "error", err)
+			return signer, nil
+		}
+		derBytes, err := x509.MarshalPKCS8PrivateKey(priv)
+		if err != nil {
+			logger.Warn("cannot marshal host key", "error", err)
+			return signer, nil
+		}
+		pemBlock := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: derBytes})
+		if err := os.WriteFile(path, pemBlock, 0o600); err != nil {
+			logger.Warn("cannot persist host key", "path", path, "error", err)
+		} else {
+			logger.Info("SSH proxy generated and persisted new host key", "path", path)
+		}
+	}
+
+	return signer, nil
 }
 
 func (s *Server) ListenAndServe(ctx context.Context) error {

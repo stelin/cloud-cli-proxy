@@ -11,14 +11,12 @@ import (
 )
 
 type resolverRepo interface {
-	GetUserByShortID(ctx context.Context, shortID string) (repository.User, error)
-	GetPrimaryHostByUserID(ctx context.Context, userID string) (repository.Host, error)
+	GetHostByShortID(ctx context.Context, shortID string) (repository.HostSSHAuth, error)
 }
 
 // RepoResolver implements ContainerResolver using the database repository.
-// It validates the user's entry_password, checks that the user is active
-// and has a running host, then resolves the container's SSH address via
-// Docker inspect.
+// It validates the host's entry_password, checks that the owning user is
+// active and the host is running, then resolves the container's SSH address.
 type RepoResolver struct {
 	repo resolverRepo
 }
@@ -27,30 +25,25 @@ func NewRepoResolver(repo resolverRepo) *RepoResolver {
 	return &RepoResolver{repo: repo}
 }
 
-func (r *RepoResolver) ResolveContainer(ctx context.Context, shortID, password string) (string, error) {
-	user, err := r.repo.GetUserByShortID(ctx, shortID)
+func (r *RepoResolver) ResolveContainer(ctx context.Context, hostShortID, password string) (string, error) {
+	auth, err := r.repo.GetHostByShortID(ctx, hostShortID)
 	if err != nil {
-		return "", fmt.Errorf("user not found")
+		return "", fmt.Errorf("host not found")
 	}
 
-	if user.Status != "active" {
-		return "", fmt.Errorf("user suspended")
-	}
-
-	if user.EntryPassword == "" || subtle.ConstantTimeCompare([]byte(user.EntryPassword), []byte(password)) != 1 {
+	if auth.EntryPassword == "" || subtle.ConstantTimeCompare([]byte(auth.EntryPassword), []byte(password)) != 1 {
 		return "", fmt.Errorf("invalid credentials")
 	}
 
-	host, err := r.repo.GetPrimaryHostByUserID(ctx, user.ID)
-	if err != nil {
-		return "", fmt.Errorf("no host available")
+	if auth.UserStatus != "active" {
+		return "", fmt.Errorf("user suspended")
 	}
 
-	if host.Status != "running" {
-		return "", fmt.Errorf("host not running (status: %s)", host.Status)
+	if auth.HostStatus != "running" {
+		return "", fmt.Errorf("host not running (status: %s)", auth.HostStatus)
 	}
 
-	containerName := fmt.Sprintf("cloudproxy-%s", host.ID)
+	containerName := fmt.Sprintf("cloudproxy-%s", auth.HostID)
 	containerIP, err := getContainerIP(ctx, containerName)
 	if err != nil {
 		return "", fmt.Errorf("cannot resolve container address: %w", err)

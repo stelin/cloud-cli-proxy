@@ -10,13 +10,3 @@ export function useChangeLoginPassword() {
       }),
   });
 }
-
-export function useChangeSSHPassword() {
-  return useMutation({
-    mutationFn: (body: { old_password: string; new_ssh_password: string }) =>
-      portalApiFetch<{ status: string }>("/change-ssh-password", {
-        method: "POST",
-        body: JSON.stringify(body),
-      }),
-  });
-}

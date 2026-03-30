@@ -87,6 +87,7 @@ func (h *UnifiedLoginHandler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Req
 	}
 
 	writeJSON(w, nethttp.StatusOK, map[string]any{
+		"short_id":   user.ShortID,
 		"token":      tokenStr,
 		"role":       user.Role,
 		"expires_in": 86400,

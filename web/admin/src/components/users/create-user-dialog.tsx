@@ -30,7 +30,6 @@ type FormValues = z.infer<typeof schema>;
 interface Credentials {
   password: string;
   short_id: string;
-  entry_password: string;
 }
 
 interface CreateUserDialogProps {
@@ -94,7 +93,6 @@ export function CreateUserDialog({
         setCredentials({
           password: res.password,
           short_id: res.short_id,
-          entry_password: res.entry_password,
         });
       },
       onError: (err) => {
@@ -119,11 +117,10 @@ export function CreateUserDialog({
           </DialogHeader>
           <div className="space-y-3">
             <CopyField label="登录密码" value={credentials.password} />
-            <CopyField label="SSH Short ID" value={credentials.short_id} />
-            <CopyField
-              label="SSH 入口密码"
-              value={credentials.entry_password}
-            />
+            <CopyField label="用户短 ID" value={credentials.short_id} />
+            <p className="text-sm text-muted-foreground">
+              SSH 短 ID 和 SSH 密码会在创建主机时按主机单独生成，不在创建用户时发放。
+            </p>
           </div>
           <DialogFooter>
             <Button onClick={handleClose}>关闭</Button>
@@ -139,7 +136,7 @@ export function CreateUserDialog({
         <DialogHeader>
           <DialogTitle>创建用户</DialogTitle>
           <DialogDescription>
-            创建用户后系统将自动生成随机密码。
+              创建用户后系统会生成登录密码和用户短 ID。主机 SSH 凭据需在创建主机时单独生成。
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">

@@ -6,6 +6,7 @@ export interface HostWithUsername {
   id: string;
   user_id: string;
   status: string;
+  short_id: string;
   template_image_ref: string;
   home_volume_name: string;
   slot_key: string;
@@ -37,6 +38,7 @@ export interface ConnectionInfo {
   curl_command: string;
   ssh_command: string;
   ssh_port: number;
+  vnc_url?: string;
 }
 
 export interface HostDetail {
@@ -44,9 +46,12 @@ export interface HostDetail {
     id: string;
     user_id: string;
     status: string;
+    short_id: string;
     template_image_ref: string;
     home_volume_name: string;
     slot_key: string;
+    timezone: string;
+    hostname: string;
     created_at: string;
     updated_at: string;
   };
@@ -74,7 +79,7 @@ export function useCreateHost() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: { user_id: string; egress_ip_id: string; timezone?: string }) =>
-      apiFetch<{ host: HostWithUsername; task_id: string }>("/hosts", {
+      apiFetch<{ host: HostWithUsername; task_id: string; short_id: string; entry_password: string }>("/hosts", {
         method: "POST",
         body: JSON.stringify(data),
       }),
@@ -120,6 +125,20 @@ export function useDeleteHost() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["hosts"] });
       qc.invalidateQueries({ queryKey: ["dashboard-stats"] });
+    },
+  });
+}
+
+export function useRotateHostSSHPassword() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (hostId: string) =>
+      apiFetch<{ new_password: string }>(`/hosts/${hostId}/rotate-ssh-password`, {
+        method: "POST",
+      }),
+    onSuccess: (_data, hostId) => {
+      qc.invalidateQueries({ queryKey: ["hosts"] });
+      qc.invalidateQueries({ queryKey: ["hosts", hostId] });
     },
   });
 }

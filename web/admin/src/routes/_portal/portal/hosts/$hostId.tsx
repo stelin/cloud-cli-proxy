@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeft, Globe, Shield, Monitor, Terminal, Copy, Check } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { getToken } from "@/lib/auth";
 import {
   useMyHostDetail,
   useRebuildHost,
@@ -190,7 +191,7 @@ function PortalHostDetail() {
           <CardContent className="space-y-4">
             <Button
               onClick={() => {
-                const token = localStorage.getItem("admin_token") || "";
+                const token = getToken() || "";
                 const wsPath = encodeURIComponent(
                   `v1/user/hosts/${host.id}/vnc/`
                 );

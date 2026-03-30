@@ -26,6 +26,7 @@ type AdminHostStore interface {
 	GetUser(context.Context, string) (repository.User, error)
 	BindEgressIPToHost(context.Context, string, string) (repository.HostBinding, error)
 	DeleteHost(context.Context, string) error
+	UpdateHostEntryPassword(context.Context, string, string) error
 }
 
 type AdminHostsHandler struct {
@@ -56,6 +57,7 @@ func (h *AdminHostsHandler) List() nethttp.Handler {
 			} else {
 				hosts[i].DockerStatus = "not found"
 			}
+			hosts[i].EntryPassword = ""
 		}
 
 		writeJSON(w, nethttp.StatusOK, map[string]any{"hosts": hosts})
@@ -106,16 +108,29 @@ func (h *AdminHostsHandler) Get() nethttp.Handler {
 		}
 
 		resp := adminHostDetailResponse{HostDetail: detail}
-		if detail.User.ShortID != "" {
+		resp.Host.EntryPassword = ""
+		resp.User.PasswordHash = ""
+		resp.User.EntryPassword = ""
+		sshTarget := detail.Host.ShortID
+		if sshTarget == "" {
+			sshTarget = detail.User.ShortID
+		}
+		if sshTarget != "" {
 			scheme := "https"
 			if r.TLS == nil {
 				scheme = "http"
 			}
+			host := r.Host
+			if idx := strings.Index(host, ":"); idx != -1 {
+				host = host[:idx]
+			}
 			baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
+			vncPath := fmt.Sprintf("/v1/admin/hosts/%s/vnc/vnc.html", detail.Host.ID)
 			resp.ConnectionInfo = &repository.ConnectionInfo{
 				CurlCommand: fmt.Sprintf("curl -sSL %s/entry/%s | bash", baseURL, detail.User.ShortID),
-				SSHCommand:  fmt.Sprintf("ssh %s@%s -p 2222", detail.User.ShortID, r.Host),
+				SSHCommand:  fmt.Sprintf("ssh %s@%s -p 2222", sshTarget, host),
 				SSHPort:     2222,
+				VNCURL:      fmt.Sprintf("%s%s", baseURL, vncPath),
 			}
 		}
 
@@ -147,6 +162,8 @@ func (h *AdminHostsHandler) Create() nethttp.Handler {
 			timezone = "America/Los_Angeles"
 		}
 		hostname := generateHostname()
+		hostShortID := generateShortID()
+		hostEntryPassword := generateEntryPassword()
 
 		if _, err := h.store.GetUser(r.Context(), body.UserID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -158,18 +175,33 @@ func (h *AdminHostsHandler) Create() nethttp.Handler {
 			return
 		}
 
-		host, err := h.store.UpsertHost(r.Context(), repository.UpsertHostParams{
-			UserID:           body.UserID,
-			Status:           "pending",
-			TemplateImageRef: "managed-user",
-			HomeVolumeName:   "",
-			SlotKey:          "primary",
-			Timezone:         timezone,
-			Hostname:         hostname,
-			MemoryLimitMB:    body.MemoryLimitMB,
-			CPULimit:         body.CPULimit,
-			DiskLimitGB:      body.DiskLimitGB,
-		})
+		const maxRetries = 5
+		var host repository.Host
+		var err error
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			host, err = h.store.UpsertHost(r.Context(), repository.UpsertHostParams{
+				UserID:           body.UserID,
+				Status:           "pending",
+				ShortID:          hostShortID,
+				EntryPassword:    hostEntryPassword,
+				TemplateImageRef: "managed-user",
+				HomeVolumeName:   "",
+				SlotKey:          "primary",
+				Timezone:         timezone,
+				Hostname:         hostname,
+				MemoryLimitMB:    body.MemoryLimitMB,
+				CPULimit:         body.CPULimit,
+				DiskLimitGB:      body.DiskLimitGB,
+			})
+			if err == nil {
+				break
+			}
+			if strings.Contains(err.Error(), "short_id") && (strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate")) {
+				hostShortID = generateShortID()
+				continue
+			}
+			break
+		}
 		if err != nil {
 			h.logger.Error("create host failed", "user_id", body.UserID, "error", err)
 			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "create host failed"})
@@ -205,10 +237,13 @@ func (h *AdminHostsHandler) Create() nethttp.Handler {
 			}
 		}
 
+		host.EntryPassword = ""
 		writeJSON(w, nethttp.StatusAccepted, map[string]any{
-			"host":    host,
-			"task_id": task.ID,
-			"status":  "202 Accepted",
+			"host":           host,
+			"task_id":        task.ID,
+			"short_id":       hostShortID,
+			"entry_password": hostEntryPassword,
+			"status":         "202 Accepted",
 		})
 	})
 }
@@ -319,6 +354,37 @@ func (h *AdminHostsHandler) Delete() nethttp.Handler {
 		}
 
 		writeJSON(w, nethttp.StatusOK, map[string]string{"status": "deleted"})
+	})
+}
+
+func (h *AdminHostsHandler) RotateSSHPassword() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		hostID := r.PathValue("hostID")
+		newPassword := generateEntryPassword()
+
+		if err := h.store.UpdateHostEntryPassword(r.Context(), hostID, newPassword); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "host not found"})
+				return
+			}
+			h.logger.Error("rotate host ssh password failed", "host_id", hostID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "rotate ssh password failed"})
+			return
+		}
+
+		if h.events != nil {
+			if _, err := h.events.RecordEvent(r.Context(), repository.RecordEventParams{
+				HostID:   &hostID,
+				Level:    "info",
+				Type:     "admin.host.ssh_password_rotated",
+				Message:  "管理员重置主机 SSH 密码",
+				Metadata: map[string]any{"operator": "admin"},
+			}); err != nil {
+				h.logger.Error("record event failed", "type", "admin.host.ssh_password_rotated", "error", err)
+			}
+		}
+
+		writeJSON(w, nethttp.StatusOK, map[string]any{"new_password": newPassword})
 	})
 }
 

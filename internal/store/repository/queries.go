@@ -111,22 +111,9 @@ func (r *Repository) UpdateUserPassword(ctx context.Context, userID string, pass
 	return nil
 }
 
-func (r *Repository) UpdateUserEntryPassword(ctx context.Context, userID string, entryPassword string) error {
-	result, err := r.db.Exec(ctx, `
-		UPDATE users SET entry_password = $1, updated_at = NOW() WHERE id = $2
-	`, entryPassword, userID)
-	if err != nil {
-		return fmt.Errorf("update user entry password: %w", err)
-	}
-	if result.RowsAffected() == 0 {
-		return fmt.Errorf("update user entry password: %w", pgx.ErrNoRows)
-	}
-	return nil
-}
-
 func (r *Repository) ListHostsByUserID(ctx context.Context, userID string) ([]Host, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id::text, user_id::text, status, template_image_ref, home_volume_name, slot_key, timezone, hostname, memory_limit_mb, cpu_limit, disk_limit_gb, created_at, updated_at
+		SELECT id::text, user_id::text, status, COALESCE(short_id, ''), template_image_ref, home_volume_name, slot_key, timezone, hostname, memory_limit_mb, cpu_limit, disk_limit_gb, created_at, updated_at
 		FROM hosts WHERE user_id = $1
 		ORDER BY created_at ASC
 	`, userID)
@@ -139,7 +126,7 @@ func (r *Repository) ListHostsByUserID(ctx context.Context, userID string) ([]Ho
 	for rows.Next() {
 		var item Host
 		if err := rows.Scan(
-			&item.ID, &item.UserID, &item.Status, &item.TemplateImageRef,
+			&item.ID, &item.UserID, &item.Status, &item.ShortID, &item.TemplateImageRef,
 			&item.HomeVolumeName, &item.SlotKey, &item.Timezone, &item.Hostname,
 			&item.MemoryLimitMB, &item.CPULimit, &item.DiskLimitGB,
 			&item.CreatedAt, &item.UpdatedAt,
@@ -198,7 +185,7 @@ func (r *Repository) GetDashboardStats(ctx context.Context) (DashboardStats, err
 
 func (r *Repository) ListHosts(ctx context.Context) ([]Host, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id::text, user_id::text, status, template_image_ref, home_volume_name, slot_key, timezone, hostname, memory_limit_mb, cpu_limit, disk_limit_gb, created_at, updated_at
+		SELECT id::text, user_id::text, status, COALESCE(short_id, ''), template_image_ref, home_volume_name, slot_key, timezone, hostname, memory_limit_mb, cpu_limit, disk_limit_gb, created_at, updated_at
 		FROM hosts
 		ORDER BY updated_at DESC
 	`)
@@ -214,6 +201,7 @@ func (r *Repository) ListHosts(ctx context.Context) ([]Host, error) {
 			&item.ID,
 			&item.UserID,
 			&item.Status,
+			&item.ShortID,
 			&item.TemplateImageRef,
 			&item.HomeVolumeName,
 			&item.SlotKey,
@@ -259,7 +247,7 @@ func (r *Repository) GetBootstrapUserByUsername(ctx context.Context, username st
 func (r *Repository) GetPrimaryHostByUserID(ctx context.Context, userID string) (Host, error) {
 	var item Host
 	if err := r.db.QueryRow(ctx, `
-		SELECT id::text, user_id::text, status, template_image_ref, home_volume_name, slot_key, timezone, hostname, memory_limit_mb, cpu_limit, disk_limit_gb, created_at, updated_at
+		SELECT id::text, user_id::text, status, COALESCE(short_id, ''), template_image_ref, home_volume_name, slot_key, timezone, hostname, memory_limit_mb, cpu_limit, disk_limit_gb, created_at, updated_at
 		FROM hosts
 		WHERE user_id = $1 AND slot_key = 'primary'
 		LIMIT 1
@@ -267,6 +255,7 @@ func (r *Repository) GetPrimaryHostByUserID(ctx context.Context, userID string) 
 		&item.ID,
 		&item.UserID,
 		&item.Status,
+		&item.ShortID,
 		&item.TemplateImageRef,
 		&item.HomeVolumeName,
 		&item.SlotKey,
@@ -362,8 +351,8 @@ func (r *Repository) UpsertHost(ctx context.Context, params UpsertHostParams) (H
 
 	var item Host
 	if err := r.db.QueryRow(ctx, `
-		INSERT INTO hosts (user_id, status, template_image_ref, home_volume_name, slot_key, timezone, hostname, memory_limit_mb, cpu_limit, disk_limit_gb)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO hosts (user_id, status, short_id, entry_password, template_image_ref, home_volume_name, slot_key, timezone, hostname, memory_limit_mb, cpu_limit, disk_limit_gb)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (user_id, slot_key)
 		DO UPDATE SET
 			status = EXCLUDED.status,
@@ -375,10 +364,14 @@ func (r *Repository) UpsertHost(ctx context.Context, params UpsertHostParams) (H
 			cpu_limit = EXCLUDED.cpu_limit,
 			disk_limit_gb = EXCLUDED.disk_limit_gb,
 			updated_at = NOW()
-		RETURNING id::text, user_id::text, status, template_image_ref, home_volume_name, slot_key, timezone, hostname, memory_limit_mb, cpu_limit, disk_limit_gb, created_at, updated_at
+		RETURNING id::text, user_id::text, status, COALESCE(short_id, ''), COALESCE(entry_password, ''),
+		          template_image_ref, home_volume_name, slot_key, timezone, hostname,
+		          memory_limit_mb, cpu_limit, disk_limit_gb, created_at, updated_at
 	`,
 		params.UserID,
 		params.Status,
+		params.ShortID,
+		params.EntryPassword,
 		params.TemplateImageRef,
 		params.HomeVolumeName,
 		params.SlotKey,
@@ -391,6 +384,8 @@ func (r *Repository) UpsertHost(ctx context.Context, params UpsertHostParams) (H
 		&item.ID,
 		&item.UserID,
 		&item.Status,
+		&item.ShortID,
+		&item.EntryPassword,
 		&item.TemplateImageRef,
 		&item.HomeVolumeName,
 		&item.SlotKey,
@@ -620,7 +615,7 @@ func (r *Repository) GetHostDetail(ctx context.Context, hostID string) (HostDeta
 
 func (r *Repository) ListHostsWithUsername(ctx context.Context) ([]HostWithUsername, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT h.id::text, h.user_id::text, h.status, h.template_image_ref,
+		SELECT h.id::text, h.user_id::text, h.status, COALESCE(h.short_id, ''), h.template_image_ref,
 		       h.home_volume_name, h.slot_key, h.timezone, h.hostname,
 		       h.memory_limit_mb, h.cpu_limit, h.disk_limit_gb,
 		       h.created_at, h.updated_at, u.username,
@@ -643,7 +638,7 @@ func (r *Repository) ListHostsWithUsername(ctx context.Context) ([]HostWithUsern
 	for rows.Next() {
 		var item HostWithUsername
 		if err := rows.Scan(
-			&item.ID, &item.UserID, &item.Status, &item.TemplateImageRef,
+			&item.ID, &item.UserID, &item.Status, &item.ShortID, &item.TemplateImageRef,
 			&item.HomeVolumeName, &item.SlotKey, &item.Timezone, &item.Hostname,
 			&item.MemoryLimitMB, &item.CPULimit, &item.DiskLimitGB,
 			&item.CreatedAt, &item.UpdatedAt,
@@ -762,13 +757,14 @@ func (r *Repository) SetHostWgKeys(ctx context.Context, hostID, wgPrivateKey, wg
 func (r *Repository) GetHost(ctx context.Context, hostID string) (Host, error) {
 	var item Host
 	if err := r.db.QueryRow(ctx, `
-		SELECT id::text, user_id::text, status, template_image_ref, home_volume_name, slot_key, timezone, hostname, memory_limit_mb, cpu_limit, disk_limit_gb, created_at, updated_at
+		SELECT id::text, user_id::text, status, COALESCE(short_id, ''), template_image_ref, home_volume_name, slot_key, timezone, hostname, memory_limit_mb, cpu_limit, disk_limit_gb, created_at, updated_at
 		FROM hosts
 		WHERE id = $1
 	`, hostID).Scan(
 		&item.ID,
 		&item.UserID,
 		&item.Status,
+		&item.ShortID,
 		&item.TemplateImageRef,
 		&item.HomeVolumeName,
 		&item.SlotKey,
@@ -974,7 +970,7 @@ func (r *Repository) UpdateUserExpiry(ctx context.Context, userID string, expire
 
 func (r *Repository) ListRunningHostsByUserID(ctx context.Context, userID string) ([]Host, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id::text, user_id::text, status, template_image_ref, home_volume_name, slot_key, timezone, hostname, memory_limit_mb, cpu_limit, disk_limit_gb, created_at, updated_at
+		SELECT id::text, user_id::text, status, COALESCE(short_id, ''), template_image_ref, home_volume_name, slot_key, timezone, hostname, memory_limit_mb, cpu_limit, disk_limit_gb, created_at, updated_at
 		FROM hosts
 		WHERE user_id = $1 AND status = 'running'
 	`, userID)
@@ -987,7 +983,7 @@ func (r *Repository) ListRunningHostsByUserID(ctx context.Context, userID string
 	for rows.Next() {
 		var item Host
 		if err := rows.Scan(
-			&item.ID, &item.UserID, &item.Status, &item.TemplateImageRef,
+			&item.ID, &item.UserID, &item.Status, &item.ShortID, &item.TemplateImageRef,
 			&item.HomeVolumeName, &item.SlotKey, &item.Timezone, &item.Hostname,
 			&item.MemoryLimitMB, &item.CPULimit, &item.DiskLimitGB,
 			&item.CreatedAt, &item.UpdatedAt,
@@ -1004,7 +1000,7 @@ func (r *Repository) ListRunningHostsByUserID(ctx context.Context, userID string
 
 func (r *Repository) ListRunningHosts(ctx context.Context) ([]Host, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id::text, user_id::text, status, template_image_ref, home_volume_name, slot_key, timezone, hostname, memory_limit_mb, cpu_limit, disk_limit_gb, created_at, updated_at
+		SELECT id::text, user_id::text, status, COALESCE(short_id, ''), template_image_ref, home_volume_name, slot_key, timezone, hostname, memory_limit_mb, cpu_limit, disk_limit_gb, created_at, updated_at
 		FROM hosts
 		WHERE status = 'running'
 		ORDER BY updated_at ASC
@@ -1018,7 +1014,7 @@ func (r *Repository) ListRunningHosts(ctx context.Context) ([]Host, error) {
 	for rows.Next() {
 		var item Host
 		if err := rows.Scan(
-			&item.ID, &item.UserID, &item.Status, &item.TemplateImageRef,
+			&item.ID, &item.UserID, &item.Status, &item.ShortID, &item.TemplateImageRef,
 			&item.HomeVolumeName, &item.SlotKey, &item.Timezone, &item.Hostname,
 			&item.MemoryLimitMB, &item.CPULimit, &item.DiskLimitGB,
 			&item.CreatedAt, &item.UpdatedAt,
@@ -1206,6 +1202,35 @@ func (r *Repository) CreateUserWithRole(ctx context.Context, params CreateUserWi
 		return User{}, fmt.Errorf("create user with role: %w", err)
 	}
 	return item, nil
+}
+
+func (r *Repository) GetHostByShortID(ctx context.Context, shortID string) (HostSSHAuth, error) {
+	var item HostSSHAuth
+	if err := r.db.QueryRow(ctx, `
+		SELECT h.id::text, h.short_id, h.entry_password, h.status, h.user_id::text, u.status
+		FROM hosts h
+		JOIN users u ON u.id = h.user_id
+		WHERE h.short_id = $1
+	`, shortID).Scan(
+		&item.HostID, &item.HostShortID, &item.EntryPassword,
+		&item.HostStatus, &item.UserID, &item.UserStatus,
+	); err != nil {
+		return HostSSHAuth{}, fmt.Errorf("get host by short_id: %w", err)
+	}
+	return item, nil
+}
+
+func (r *Repository) UpdateHostEntryPassword(ctx context.Context, hostID, password string) error {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE hosts SET entry_password = $2, updated_at = NOW() WHERE id = $1
+	`, hostID, password)
+	if err != nil {
+		return fmt.Errorf("update host entry password: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 func scanTasks(rows pgx.Rows) ([]Task, error) {

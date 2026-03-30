@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	nethttp "net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -111,16 +112,27 @@ func (h *UserHostsHandler) Get() nethttp.Handler {
 			EgressBindings: bindings,
 		}
 
-		if user, err := h.store.GetUser(r.Context(), userID); err == nil && user.ShortID != "" {
+		if user, err := h.store.GetUser(r.Context(), userID); err == nil {
 			scheme := "https"
 			if r.TLS == nil {
 				scheme = "http"
 			}
+			host := r.Host
+			if idx := strings.Index(host, ":"); idx != -1 {
+				host = host[:idx]
+			}
 			baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
-			resp.ConnectionInfo = &repository.ConnectionInfo{
-				CurlCommand: fmt.Sprintf("curl -sSL %s/entry/%s | bash", baseURL, user.ShortID),
-				SSHCommand:  fmt.Sprintf("ssh %s@%s -p 2222", user.ShortID, r.Host),
-				SSHPort:     2222,
+			sshTarget := detail.Host.ShortID
+			if sshTarget == "" {
+				sshTarget = user.ShortID
+			}
+			if user.ShortID != "" || sshTarget != "" {
+				resp.ConnectionInfo = &repository.ConnectionInfo{
+					CurlCommand: fmt.Sprintf("curl -sSL %s/entry/%s | bash", baseURL, user.ShortID),
+					SSHCommand:  fmt.Sprintf("ssh %s@%s -p 2222", sshTarget, host),
+					SSHPort:     2222,
+					VNCURL:      fmt.Sprintf("%s/v1/user/hosts/%s/vnc/vnc.html", baseURL, detail.Host.ID),
+				}
 			}
 		}
 

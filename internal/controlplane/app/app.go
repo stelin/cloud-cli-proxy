@@ -37,6 +37,7 @@ type Config struct {
 	SSHProxyAddr              string
 	SSHProxyContainerUser     string
 	SSHProxyContainerPassword string
+	SSHProxyHostKeyPath       string
 }
 
 type App struct {
@@ -157,6 +158,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 			cfg.SSHProxyAddr,
 			cfg.SSHProxyContainerUser,
 			cfg.SSHProxyContainerPassword,
+			cfg.SSHProxyHostKeyPath,
 			resolver,
 			logger.With("component", "ssh-proxy"),
 		)

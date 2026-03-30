@@ -26,6 +26,7 @@ func main() {
 		SSHProxyAddr:              envOrDefault("SSH_PROXY_ADDR", ":2222"),
 		SSHProxyContainerUser:     envOrDefault("SSH_PROXY_CONTAINER_USER", "workspace"),
 		SSHProxyContainerPassword: envOrDefault("SSH_PROXY_CONTAINER_PASSWORD", "workspace"),
+		SSHProxyHostKeyPath:       envOrDefault("SSH_PROXY_HOST_KEY_PATH", "/var/lib/cloud-cli-proxy/ssh_host_ed25519_key"),
 	}
 
 	if cfg.DatabaseURL == "" {

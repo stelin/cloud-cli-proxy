@@ -25,7 +25,6 @@ type AdminUserStore interface {
 	UpdateUserStatus(context.Context, string, string) (repository.User, error)
 	DeleteUser(context.Context, string) error
 	UpdateUserPassword(context.Context, string, string) error
-	UpdateUserEntryPassword(context.Context, string, string) error
 	ListHostsByUserID(context.Context, string) ([]repository.Host, error)
 	UpdateUserExpiry(context.Context, string, *time.Time) (repository.User, error)
 }
@@ -47,6 +46,10 @@ func (h *AdminUsersHandler) List() nethttp.Handler {
 			h.logger.Error("list users failed", "error", err)
 			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "list users failed"})
 			return
+		}
+		for i := range users {
+			users[i].PasswordHash = ""
+			users[i].EntryPassword = ""
 		}
 		writeJSON(w, nethttp.StatusOK, map[string]any{"users": users})
 	})
@@ -74,6 +77,11 @@ func (h *AdminUsersHandler) Get() nethttp.Handler {
 			return
 		}
 
+		user.PasswordHash = ""
+		user.EntryPassword = ""
+		for i := range hosts {
+			hosts[i].EntryPassword = ""
+		}
 		writeJSON(w, nethttp.StatusOK, map[string]any{"user": user, "hosts": hosts})
 	})
 }
@@ -126,7 +134,6 @@ func (h *AdminUsersHandler) Create() nethttp.Handler {
 		}
 
 		shortID := generateShortID()
-		entryPassword := generateEntryPassword()
 
 		const maxRetries = 5
 		var user repository.User
@@ -135,7 +142,7 @@ func (h *AdminUsersHandler) Create() nethttp.Handler {
 				Username:      req.Username,
 				PasswordHash:  string(hash),
 				ShortID:       shortID,
-				EntryPassword: entryPassword,
+				EntryPassword: "",
 			})
 			if err == nil {
 				break
@@ -168,11 +175,12 @@ func (h *AdminUsersHandler) Create() nethttp.Handler {
 			}
 		}
 
+		user.PasswordHash = ""
+		user.EntryPassword = ""
 		writeJSON(w, nethttp.StatusCreated, map[string]any{
-			"user":           user,
-			"short_id":       user.ShortID,
-			"entry_password": user.EntryPassword,
-			"password":       plainPassword,
+			"user":     user,
+			"short_id": user.ShortID,
+			"password": plainPassword,
 		})
 	})
 }
@@ -390,62 +398,3 @@ func (h *AdminUsersHandler) RotatePassword() nethttp.Handler {
 	})
 }
 
-type rotateSSHPasswordRequest struct {
-	NewPassword *string `json:"new_password"`
-}
-
-func (h *AdminUsersHandler) RotateSSHPassword() nethttp.Handler {
-	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
-		userID := r.PathValue("userID")
-
-		var req rotateSSHPasswordRequest
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-		if err != nil {
-			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "read body failed"})
-			return
-		}
-		if len(strings.TrimSpace(string(body))) > 0 {
-			if err := json.Unmarshal(body, &req); err != nil {
-				writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "invalid request body"})
-				return
-			}
-		}
-
-		var newPassword string
-		if req.NewPassword != nil {
-			newPassword = strings.TrimSpace(*req.NewPassword)
-		}
-		if newPassword == "" {
-			newPassword = generateEntryPassword()
-		} else {
-			if len(newPassword) < 6 || len(newPassword) > 128 {
-				writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "ssh password must be 6-128 characters"})
-				return
-			}
-		}
-
-		if err := h.store.UpdateUserEntryPassword(r.Context(), userID, newPassword); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "user not found"})
-				return
-			}
-			h.logger.Error("rotate ssh password failed", "user_id", userID, "error", err)
-			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "rotate ssh password failed"})
-			return
-		}
-
-		if h.events != nil {
-			if _, err := h.events.RecordEvent(r.Context(), repository.RecordEventParams{
-				UserID:   &userID,
-				Level:    "info",
-				Type:     "admin.user.ssh_password_rotated",
-				Message:  "管理员重置用户 SSH 密码",
-				Metadata: map[string]any{"operator": "admin"},
-			}); err != nil {
-				h.logger.Error("record event failed", "type", "admin.user.ssh_password_rotated", "error", err)
-			}
-		}
-
-		writeJSON(w, nethttp.StatusOK, map[string]any{"new_password": newPassword})
-	})
-}

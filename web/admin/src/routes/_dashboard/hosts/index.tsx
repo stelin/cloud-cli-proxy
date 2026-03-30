@@ -12,6 +12,7 @@ import {
   Globe,
 } from "lucide-react";
 import { toast } from "sonner";
+import { getToken } from "@/lib/auth";
 import { useHosts, useDeleteHost, useHostAction } from "@/hooks/use-hosts";
 import { useTasks } from "@/hooks/use-tasks";
 import { CreateHostDialog } from "@/components/hosts/create-host-dialog";
@@ -297,8 +298,7 @@ function HostsPage() {
                                     size="icon"
                                     className="h-8 w-8"
                                     onClick={() => {
-                                      const token =
-                                        localStorage.getItem("admin_token");
+                                      const token = getToken();
                                       const wsPath = encodeURIComponent(
                                         `v1/admin/hosts/${host.id}/vnc/`,
                                       );

@@ -209,7 +209,6 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 			mux.Handle("PATCH /v1/admin/users/{userID}", adminGuard(usersHandler.UpdateStatus()))
 			mux.Handle("DELETE /v1/admin/users/{userID}", adminGuard(usersHandler.Delete()))
 			mux.Handle("POST /v1/admin/users/{userID}/rotate-password", adminGuard(usersHandler.RotatePassword()))
-			mux.Handle("POST /v1/admin/users/{userID}/rotate-ssh-password", adminGuard(usersHandler.RotateSSHPassword()))
 			mux.Handle("PUT /v1/admin/users/{userID}/expiry", adminGuard(usersHandler.UpdateExpiry()))
 		}
 
@@ -237,6 +236,7 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 			mux.Handle("POST /v1/admin/hosts/{hostID}/start", adminGuard(hostsHandler.Start()))
 			mux.Handle("POST /v1/admin/hosts/{hostID}/stop", adminGuard(hostsHandler.Stop()))
 			mux.Handle("POST /v1/admin/hosts/{hostID}/rebuild", adminGuard(hostsHandler.Rebuild()))
+			mux.Handle("POST /v1/admin/hosts/{hostID}/rotate-ssh-password", adminGuard(hostsHandler.RotateSSHPassword()))
 			mux.Handle("DELETE /v1/admin/hosts/{hostID}", adminGuard(hostsHandler.Delete()))
 
 			vncProxy := NewAdminVNCProxyHandler(deps.Logger, deps.AdminHosts)
@@ -260,7 +260,6 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 		if deps.AdminUsers != nil {
 			userPasswordHandler := NewUserPasswordHandler(deps.Logger, deps.AdminUsers)
 			mux.Handle("POST /v1/user/change-password", userGuard(userPasswordHandler.ChangePassword()))
-			mux.Handle("POST /v1/user/change-ssh-password", userGuard(userPasswordHandler.ChangeSSHPassword()))
 		}
 
 		if deps.UserHosts != nil {

@@ -32,6 +32,8 @@ type Host struct {
 	ID               string    `json:"id"`
 	UserID           string    `json:"user_id"`
 	Status           string    `json:"status"`
+	ShortID          string    `json:"short_id"`
+	EntryPassword    string    `json:"entry_password,omitempty"`
 	TemplateImageRef string    `json:"template_image_ref"`
 	HomeVolumeName   string    `json:"home_volume_name"`
 	SlotKey          string    `json:"slot_key"`
@@ -42,6 +44,16 @@ type Host struct {
 	DiskLimitGB      int       `json:"disk_limit_gb"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+// HostSSHAuth holds the data needed by the SSH proxy resolver.
+type HostSSHAuth struct {
+	HostID        string
+	HostShortID   string
+	EntryPassword string
+	HostStatus    string
+	UserID        string
+	UserStatus    string
 }
 
 type HostBinding struct {
@@ -186,6 +198,7 @@ type ConnectionInfo struct {
 	CurlCommand string `json:"curl_command"`
 	SSHCommand  string `json:"ssh_command"`
 	SSHPort     int    `json:"ssh_port"`
+	VNCURL      string `json:"vnc_url,omitempty"`
 }
 
 type UserEgressBinding struct {
@@ -231,6 +244,8 @@ type CreateTaskParams struct {
 type UpsertHostParams struct {
 	UserID           string
 	Status           string
+	ShortID          string
+	EntryPassword    string
 	TemplateImageRef string
 	HomeVolumeName   string
 	SlotKey          string

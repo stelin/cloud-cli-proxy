@@ -4,10 +4,7 @@ import { Globe } from "lucide-react";
 import { toast } from "sonner";
 import { useMyHosts } from "@/hooks/use-portal-hosts";
 import type { PortalHost } from "@/hooks/use-portal-hosts";
-import {
-  useChangeLoginPassword,
-  useChangeSSHPassword,
-} from "@/hooks/use-portal-password";
+import { useChangeLoginPassword } from "@/hooks/use-portal-password";
 import { ApiError } from "@/lib/api";
 import {
   Card,
@@ -98,13 +95,9 @@ function PortalHostList() {
   const { data, isLoading } = useMyHosts();
   const hosts = data?.hosts ?? [];
   const changeLogin = useChangeLoginPassword();
-  const changeSSH = useChangeSSHPassword();
   const [loginOld, setLoginOld] = useState("");
   const [loginNew, setLoginNew] = useState("");
   const [loginConfirm, setLoginConfirm] = useState("");
-  const [sshLoginPw, setSshLoginPw] = useState("");
-  const [sshNew, setSshNew] = useState("");
-  const [sshConfirm, setSshConfirm] = useState("");
 
   function submitLoginPassword(e: FormEvent) {
     e.preventDefault();
@@ -124,30 +117,6 @@ function PortalHostList() {
           setLoginOld("");
           setLoginNew("");
           setLoginConfirm("");
-        },
-        onError: (err) => toast.error(parseApiError(err)),
-      },
-    );
-  }
-
-  function submitSSHPassword(e: FormEvent) {
-    e.preventDefault();
-    if (sshNew.length < 6) {
-      toast.error("新 SSH 密码至少 6 个字符");
-      return;
-    }
-    if (sshNew !== sshConfirm) {
-      toast.error("两次输入的新 SSH 密码不一致");
-      return;
-    }
-    changeSSH.mutate(
-      { old_password: sshLoginPw, new_ssh_password: sshNew },
-      {
-        onSuccess: () => {
-          toast.success("SSH 密码已更新");
-          setSshLoginPw("");
-          setSshNew("");
-          setSshConfirm("");
         },
         onError: (err) => toast.error(parseApiError(err)),
       },
@@ -250,55 +219,17 @@ function PortalHostList() {
 
         <Card>
           <CardHeader>
-            <CardTitle>修改 SSH 密码</CardTitle>
+            <CardTitle>SSH 与桌面连接</CardTitle>
             <CardDescription>
-              用于 SSH 连接容器；需用当前登录密码验证身份。
+              SSH 密码现在按主机分别管理，不再是用户级共享密码。
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={submitSSHPassword} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="portal-ssh-login">登录密码（验证身份）</Label>
-                <Input
-                  id="portal-ssh-login"
-                  type="password"
-                  autoComplete="current-password"
-                  value={sshLoginPw}
-                  onChange={(e) => setSshLoginPw(e.target.value)}
-                />
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground">
+                每台主机都有独立的 SSH 短 ID 与 SSH 密码。请进入具体主机详情页查看连接命令、VNC 入口和当前主机的接入方式。
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="portal-ssh-new">新 SSH 密码</Label>
-                <Input
-                  id="portal-ssh-new"
-                  type="password"
-                  autoComplete="new-password"
-                  value={sshNew}
-                  onChange={(e) => setSshNew(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="portal-ssh-confirm">确认新 SSH 密码</Label>
-                <Input
-                  id="portal-ssh-confirm"
-                  type="password"
-                  autoComplete="new-password"
-                  value={sshConfirm}
-                  onChange={(e) => setSshConfirm(e.target.value)}
-                />
-              </div>
-              <Button
-                type="submit"
-                disabled={
-                  changeSSH.isPending ||
-                  !sshLoginPw ||
-                  !sshNew ||
-                  !sshConfirm
-                }
-              >
-                {changeSSH.isPending ? "保存中…" : "更新 SSH 密码"}
-              </Button>
-            </form>
+            </div>
           </CardContent>
         </Card>
       </div>

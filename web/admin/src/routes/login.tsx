@@ -4,7 +4,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import { setToken } from "@/lib/auth";
+import { removeSession, saveSession, switchSession } from "@/lib/auth";
+import { useAuthSessions } from "@/hooks/use-auth-sessions";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -30,6 +31,7 @@ export const Route = createFileRoute("/login")({
 function LoginPage() {
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
+  const { sessions } = useAuthSessions();
 
   const {
     register,
@@ -53,13 +55,14 @@ function LoginPage() {
       }
 
       return res.json() as Promise<{
+        short_id: string;
         token: string;
         role: string;
         expires_in: number;
       }>;
     },
     onSuccess: (data) => {
-      setToken(data.token);
+      saveSession(data.short_id, data.token);
       if (data.role === "admin") {
         navigate({ to: "/" });
       } else {
@@ -127,6 +130,52 @@ function LoginPage() {
               {loginMutation.isPending ? "登录中…" : "登录"}
             </Button>
           </form>
+
+          {sessions.length > 0 && (
+            <div className="mt-6 space-y-3 border-t pt-4">
+              <p className="text-sm font-medium">已保存会话</p>
+              <div className="space-y-2">
+                {sessions.map((session) => (
+                  <div
+                    key={session.id}
+                    className="flex items-center justify-between rounded-md border p-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-mono text-sm">{session.shortId}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {session.role === "admin" ? "管理员" : "用户"}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const next = switchSession(session.id);
+                          if (next?.role === "admin") {
+                            navigate({ to: "/" });
+                          } else {
+                            navigate({ to: "/portal" });
+                          }
+                        }}
+                      >
+                        切换
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeSession(session.id)}
+                      >
+                        删除
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

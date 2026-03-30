@@ -4,13 +4,9 @@ import {
   ArrowLeft,
   Ban,
   Calendar,
-  Check,
   CheckCircle,
   Copy,
-  Eye,
-  EyeOff,
   KeyRound,
-  ServerCog,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -39,7 +35,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DeleteUserDialog } from "@/components/users/delete-user-dialog";
 import { RotatePasswordDialog } from "@/components/users/rotate-password-dialog";
-import { RotateSSHPasswordDialog } from "@/components/users/rotate-ssh-password-dialog";
 
 export const Route = createFileRoute("/_dashboard/users/$userId")({
   component: UserDetailPage,
@@ -62,10 +57,7 @@ function UserDetailPage() {
   const updateStatus = useUpdateUserStatus();
   const updateExpiry = useUpdateUserExpiry();
   const [rotateOpen, setRotateOpen] = useState(false);
-  const [rotateSSHOpen, setRotateSSHOpen] = useState(false);
-  const [sshPasswordVisible, setSshPasswordVisible] = useState(false);
   const [shortIdCopied, setShortIdCopied] = useState(false);
-  const [sshCopied, setSshCopied] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [expiryOpen, setExpiryOpen] = useState(false);
   const [expiryValue, setExpiryValue] = useState("");
@@ -210,55 +202,6 @@ function UserDetailPage() {
               </div>
             </div>
             <Separator />
-            <div className="flex items-start justify-between gap-2 text-sm">
-              <span className="shrink-0 text-muted-foreground">SSH 密码</span>
-              <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
-                <span className="max-w-[min(100%,12rem)] break-all font-mono text-xs">
-                  {user.entry_password
-                    ? sshPasswordVisible
-                      ? user.entry_password
-                      : "•".repeat(Math.min(user.entry_password.length, 12))
-                    : "—"}
-                </span>
-                {user.entry_password ? (
-                  <>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0"
-                      onClick={() => setSshPasswordVisible((v) => !v)}
-                      aria-label={sshPasswordVisible ? "隐藏" : "显示"}
-                    >
-                      {sshPasswordVisible ? (
-                        <EyeOff className="h-4 w-4" />
-                      ) : (
-                        <Eye className="h-4 w-4" />
-                      )}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0"
-                      onClick={() => {
-                        navigator.clipboard.writeText(user.entry_password!);
-                        setSshCopied(true);
-                        toast.success("已复制 SSH 密码");
-                        setTimeout(() => setSshCopied(false), 2000);
-                      }}
-                    >
-                      {sshCopied ? (
-                        <Check className="h-4 w-4 text-green-600" />
-                      ) : (
-                        <Copy className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </>
-                ) : null}
-              </div>
-            </div>
-            <Separator />
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">用户名</span>
               <span>{user.username}</span>
@@ -326,14 +269,6 @@ function UserDetailPage() {
               轮换登录密码
             </Button>
             <Button
-              variant="outline"
-              className="w-full justify-start"
-              onClick={() => setRotateSSHOpen(true)}
-            >
-              <ServerCog className="mr-2 h-4 w-4" />
-              重置 SSH 密码
-            </Button>
-            <Button
               variant="destructive"
               className="w-full justify-start"
               onClick={() => setDeleteOpen(true)}
@@ -368,7 +303,13 @@ function UserDetailPage() {
                 {hosts.map((host) => (
                   <TableRow key={host.id}>
                     <TableCell className="font-mono text-xs">
-                      {host.id}
+                      <Link
+                        to="/hosts/$hostId"
+                        params={{ hostId: host.id }}
+                        className="text-primary hover:underline"
+                      >
+                        {host.id}
+                      </Link>
                     </TableCell>
                     <TableCell>
                       <Badge
@@ -395,13 +336,6 @@ function UserDetailPage() {
         userId={userId}
         open={rotateOpen}
         onOpenChange={setRotateOpen}
-      />
-      <RotateSSHPasswordDialog
-        userId={userId}
-        open={rotateSSHOpen}
-        onOpenChange={(open) => {
-          setRotateSSHOpen(open);
-        }}
       />
       {deleteOpen && (
         <DeleteUserDialog

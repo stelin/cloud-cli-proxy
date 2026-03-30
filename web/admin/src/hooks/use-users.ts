@@ -6,7 +6,6 @@ export interface User {
   username: string;
   status: string;
   short_id?: string;
-  entry_password?: string;
   expires_at: string | null;
   created_at: string;
   updated_at: string;
@@ -16,6 +15,8 @@ export interface Host {
   id: string;
   user_id: string;
   status: string;
+  short_id?: string;
+  hostname?: string;
   template_image_ref: string;
   slot_key: string;
   created_at: string;
@@ -40,7 +41,6 @@ interface CreateUserResponse {
   user: User;
   password: string;
   short_id: string;
-  entry_password: string;
 }
 
 export function useCreateUser() {
@@ -101,25 +101,6 @@ export function useRotatePassword() {
       newPassword?: string;
     }) =>
       apiFetch<{ new_password: string }>(`/users/${userId}/rotate-password`, {
-        method: "POST",
-        body:
-          newPassword !== undefined && newPassword !== ""
-            ? JSON.stringify({ new_password: newPassword })
-            : undefined,
-      }),
-  });
-}
-
-export function useRotateSSHPassword() {
-  return useMutation({
-    mutationFn: ({
-      userId,
-      newPassword,
-    }: {
-      userId: string;
-      newPassword?: string;
-    }) =>
-      apiFetch<{ new_password: string }>(`/users/${userId}/rotate-ssh-password`, {
         method: "POST",
         body:
           newPassword !== undefined && newPassword !== ""

@@ -66,6 +66,10 @@ export function CreateHostDialog({
   const [egressIpId, setEgressIpId] = useState("");
   const [timezone, setTimezone] = useState("America/Los_Angeles");
   const [taskId, setTaskId] = useState<string | null>(null);
+  const [hostAccess, setHostAccess] = useState<{
+    shortId: string;
+    entryPassword: string;
+  } | null>(null);
   const { data: usersData, isLoading: loadingUsers } = useUsers();
   const { data: egressData, isLoading: loadingEgress } = useEgressIPs();
   const createMutation = useCreateHost();
@@ -99,6 +103,10 @@ export function CreateHostDialog({
       {
         onSuccess: (data: any) => {
           setTaskId(data.task_id);
+          setHostAccess({
+            shortId: data.short_id,
+            entryPassword: data.entry_password,
+          });
         },
         onError: () => toast.error("提交失败"),
       },
@@ -110,6 +118,7 @@ export function CreateHostDialog({
     setEgressIpId("");
     setTimezone("America/Los_Angeles");
     setTaskId(null);
+    setHostAccess(null);
     onOpenChange(false);
   }
 
@@ -238,6 +247,16 @@ export function CreateHostDialog({
                 </p>
               </div>
             </div>
+
+            {hostAccess && (
+              <div className="rounded-md border bg-muted/50 p-3 text-sm">
+                <p className="font-medium">主机 SSH 凭据（仅展示一次）</p>
+                <div className="mt-2 space-y-1 font-mono text-xs">
+                  <p>主机短 ID：{hostAccess.shortId}</p>
+                  <p>SSH 密码：{hostAccess.entryPassword}</p>
+                </div>
+              </div>
+            )}
 
             {taskStatus === "failed" && task?.last_error_summary && (
               <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
