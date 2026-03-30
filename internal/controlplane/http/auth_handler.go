@@ -16,7 +16,7 @@ import (
 
 // AuthUserStore 统一登录所需的 store 接口
 type AuthUserStore interface {
-	GetUserByShortIDForAuth(context.Context, string) (repository.User, error)
+	GetUserByLoginIdentifierForAuth(context.Context, string) (repository.User, error)
 }
 
 type UnifiedLoginHandler struct {
@@ -48,23 +48,23 @@ func (h *UnifiedLoginHandler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Req
 		return
 	}
 
-	// 兼容：如果 short_id 为空但 username 有值，用 username 作为 short_id
-	shortID := req.ShortID
-	if shortID == "" {
-		shortID = req.Username
+	// 登录标识：优先使用 short_id 字段，否则使用 username（与网页表单「用户名」一致）
+	loginID := req.ShortID
+	if loginID == "" {
+		loginID = req.Username
 	}
-	if shortID == "" || req.Password == "" {
-		writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "short_id and password are required"})
+	if loginID == "" || req.Password == "" {
+		writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "username and password are required"})
 		return
 	}
 
-	user, err := h.store.GetUserByShortIDForAuth(r.Context(), shortID)
+	user, err := h.store.GetUserByLoginIdentifierForAuth(r.Context(), loginID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeJSON(w, nethttp.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 			return
 		}
-		h.logger.Error("unified login: lookup user failed", "short_id", shortID, "error", err)
+		h.logger.Error("unified login: lookup user failed", "login_id", loginID, "error", err)
 		writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
@@ -87,6 +87,7 @@ func (h *UnifiedLoginHandler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Req
 	}
 
 	writeJSON(w, nethttp.StatusOK, map[string]any{
+		"username":   user.Username,
 		"short_id":   user.ShortID,
 		"token":      tokenStr,
 		"role":       user.Role,

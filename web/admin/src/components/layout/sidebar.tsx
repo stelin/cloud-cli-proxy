@@ -7,6 +7,7 @@ import {
   ListTodo,
   ScrollText,
   LogOut,
+  Cloud,
 } from "lucide-react";
 import { logout } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -25,12 +26,21 @@ export function Sidebar() {
   const currentPath = routerState.location.pathname;
 
   return (
-    <aside className="flex w-60 flex-col border-r bg-background">
-      <div className="flex h-16 items-center border-b px-6">
-        <span className="text-lg font-semibold">Cloud CLI Proxy</span>
+    <aside className="flex w-60 flex-col bg-sidebar text-sidebar-foreground">
+      <div className="flex h-16 items-center gap-2.5 px-5">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
+          <Cloud className="h-4.5 w-4.5 text-primary-foreground" />
+        </div>
+        <div className="flex flex-col">
+          <span className="text-sm font-semibold text-white leading-tight">Cloud CLI</span>
+          <span className="text-[10px] font-medium text-sidebar-muted tracking-wider uppercase">Proxy</span>
+        </div>
       </div>
 
-      <nav className="flex-1 space-y-1 p-3">
+      <nav className="flex-1 px-3 pt-4 space-y-0.5">
+        <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-muted">
+          管理
+        </p>
         {navItems.map((item) => {
           const isActive =
             item.to === "/"
@@ -42,23 +52,23 @@ export function Sidebar() {
               key={item.to}
               to={item.to}
               className={cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                "flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-all duration-150",
                 isActive
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                  ? "bg-sidebar-accent text-white shadow-sm"
+                  : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-white",
               )}
             >
-              <item.icon className="h-4 w-4" />
+              <item.icon className={cn("h-4 w-4", isActive && "text-primary-foreground")} />
               {item.label}
             </Link>
           );
         })}
       </nav>
 
-      <div className="border-t p-3">
+      <div className="px-3 pb-4">
         <button
           onClick={logout}
-          className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium text-sidebar-foreground/50 transition-colors hover:bg-sidebar-accent/50 hover:text-white"
         >
           <LogOut className="h-4 w-4" />
           退出登录

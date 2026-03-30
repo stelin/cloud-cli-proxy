@@ -43,3 +43,4 @@ secrets/
 .data/
 
 host-agent
+web/admin/.tanstack/

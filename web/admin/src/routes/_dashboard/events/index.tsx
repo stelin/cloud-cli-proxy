@@ -1,9 +1,16 @@
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
+import { ChevronDown, ChevronRight, RotateCcw, ScrollText } from "lucide-react";
 import { useEvents, eventTypeLabel, type EventItem } from "@/hooks/use-events";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -12,6 +19,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { PageHeader } from "@/components/layout/page-header";
+import { DataTableShell } from "@/components/layout/data-table-shell";
+import { EmptyState } from "@/components/layout/empty-state";
 
 export const Route = createFileRoute("/_dashboard/events/")({
   component: EventsPage,
@@ -19,8 +29,10 @@ export const Route = createFileRoute("/_dashboard/events/")({
 
 const PAGE_SIZE = 50;
 
+const ALL_EVENT_TYPES = "__all__";
+
 const eventTypes = [
-  { value: "", label: "全部类型" },
+  { value: ALL_EVENT_TYPES, label: "全部类型" },
   { value: "auth.success", label: "认证成功" },
   { value: "auth.failed", label: "认证失败" },
   { value: "user.expired", label: "用户过期" },
@@ -47,12 +59,15 @@ function formatDate(dateStr: string) {
 }
 
 function EventsPage() {
-  const [typeFilter, setTypeFilter] = useState<string>("");
+  const [typeFilter, setTypeFilter] = useState<string>(ALL_EVENT_TYPES);
   const [offset, setOffset] = useState(0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  const apiType =
+    typeFilter === ALL_EVENT_TYPES || !typeFilter ? undefined : typeFilter;
+
   const { data, isLoading } = useEvents({
-    type: typeFilter || undefined,
+    type: apiType,
     limit: PAGE_SIZE,
     offset,
   });
@@ -61,33 +76,37 @@ function EventsPage() {
   const total = data?.total ?? 0;
 
   function handleResetFilter() {
-    setTypeFilter("");
+    setTypeFilter(ALL_EVENT_TYPES);
     setOffset(0);
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">事件日志</h1>
-        <p className="text-sm text-muted-foreground">每 15 秒自动刷新</p>
-      </div>
+      <PageHeader
+        title="事件日志"
+        description="系统审计与运维事件，按类型筛选；每 15 秒自动刷新"
+      />
 
-      <div className="flex items-center gap-3">
-        <select
+      <div className="flex flex-wrap items-center gap-3">
+        <Select
           value={typeFilter}
-          onChange={(e) => {
-            setTypeFilter(e.target.value);
+          onValueChange={(v) => {
+            setTypeFilter(v);
             setOffset(0);
           }}
-          className="rounded-md border bg-background px-3 py-2 text-sm"
         >
-          {eventTypes.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
-            </option>
-          ))}
-        </select>
-        {typeFilter && (
+          <SelectTrigger className="w-[220px]">
+            <SelectValue placeholder="全部类型" />
+          </SelectTrigger>
+          <SelectContent>
+            {eventTypes.map((t) => (
+              <SelectItem key={t.value} value={t.value}>
+                {t.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {typeFilter !== ALL_EVENT_TYPES && (
           <Button variant="ghost" size="sm" onClick={handleResetFilter}>
             <RotateCcw className="mr-1 h-3 w-3" />
             重置
@@ -95,7 +114,7 @@ function EventsPage() {
         )}
       </div>
 
-      <div className="rounded-md border bg-background">
+      <DataTableShell>
         <Table>
           <TableHeader>
             <TableRow>
@@ -120,11 +139,24 @@ function EventsPage() {
               ))
             ) : events.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  暂无事件
+                <TableCell colSpan={6} className="p-0">
+                  <EmptyState
+                    icon={ScrollText}
+                    title="暂无事件"
+                    description={
+                      typeFilter !== ALL_EVENT_TYPES
+                        ? "当前筛选条件下没有记录，可重置类型或翻页查看"
+                        : "系统尚未记录事件，或列表为空"
+                    }
+                    action={
+                      typeFilter !== ALL_EVENT_TYPES ? (
+                        <Button variant="outline" size="sm" onClick={handleResetFilter}>
+                          <RotateCcw className="mr-1 h-3 w-3" />
+                          重置筛选
+                        </Button>
+                      ) : undefined
+                    }
+                  />
                 </TableCell>
               </TableRow>
             ) : (
@@ -141,7 +173,7 @@ function EventsPage() {
             )}
           </TableBody>
         </Table>
-      </div>
+      </DataTableShell>
 
       {total > 0 && (
         <div className="flex items-center justify-between text-sm text-muted-foreground">

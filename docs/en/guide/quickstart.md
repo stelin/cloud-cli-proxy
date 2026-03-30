@@ -2,6 +2,12 @@
 
 ## Docker Compose Deployment (Recommended)
 
+### Prerequisites
+
+- Linux host (Ubuntu 22.04+ / Debian 12+)
+- Docker Engine 28+, Docker Compose v2
+- At least one egress IP (WireGuard config or proxy server)
+
 ### Step 1: Clone
 
 ```bash
@@ -24,6 +30,10 @@ Choose a database mode:
 
 Both options auto-generate an admin password (20 chars) and JWT secret (48 chars).
 
+::: warning Important
+The script displays the admin password once. Save it immediately!
+:::
+
 ### Step 3: Start Services
 
 ```bash
@@ -38,34 +48,42 @@ docker compose up -d --build control-plane admin
 
 ```bash
 curl http://127.0.0.1:8080/healthz
-# {"status":"ok"}
+# {"status":"ok","checks":{"database":"ok","agent":"ok"}}
 ```
 
 Service endpoints:
-- API: `http://YOUR_HOST:8080`
-- Admin dashboard: `http://YOUR_HOST:3000`
+- **API**: `http://YOUR_HOST:8080`
+- **Admin dashboard**: `http://YOUR_HOST:3000`
+- **SSH proxy**: `YOUR_HOST:2222`
 
 ## Provisioning Users
 
-Four steps: **login -> add egress IP -> create user -> send connection command**.
+Five steps: **login → add egress IP → create user → create host & bind → send connection command**.
 
-### Get Admin Token
+### 1. Get Admin Token
+
+Log in via the admin dashboard, or use the API:
 
 ```bash
-TOKEN=$(curl -s -X POST http://YOUR_HOST:8080/v1/admin/login \
+TOKEN=$(curl -s -X POST http://YOUR_HOST:8080/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"your-admin-password"}' | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
 ```
 
-### Add Egress IP
+### 2. Add Egress IP
+
+Two tunnel types are supported:
+
+**WireGuard type (full-tunnel VPN):**
 
 ```bash
 curl -s -X POST http://YOUR_HOST:8080/v1/admin/egress-ips \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "label": "hk-exit-01",
+    "label": "hk-wg-01",
     "ip_address": "203.0.113.10",
+    "tunnel_type": "wireguard",
     "provider": "manual",
     "wg_endpoint": "vpn-provider.example.com:51820",
     "wg_public_key": "PeerPublicKeyBase64",
@@ -74,44 +92,156 @@ curl -s -X POST http://YOUR_HOST:8080/v1/admin/egress-ips \
   }'
 ```
 
-### Create User
+**Proxy type (proxy protocols):**
+
+Supports 5 protocols — SOCKS5, VMess, Shadowsocks, Trojan, HTTP.
+
+```bash
+# Shadowsocks example
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/egress-ips \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "label": "jp-ss-01",
+    "ip_address": "198.51.100.5",
+    "tunnel_type": "proxy",
+    "provider": "manual",
+    "proxy_config": {
+      "type": "shadowsocks",
+      "server": "198.51.100.5",
+      "server_port": 8388,
+      "method": "aes-256-gcm",
+      "password": "your-ss-password"
+    }
+  }'
+```
+
+```bash
+# SOCKS5 example
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/egress-ips \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "label": "us-socks-01",
+    "ip_address": "192.0.2.50",
+    "tunnel_type": "proxy",
+    "provider": "manual",
+    "proxy_config": {
+      "type": "socks",
+      "server": "192.0.2.50",
+      "server_port": 1080,
+      "username": "user",
+      "password": "pass"
+    }
+  }'
+```
+
+**Test egress IP connectivity:**
+
+```bash
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/egress-ips/{ipID}/test \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Tests connectivity, exit IP match, and DNS leak detection.
+
+### 3. Create User
 
 ```bash
 curl -s -X POST http://YOUR_HOST:8080/v1/admin/users \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"username":"zhangsan","password":"initial-password-for-user"}'
+  -d '{
+    "username": "zhangsan",
+    "password": "initial-password-for-user",
+    "expires_at": "2026-12-31T23:59:59Z"
+  }'
 ```
 
-### Send to User
+### 4. Create Host & Bind Egress IP
 
-Share this command with your user:
+**Create host:**
+
+```bash
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/hosts \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "user-uuid"}'
+```
+
+**Bind egress IP:**
+
+```bash
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/bindings \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"host_id": "host-uuid", "egress_ip_id": "egress-ip-uuid"}'
+```
+
+::: tip
+A host requires at least one bound egress IP to start.
+:::
+
+### 5. Send to User
+
+Copy the access command from the host detail page in the admin dashboard, or send this directly (replace `SHORT_ID` with the host's short ID):
+
+```bash
+curl -sSf http://YOUR_HOST/entry/SHORT_ID | bash
+```
+
+Or use the bootstrap method (requires username input):
 
 ```bash
 curl -sSf http://YOUR_HOST:8080/v1/bootstrap/script | bash
 ```
-
-After entering username and password, they'll land in their dedicated cloud machine within seconds.
 
 ## User Access
 
 > Share this section directly with your users.
 
-Run the following command and enter the credentials provided by your admin:
+### Connect to Cloud Host
+
+Run the command your admin provided:
 
 ```bash
-curl -sSf http://YOUR_HOST:8080/v1/bootstrap/script | bash
+curl -sSf http://YOUR_HOST/entry/abc123 | bash
 ```
 
-Pre-installed tools:
-- **Claude Code** -- use directly in terminal
-- **Browser desktop** -- accessible via VNC (port 6080)
-- Common tools: Git, tmux, zsh, Node.js, etc.
+Enter your password and you'll be in your cloud host within seconds.
 
-If disconnected, re-run the same `curl` command to reconnect.
+### Pre-installed Tools
+
+| Tool | Description |
+|------|-------------|
+| **Claude Code** | AI coding assistant — just run `claude` in terminal |
+| **KasmVNC + Chromium** | Browser remote desktop, accessible via admin or user panel |
+| **Git** | Version control |
+| **tmux** | Terminal multiplexer, sessions survive disconnects |
+| **zsh** | Enhanced shell experience |
+| **Node.js** | JavaScript runtime |
+
+### Using Claude Code
+
+Once inside your cloud host, just run:
+
+```bash
+claude
+```
+
+All Claude API requests are automatically routed through the admin-designated exit IP. No proxy configuration needed.
+
+### Reconnecting
+
+If your SSH connection drops, re-run the same `curl` command to reconnect. Your container keeps running.
+
+### Rebuilding
+
+If you need to reset your environment, click "Rebuild" in the user panel. This recreates the container but preserves your home directory data.
 
 ## Next Steps
 
-- [Deployment Guide](./deployment) -- systemd native deployment
-- [Configuration](./configuration) -- Environment variables and WireGuard setup
-- [API Reference](../reference/api) -- Full Admin API docs
+- [Deployment Guide](./deployment) — systemd native deployment
+- [Configuration](./configuration) — Environment variables and networking
+- [API Reference](../reference/api) — Full Admin API docs
+- [FAQ & Recovery](../reference/faq) — Troubleshooting and disaster recovery

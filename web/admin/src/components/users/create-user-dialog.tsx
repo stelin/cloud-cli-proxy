@@ -28,6 +28,7 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 interface Credentials {
+  username: string;
   password: string;
   short_id: string;
 }
@@ -91,6 +92,7 @@ export function CreateUserDialog({
       onSuccess: (res) => {
         toast.success("用户创建成功");
         setCredentials({
+          username: res.user.username,
           password: res.password,
           short_id: res.short_id,
         });
@@ -116,10 +118,11 @@ export function CreateUserDialog({
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
+            <CopyField label="用户名（网页登录）" value={credentials.username} />
             <CopyField label="登录密码" value={credentials.password} />
-            <CopyField label="用户短 ID" value={credentials.short_id} />
+            <CopyField label="用户短 ID（curl / 一键连接）" value={credentials.short_id} />
             <p className="text-sm text-muted-foreground">
-              SSH 短 ID 和 SSH 密码会在创建主机时按主机单独生成，不在创建用户时发放。
+              用户使用「用户名 + 登录密码」登录管理后台或门户。短 ID 用于一键连接等场景。主机的 SSH 短 ID 与 SSH 密码在创建主机时单独生成。
             </p>
           </div>
           <DialogFooter>
@@ -136,7 +139,7 @@ export function CreateUserDialog({
         <DialogHeader>
           <DialogTitle>创建用户</DialogTitle>
           <DialogDescription>
-              创建用户后系统会生成登录密码和用户短 ID。主机 SSH 凭据需在创建主机时单独生成。
+            创建用户后系统会生成登录密码与用户短 ID（短 ID 用于一键连接，非网页登录账号）。主机 SSH 凭据需在创建主机时单独生成。
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">

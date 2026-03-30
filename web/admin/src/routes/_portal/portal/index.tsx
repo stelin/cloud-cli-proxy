@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Globe } from "lucide-react";
+import { Globe, Server } from "lucide-react";
 import { toast } from "sonner";
 import { useMyHosts } from "@/hooks/use-portal-hosts";
 import type { PortalHost } from "@/hooks/use-portal-hosts";
@@ -16,6 +16,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PageHeader } from "@/components/layout/page-header";
+import { EmptyState } from "@/components/layout/empty-state";
 
 export const Route = createFileRoute("/_portal/portal/")({
   component: PortalHostList,
@@ -37,6 +39,13 @@ const statusStyles: Record<string, { label: string; className: string }> = {
   pending: { label: "等待中", className: "bg-blue-100 text-blue-700" },
 };
 
+const statusBarClass: Record<string, string> = {
+  running: "bg-emerald-500",
+  stopped: "bg-muted-foreground/35",
+  rebuilding: "bg-amber-500",
+  pending: "bg-sky-500",
+};
+
 function StatusBadge({ status }: { status: string }) {
   const style = statusStyles[status] ?? {
     label: status,
@@ -52,20 +61,27 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function HostCard({ host }: { host: PortalHost }) {
+  const bar =
+    statusBarClass[host.status] ?? "bg-muted-foreground/35";
+
   return (
     <Link
       to="/portal/hosts/$hostId"
       params={{ hostId: host.id }}
-      className="block transition-shadow hover:shadow-md"
+      className="group block"
     >
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+      <Card className="relative overflow-hidden rounded-xl border-border/80 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-md">
+        <span
+          className={`absolute inset-y-0 left-0 w-1 ${bar}`}
+          aria-hidden
+        />
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pl-5">
           <CardTitle className="text-base font-semibold">
             {host.hostname || "未命名主机"}
           </CardTitle>
           <StatusBadge status={host.status} />
         </CardHeader>
-        <CardContent className="space-y-2">
+        <CardContent className="space-y-2 pl-5">
           <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
             <Globe className="h-4 w-4" />
             <span className="font-mono">{host.egress_ip || "未分配"}</span>
@@ -125,8 +141,8 @@ function PortalHostList() {
 
   if (isLoading) {
     return (
-      <div className="space-y-4">
-        <h1 className="text-2xl font-bold">我的主机</h1>
+      <div className="space-y-6">
+        <PageHeader title="我的主机" description="加载中…" />
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 3 }).map((_, i) => (
             <Card key={i}>
@@ -145,14 +161,19 @@ function PortalHostList() {
   }
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold">我的主机</h1>
+    <div className="space-y-8">
+      <PageHeader
+        title="我的主机"
+        description="欢迎回来。在此查看云主机状态、出口 IP，并管理登录密码与连接说明。"
+      />
+
       {hosts.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-12 text-center">
-          <p className="text-muted-foreground">暂无主机</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            请联系管理员为您创建主机
-          </p>
+        <div className="rounded-xl border border-dashed border-border/80 bg-muted/20 p-2">
+          <EmptyState
+            icon={Server}
+            title="暂无主机"
+            description="请联系管理员为您创建主机后即可在此管理"
+          />
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -162,10 +183,10 @@ function PortalHostList() {
         </div>
       )}
 
-      <div className="mt-10 grid gap-6 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>修改登录密码</CardTitle>
+      <div className="grid gap-6 md:grid-cols-2">
+        <Card className="rounded-xl border-border/80 shadow-sm">
+          <CardHeader className="border-b bg-muted/30">
+            <CardTitle className="text-base">修改登录密码</CardTitle>
             <CardDescription>
               用于网页登录与 curl 入口，与 SSH 密码不同。
             </CardDescription>
@@ -217,18 +238,16 @@ function PortalHostList() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>SSH 与桌面连接</CardTitle>
+        <Card className="rounded-xl border-border/80 shadow-sm">
+          <CardHeader className="border-b bg-muted/30">
+            <CardTitle className="text-base">SSH 与桌面连接</CardTitle>
             <CardDescription>
               SSH 密码现在按主机分别管理，不再是用户级共享密码。
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              <div className="rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground">
-                每台主机都有独立的 SSH 短 ID 与 SSH 密码。请进入具体主机详情页查看连接命令、VNC 入口和当前主机的接入方式。
-              </div>
+            <div className="rounded-lg border border-border/60 bg-card p-4 text-sm leading-relaxed text-muted-foreground shadow-sm">
+              每台主机都有独立的 SSH 短 ID 与 SSH 密码。请进入具体主机详情页查看连接命令、VNC 入口和当前主机的接入方式。
             </div>
           </CardContent>
         </Card>

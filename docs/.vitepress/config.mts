@@ -2,9 +2,14 @@ import { defineConfig } from 'vitepress'
 
 export default defineConfig({
   title: 'Cloud CLI Proxy',
-  description: 'Containerized SSH cloud platform with full-tunnel egress',
+  description: '一条命令获取预装 Claude Code 的云主机，所有流量走指定出口 IP，零泄漏',
 
   base: '/cloud-cli-proxy/',
+
+  head: [
+    ['meta', { name: 'keywords', content: 'cloud cli proxy, ssh, docker, wireguard, sing-box, claude code, egress ip, proxy, containerized' }],
+    ['link', { rel: 'icon', href: '/cloud-cli-proxy/logo.svg', type: 'image/svg+xml' }],
+  ],
 
   locales: {
     zh: {
@@ -46,6 +51,7 @@ export default defineConfig({
       label: 'English',
       lang: 'en-US',
       link: '/en/',
+      description: 'One-command cloud host with Claude Code pre-installed. All traffic through your exit IP. Zero leaks.',
       themeConfig: {
         nav: [
           { text: 'Guide', link: '/en/guide/quickstart' },
@@ -78,6 +84,7 @@ export default defineConfig({
   },
 
   themeConfig: {
+    logo: '/logo.svg',
     socialLinks: [
       { icon: 'github', link: 'https://github.com/ZaneL1u/cloud-cli-proxy' },
     ],

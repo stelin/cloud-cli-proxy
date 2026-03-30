@@ -63,59 +63,70 @@ export function HostLifecycleActions({
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-3">
-        {(hostStatus === "stopped" || hostStatus === "failed") && (
-          <Button
-            onClick={() => handleAction("start")}
-            disabled={actionMutation.isPending}
-          >
-            <Play className="h-4 w-4" />
-            启动
-          </Button>
-        )}
+    <div className="space-y-6">
+      <div className="space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          运行控制
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {(hostStatus === "stopped" || hostStatus === "failed") && (
+            <Button
+              className="h-11 justify-start gap-2"
+              onClick={() => handleAction("start")}
+              disabled={actionMutation.isPending}
+            >
+              <Play className="h-4 w-4 shrink-0" />
+              <span className="text-left text-sm leading-snug">启动</span>
+            </Button>
+          )}
 
-        {hostStatus === "running" && (
+          {hostStatus === "running" && (
+            <Button
+              variant="secondary"
+              className="h-11 justify-start gap-2"
+              onClick={() => handleAction("stop")}
+              disabled={actionMutation.isPending}
+            >
+              <Square className="h-4 w-4 shrink-0" />
+              <span className="text-left text-sm leading-snug">停止</span>
+            </Button>
+          )}
+
           <Button
             variant="secondary"
-            onClick={() => handleAction("stop")}
+            className="h-11 justify-start gap-2 sm:col-span-2"
+            onClick={() => setRebuildOpen(true)}
             disabled={actionMutation.isPending}
           >
-            <Square className="h-4 w-4" />
-            停止
+            <RefreshCw className="h-4 w-4 shrink-0" />
+            <span className="text-left text-sm leading-snug">重建主机</span>
           </Button>
-        )}
-
-        <Button
-          variant="outline"
-          onClick={() => setRebuildOpen(true)}
-          disabled={actionMutation.isPending}
-        >
-          <RefreshCw className="h-4 w-4" />
-          重建
-        </Button>
+        </div>
       </div>
 
-      <div className="flex flex-wrap gap-3 border-t pt-4">
+      <div className="space-y-3 rounded-xl border border-destructive/20 bg-destructive/5 p-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-destructive/90">
+          危险操作
+        </p>
         {hostStatus !== "running" ? (
           <Button
             variant="destructive"
-            size="sm"
+            className="h-11 w-full justify-start gap-2"
             onClick={() => setDeleteOpen(true)}
             disabled={deleteMutation.isPending}
           >
-            <Trash2 className="h-4 w-4" />
-            删除主机
+            <Trash2 className="h-4 w-4 shrink-0" />
+            <span className="text-left text-sm leading-snug">删除主机</span>
           </Button>
         ) : (
           <Button
             variant="destructive"
-            size="sm"
+            className="h-11 w-full justify-start gap-2"
             onClick={() => setForceDeleteOpen(true)}
             disabled={deleteMutation.isPending}
           >
-            <AlertTriangle className="h-4 w-4" />
-            强制删除
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span className="text-left text-sm leading-snug">强制删除</span>
           </Button>
         )}
       </div>

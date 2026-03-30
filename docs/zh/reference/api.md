@@ -1,48 +1,87 @@
 # API 参考
 
+所有 API 以 `http://YOUR_HOST:8080` 为基础路径。
+
 ## 认证
 
-所有 Admin API 调用需要先获取 JWT Token：
+### 登录获取 Token
 
 ```bash
-TOKEN=$(curl -s -X POST http://127.0.0.1:8080/v1/admin/login \
+curl -s -X POST http://YOUR_HOST:8080/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"你的管理员密码"}' | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+  -d '{"username":"admin","password":"你的密码"}'
 ```
 
-后续命令均使用 `Authorization: Bearer $TOKEN` 作为认证凭证。
+**响应：**
+```json
+{"token":"eyJhbGci...","role":"admin"}
+```
+
+后续所有 Admin API 调用需携带 `Authorization: Bearer $TOKEN` 请求头。
+
+便捷提取 Token：
+
+```bash
+TOKEN=$(curl -s -X POST http://YOUR_HOST:8080/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"你的密码"}' | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+```
+
+::: tip
+`/v1/admin/login` 是兼容旧路径，功能与 `/v1/auth/login` 相同。
+:::
+
+## 健康检查
+
+```bash
+curl -s http://YOUR_HOST:8080/healthz
+```
+
+**响应：**
+```json
+{"status":"ok","checks":{"database":"ok","agent":"ok"}}
+```
 
 ## 用户管理
 
 ### 创建用户
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/v1/admin/users \
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/users \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"username":"newuser","password":"初始密码至少8位"}'
+  -d '{
+    "username": "newuser",
+    "password": "初始密码至少8位",
+    "expires_at": "2026-12-31T23:59:59Z"
+  }'
 ```
 
-用户名长度 3-50 字符，密码至少 8 字符。创建成功返回 `201`，用户名冲突返回 `409`。
+用户名 3-50 字符，密码至少 8 字符。`expires_at` 可选，不设则永不过期。
+
+| 状态码 | 说明 |
+|--------|------|
+| `201` | 创建成功 |
+| `409` | 用户名已存在 |
 
 ### 查看用户列表
 
 ```bash
-curl -s http://127.0.0.1:8080/v1/admin/users \
+curl -s http://YOUR_HOST:8080/v1/admin/users \
   -H "Authorization: Bearer $TOKEN"
 ```
 
 ### 查看单个用户详情
 
 ```bash
-curl -s http://127.0.0.1:8080/v1/admin/users/{userID} \
+curl -s http://YOUR_HOST:8080/v1/admin/users/{userID} \
   -H "Authorization: Bearer $TOKEN"
 ```
 
 ### 禁用 / 启用用户
 
 ```bash
-curl -s -X PATCH http://127.0.0.1:8080/v1/admin/users/{userID} \
+curl -s -X PATCH http://YOUR_HOST:8080/v1/admin/users/{userID} \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"status":"disabled"}'
@@ -53,16 +92,16 @@ curl -s -X PATCH http://127.0.0.1:8080/v1/admin/users/{userID} \
 ### 删除用户
 
 ```bash
-curl -s -X DELETE http://127.0.0.1:8080/v1/admin/users/{userID} \
+curl -s -X DELETE http://YOUR_HOST:8080/v1/admin/users/{userID} \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-成功返回 `204`。关联的主机会因外键级联删除。
+返回 `204`。关联的主机会因外键级联删除。
 
 ### 密码轮换
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/v1/admin/users/{userID}/rotate-password \
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/users/{userID}/rotate-password \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -71,7 +110,7 @@ curl -s -X POST http://127.0.0.1:8080/v1/admin/users/{userID}/rotate-password \
 ### 设置到期时间
 
 ```bash
-curl -s -X PUT http://127.0.0.1:8080/v1/admin/users/{userID}/expiry \
+curl -s -X PUT http://YOUR_HOST:8080/v1/admin/users/{userID}/expiry \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"expires_at":"2026-12-31T23:59:59Z"}'
@@ -80,44 +119,193 @@ curl -s -X PUT http://127.0.0.1:8080/v1/admin/users/{userID}/expiry \
 清除到期时间（永不过期）：
 
 ```bash
-curl -s -X PUT http://127.0.0.1:8080/v1/admin/users/{userID}/expiry \
+curl -s -X PUT http://YOUR_HOST:8080/v1/admin/users/{userID}/expiry \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"expires_at":null}'
 ```
 
-## 出口 IP 管理
+## SSH 密钥管理
 
-### 创建出口 IP
+### 管理员代管用户 SSH 密钥
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/v1/admin/egress-ips \
+# 查看用户的 SSH 公钥
+curl -s http://YOUR_HOST:8080/v1/admin/users/{userID}/ssh-keys \
+  -H "Authorization: Bearer $TOKEN"
+
+# 添加 SSH 公钥
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/users/{userID}/ssh-keys \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"public_key":"ssh-ed25519 AAAA... user@host"}'
+
+# 自动生成密钥对
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/users/{userID}/ssh-keys/generate \
+  -H "Authorization: Bearer $TOKEN"
+
+# 删除 SSH 公钥
+curl -s -X DELETE http://YOUR_HOST:8080/v1/admin/users/{userID}/ssh-keys/{keyID} \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### 用户自管 SSH 密钥
+
+用户使用自己的 JWT Token 操作：
+
+```bash
+# 查看自己的 SSH 公钥
+curl -s http://YOUR_HOST:8080/v1/user/ssh-keys \
+  -H "Authorization: Bearer $TOKEN"
+
+# 添加 SSH 公钥
+curl -s -X POST http://YOUR_HOST:8080/v1/user/ssh-keys \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"public_key":"ssh-ed25519 AAAA... user@host"}'
+
+# 自动生成密钥对
+curl -s -X POST http://YOUR_HOST:8080/v1/user/ssh-keys/generate \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## 出口 IP 管理
+
+### 创建出口 IP（WireGuard 类型）
+
+```bash
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/egress-ips \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "label": "exit-node-1",
+    "label": "hk-wg-01",
     "ip_address": "203.0.113.10",
+    "tunnel_type": "wireguard",
     "provider": "manual",
     "wg_endpoint": "vpn-provider.example.com:51820",
     "wg_public_key": "peer公钥Base64",
-    "wg_preshared_key": "预共享密钥Base64（可选）",
+    "wg_preshared_key": "预共享密钥Base64",
     "wg_allowed_ips": "0.0.0.0/0",
     "wg_dns_server": "1.1.1.1",
     "wg_peer_address": "10.0.0.2/32"
   }'
 ```
 
+### 创建出口 IP（Proxy 类型）
+
+`proxy_config` 字段遵循 [sing-box outbound](https://sing-box.sagernet.org/configuration/outbound/) 格式。
+
+```bash
+# Shadowsocks
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/egress-ips \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "label": "jp-ss-01",
+    "ip_address": "198.51.100.5",
+    "tunnel_type": "proxy",
+    "provider": "manual",
+    "proxy_config": {
+      "type": "shadowsocks",
+      "server": "198.51.100.5",
+      "server_port": 8388,
+      "method": "aes-256-gcm",
+      "password": "your-password"
+    }
+  }'
+
+# VMess
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/egress-ips \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "label": "us-vmess-01",
+    "ip_address": "203.0.113.20",
+    "tunnel_type": "proxy",
+    "provider": "manual",
+    "proxy_config": {
+      "type": "vmess",
+      "server": "203.0.113.20",
+      "server_port": 443,
+      "uuid": "your-uuid",
+      "security": "auto",
+      "alter_id": 0
+    }
+  }'
+
+# SOCKS5
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/egress-ips \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "label": "eu-socks-01",
+    "ip_address": "192.0.2.50",
+    "tunnel_type": "proxy",
+    "provider": "manual",
+    "proxy_config": {
+      "type": "socks",
+      "server": "192.0.2.50",
+      "server_port": 1080,
+      "username": "user",
+      "password": "pass"
+    }
+  }'
+
+# Trojan
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/egress-ips \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "label": "sg-trojan-01",
+    "ip_address": "203.0.113.30",
+    "tunnel_type": "proxy",
+    "provider": "manual",
+    "proxy_config": {
+      "type": "trojan",
+      "server": "203.0.113.30",
+      "server_port": 443,
+      "password": "your-password",
+      "tls": {"enabled": true, "server_name": "your-domain.com"}
+    }
+  }'
+
+# HTTP Proxy
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/egress-ips \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "label": "proxy-http-01",
+    "ip_address": "192.0.2.100",
+    "tunnel_type": "proxy",
+    "provider": "manual",
+    "proxy_config": {
+      "type": "http",
+      "server": "192.0.2.100",
+      "server_port": 8080,
+      "username": "user",
+      "password": "pass"
+    }
+  }'
+```
+
 ### 查看出口 IP 列表
 
 ```bash
-curl -s http://127.0.0.1:8080/v1/admin/egress-ips \
+curl -s http://YOUR_HOST:8080/v1/admin/egress-ips \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### 查看出口 IP 详情
+
+```bash
+curl -s http://YOUR_HOST:8080/v1/admin/egress-ips/{ipID} \
   -H "Authorization: Bearer $TOKEN"
 ```
 
 ### 更新出口 IP
 
 ```bash
-curl -s -X PUT http://127.0.0.1:8080/v1/admin/egress-ips/{ipID} \
+curl -s -X PUT http://YOUR_HOST:8080/v1/admin/egress-ips/{ipID} \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"wg_endpoint": "新端点:51820", "wg_public_key": "新公钥"}'
@@ -126,18 +314,103 @@ curl -s -X PUT http://127.0.0.1:8080/v1/admin/egress-ips/{ipID} \
 ### 删除出口 IP
 
 ```bash
-curl -s -X DELETE http://127.0.0.1:8080/v1/admin/egress-ips/{ipID} \
+curl -s -X DELETE http://YOUR_HOST:8080/v1/admin/egress-ips/{ipID} \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-如果该 IP 仍被主机绑定，删除会被拒绝。需先解除绑定再删除。
+如果该 IP 仍被主机绑定，删除会被拒绝（`409`）。需先解除绑定再删除。
+
+### 测试出口 IP
+
+```bash
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/egress-ips/{ipID}/test \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+测试包含三项检测（30 秒超时）：
+
+| 检测项 | 说明 |
+|--------|------|
+| 连通性 | 通过隧道访问外部 HTTP 端点 |
+| 出口 IP 匹配 | 实际出口 IP 是否与声明的 `ip_address` 一致 |
+| DNS 泄漏 | DNS 请求是否走隧道 |
+
+## 主机管理
+
+### 创建主机
+
+```bash
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/hosts \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "用户UUID"}'
+```
+
+### 查看主机列表
+
+```bash
+curl -s http://YOUR_HOST:8080/v1/admin/hosts \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### 查看主机详情
+
+```bash
+curl -s http://YOUR_HOST:8080/v1/admin/hosts/{hostID} \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+返回主机信息，包括用户接入命令、短 ID 等。
+
+### 启动 / 停止主机
+
+```bash
+# 启动
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/hosts/{hostID}/start \
+  -H "Authorization: Bearer $TOKEN"
+
+# 停止
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/hosts/{hostID}/stop \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### 重建主机
+
+```bash
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/hosts/{hostID}/rebuild \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+重建会销毁当前容器并基于受管镜像重新创建，用户 home volume 会保留。
+
+### 轮换 SSH 密码
+
+```bash
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/hosts/{hostID}/rotate-ssh-password \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### 删除主机
+
+```bash
+curl -s -X DELETE http://YOUR_HOST:8080/v1/admin/hosts/{hostID} \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### VNC 反向代理
+
+管理后台通过以下路径反向代理到容器内的 KasmVNC：
+
+```
+/v1/admin/hosts/{hostID}/vnc/{path...}
+```
 
 ## 主机与出口 IP 绑定
 
 ### 创建绑定
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/v1/admin/bindings \
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/bindings \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"host_id":"主机UUID","egress_ip_id":"出口IP的UUID"}'
@@ -146,42 +419,104 @@ curl -s -X POST http://127.0.0.1:8080/v1/admin/bindings \
 ### 解除绑定
 
 ```bash
-curl -s -X DELETE http://127.0.0.1:8080/v1/admin/bindings/{bindingID} \
+curl -s -X DELETE http://YOUR_HOST:8080/v1/admin/bindings/{bindingID} \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-## 主机运维
+## 用户面板 API
 
-### 查看主机列表
+以下接口供普通用户使用（使用用户角色的 JWT Token）。
+
+### 修改密码
 
 ```bash
-curl -s http://127.0.0.1:8080/v1/admin/hosts \
+curl -s -X POST http://YOUR_HOST:8080/v1/user/change-password \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"old_password":"旧密码","new_password":"新密码"}'
+```
+
+### 查看自己的主机
+
+```bash
+curl -s http://YOUR_HOST:8080/v1/user/hosts \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-### 启动 / 停止主机
+### 查看主机详情
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/v1/admin/hosts/{hostID}/start \
-  -H "Authorization: Bearer $TOKEN"
-
-curl -s -X POST http://127.0.0.1:8080/v1/admin/hosts/{hostID}/stop \
+curl -s http://YOUR_HOST:8080/v1/user/hosts/{hostID} \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-### 重建主机
+### 重建自己的主机
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/v1/admin/hosts/{hostID}/rebuild \
+curl -s -X POST http://YOUR_HOST:8080/v1/user/hosts/{hostID}/rebuild \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-重建会销毁当前容器并基于受管镜像重新创建，用户 home volume 会保留。
+### 用户 VNC 访问
 
-### 查看任务状态
+```
+/v1/user/hosts/{hostID}/vnc/{path...}
+```
+
+## Bootstrap 接入
+
+### 获取引导脚本
 
 ```bash
-curl -s http://127.0.0.1:8080/v1/admin/tasks \
+curl -sSf http://YOUR_HOST:8080/v1/bootstrap/script | bash
+```
+
+### 创建 Bootstrap 会话
+
+```bash
+curl -s -X POST http://YOUR_HOST:8080/v1/bootstrap/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"username":"用户名","password":"密码"}'
+```
+
+认证成功后返回 `task_id` 和 `status_url`。
+
+### 查询任务状态
+
+```bash
+curl -s http://YOUR_HOST:8080/v1/bootstrap/tasks/{taskID}
+```
+
+### 获取 SSH 接入参数
+
+```bash
+curl -s http://YOUR_HOST:8080/v1/bootstrap/tasks/{taskID}/handoff
+```
+
+任务成功后返回 SSH 连接所需的 `host`、`port`、`user` 参数。
+
+## Entry 短链接接入
+
+### 获取入口脚本
+
+```bash
+curl -sSf http://YOUR_HOST/entry/{shortId} | bash
+```
+
+### 认证
+
+```bash
+curl -s -X POST http://YOUR_HOST:8080/v1/entry/{shortId}/auth \
+  -H "Content-Type: application/json" \
+  -d '{"password":"密码"}'
+```
+
+成功后返回 SSH 连接参数（`ssh_user`、`ssh_pass`、`ssh_host`、`ssh_port`），用户通过 SSH 代理（`:2222`）接入。
+
+## 任务列表
+
+```bash
+curl -s http://YOUR_HOST:8080/v1/admin/tasks \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -189,26 +524,26 @@ curl -s http://127.0.0.1:8080/v1/admin/tasks \
 
 ```bash
 # 最近事件
-curl -s "http://127.0.0.1:8080/v1/admin/events?limit=50" \
+curl -s "http://YOUR_HOST:8080/v1/admin/events?limit=50" \
   -H "Authorization: Bearer $TOKEN"
 
 # 按用户筛选
-curl -s "http://127.0.0.1:8080/v1/admin/events?user_id={userID}" \
+curl -s "http://YOUR_HOST:8080/v1/admin/events?user_id={userID}" \
   -H "Authorization: Bearer $TOKEN"
 
 # 按主机筛选
-curl -s "http://127.0.0.1:8080/v1/admin/events?host_id={hostID}" \
+curl -s "http://YOUR_HOST:8080/v1/admin/events?host_id={hostID}" \
   -H "Authorization: Bearer $TOKEN"
 
 # 按时间范围
-curl -s "http://127.0.0.1:8080/v1/admin/events?since=2026-03-01T00:00:00Z&until=2026-03-31T23:59:59Z" \
+curl -s "http://YOUR_HOST:8080/v1/admin/events?since=2026-03-01T00:00:00Z&until=2026-03-31T23:59:59Z" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
 ## 仪表盘
 
 ```bash
-curl -s http://127.0.0.1:8080/v1/admin/dashboard/stats \
+curl -s http://YOUR_HOST:8080/v1/admin/dashboard/stats \
   -H "Authorization: Bearer $TOKEN"
 ```
 

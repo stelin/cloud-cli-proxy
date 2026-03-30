@@ -11,6 +11,7 @@ import {
   Check,
   X,
   Minus,
+  Globe,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -57,6 +58,9 @@ import {
 import { EgressIPDrawer } from "@/components/egress-ips/egress-ip-drawer";
 import { TestResultDialog } from "@/components/egress-ips/test-result-dialog";
 import { egressProxyEntryDisplay } from "@/lib/egress-display";
+import { PageHeader } from "@/components/layout/page-header";
+import { DataTableShell } from "@/components/layout/data-table-shell";
+import { EmptyState } from "@/components/layout/empty-state";
 
 export const Route = createFileRoute("/_dashboard/egress-ips/")({
   component: EgressIPsPage,
@@ -150,8 +154,10 @@ function EgressIPsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">出口 IP 管理</h1>
+      <PageHeader
+        title="出口 IP 管理"
+        description="配置代理或 WireGuard 出口，供用户主机绑定并统一出网"
+      >
         <Button
           onClick={() => {
             setEditIpId(null);
@@ -161,9 +167,9 @@ function EgressIPsPage() {
           <Plus className="h-4 w-4" />
           添加出口 IP
         </Button>
-      </div>
+      </PageHeader>
 
-      <div className="rounded-md border bg-background">
+      <DataTableShell>
         <Table>
           <TableHeader>
             <TableRow>
@@ -187,11 +193,23 @@ function EgressIPsPage() {
               ))
             ) : egressIPs.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={5}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  暂无出口 IP
+                <TableCell colSpan={5} className="p-0">
+                  <EmptyState
+                    icon={Globe}
+                    title="暂无出口 IP"
+                    description="添加出口 IP 后，即可在主机上绑定并验证实际出网地址"
+                    action={
+                      <Button
+                        onClick={() => {
+                          setEditIpId(null);
+                          setDrawerMode("create");
+                        }}
+                      >
+                        <Plus className="h-4 w-4" />
+                        添加出口 IP
+                      </Button>
+                    }
+                  />
                 </TableCell>
               </TableRow>
             ) : (
@@ -284,7 +302,7 @@ function EgressIPsPage() {
             )}
           </TableBody>
         </Table>
-      </div>
+      </DataTableShell>
 
       <EgressIPDrawer
         mode={drawerMode ?? "create"}

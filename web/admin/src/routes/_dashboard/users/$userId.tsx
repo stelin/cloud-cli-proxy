@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
-  ArrowLeft,
   Ban,
   Calendar,
+  Check,
   CheckCircle,
+  ChevronDown,
   Copy,
   KeyRound,
+  Server,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -14,7 +16,13 @@ import { useUser, useUpdateUserStatus, useUpdateUserExpiry } from "@/hooks/use-u
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -42,6 +50,7 @@ import {
   useAdminSetSSHKey,
   useAdminDeleteSSHKey,
 } from "@/hooks/use-ssh-keys";
+import { EmptyState } from "@/components/layout/empty-state";
 
 export const Route = createFileRoute("/_dashboard/users/$userId")({
   component: UserDetailPage,
@@ -149,100 +158,71 @@ function UserDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" asChild>
-          <Link to="/users">
-            <ArrowLeft />
-          </Link>
-        </Button>
-        <h1 className="text-2xl font-bold">{user.username}</h1>
-        <Badge
-          variant={
-            user.status === "active"
-              ? "default"
-              : user.status === "expired"
-                ? "destructive"
-                : "secondary"
-          }
-        >
-          {user.status === "active"
-            ? "活跃"
-            : user.status === "expired"
-              ? "已过期"
-              : "已禁用"}
-        </Badge>
-      </div>
+      <nav aria-label="面包屑" className="text-sm text-muted-foreground">
+        <Link to="/users" className="hover:text-foreground">
+          用户管理
+        </Link>
+        <span className="mx-2 text-border">/</span>
+        <span className="font-medium text-foreground">{user.username}</span>
+      </nav>
 
-      <div className="grid gap-6 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>用户信息</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">用户 ID</span>
-              <span className="font-mono text-xs">{user.id}</span>
-            </div>
-            <Separator />
-            <div className="flex items-start justify-between gap-2 text-sm">
-              <span className="shrink-0 text-muted-foreground">短 ID</span>
-              <div className="flex min-w-0 items-center gap-1">
-                <span className="break-all font-mono text-xs">
-                  {user.short_id ?? "—"}
-                </span>
-                {user.short_id ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0"
-                    onClick={() => {
-                      navigator.clipboard.writeText(user.short_id!);
-                      setShortIdCopied(true);
-                      toast.success("已复制短 ID");
-                      setTimeout(() => setShortIdCopied(false), 2000);
-                    }}
-                  >
-                    {shortIdCopied ? (
-                      <Check className="h-4 w-4 text-green-600" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-            <Separator />
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">用户名</span>
-              <span>{user.username}</span>
-            </div>
-            <Separator />
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">创建时间</span>
-              <span>{formatDate(user.created_at)}</span>
-            </div>
-            <Separator />
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">更新时间</span>
-              <span>{formatDate(user.updated_at)}</span>
-            </div>
-            <Separator />
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">到期时间</span>
-              <span>{user.expires_at ? formatDate(user.expires_at) : "永不过期"}</span>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-bold tracking-tight">{user.username}</h1>
+            <Badge
+              variant={
+                user.status === "active"
+                  ? "default"
+                  : user.status === "expired"
+                    ? "destructive"
+                    : "secondary"
+              }
+            >
+              {user.status === "active"
+                ? "活跃"
+                : user.status === "expired"
+                  ? "已过期"
+                  : "已禁用"}
+            </Badge>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="font-mono">
+              短 ID {user.short_id ?? "—"}
+            </span>
+            {user.short_id ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 px-2"
+                onClick={() => {
+                  navigator.clipboard.writeText(user.short_id!);
+                  setShortIdCopied(true);
+                  toast.success("已复制短 ID");
+                  setTimeout(() => setShortIdCopied(false), 2000);
+                }}
+              >
+                {shortIdCopied ? (
+                  <Check className="h-3.5 w-3.5 text-green-600" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+                复制
+              </Button>
+            ) : null}
+          </div>
+        </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>操作</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <Button
-              variant="outline"
-              className="w-full justify-start"
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="gap-2">
+              账户操作
+              <ChevronDown className="h-4 w-4 opacity-60" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuItem
               onClick={handleToggleStatus}
               disabled={updateStatus.isPending}
             >
@@ -262,33 +242,67 @@ function UserDetailPage() {
                   启用用户
                 </>
               )}
-            </Button>
-            <Button
-              variant="outline"
-              className="w-full justify-start"
-              onClick={openExpiryDialog}
-            >
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={openExpiryDialog}>
               <Calendar className="mr-2 h-4 w-4" />
               设置到期时间
-            </Button>
-            <Button
-              variant="outline"
-              className="w-full justify-start"
-              onClick={() => setRotateOpen(true)}
-            >
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setRotateOpen(true)}>
               <KeyRound className="mr-2 h-4 w-4" />
               轮换登录密码
-            </Button>
-            <Button
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
               variant="destructive"
-              className="w-full justify-start"
               onClick={() => setDeleteOpen(true)}
             >
               <Trash2 className="mr-2 h-4 w-4" />
               删除用户
-            </Button>
-          </CardContent>
-        </Card>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      <div className="rounded-xl border border-border/80 bg-card shadow-sm">
+        <div className="border-l-4 border-primary p-6">
+          <h2 className="mb-4 text-sm font-semibold text-foreground">
+            用户资料
+          </h2>
+          <dl className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1">
+              <dt className="text-xs font-medium text-muted-foreground">
+                用户 ID
+              </dt>
+              <dd className="break-all font-mono text-sm">{user.id}</dd>
+            </div>
+            <div className="space-y-1">
+              <dt className="text-xs font-medium text-muted-foreground">
+                用户名
+              </dt>
+              <dd className="text-sm">{user.username}</dd>
+            </div>
+            <div className="space-y-1">
+              <dt className="text-xs font-medium text-muted-foreground">
+                创建时间
+              </dt>
+              <dd className="text-sm">{formatDate(user.created_at)}</dd>
+            </div>
+            <div className="space-y-1">
+              <dt className="text-xs font-medium text-muted-foreground">
+                更新时间
+              </dt>
+              <dd className="text-sm">{formatDate(user.updated_at)}</dd>
+            </div>
+            <div className="space-y-1 sm:col-span-2">
+              <dt className="text-xs font-medium text-muted-foreground">
+                到期时间
+              </dt>
+              <dd className="text-sm">
+                {user.expires_at ? formatDate(user.expires_at) : "永不过期"}
+              </dd>
+            </div>
+          </dl>
+        </div>
       </div>
 
       <SSHKeyManager
@@ -323,54 +337,64 @@ function UserDetailPage() {
         isDeleting={deleteSSHKey.isPending}
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>主机列表</CardTitle>
+      <Card className="overflow-hidden rounded-xl border-border/80 shadow-sm">
+        <CardHeader className="border-b bg-muted/30">
+          <CardTitle className="text-base">主机列表</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           {hosts.length === 0 ? (
-            <p className="py-4 text-center text-sm text-muted-foreground">
-              该用户暂无主机
-            </p>
+            <EmptyState
+              icon={Server}
+              title="该用户暂无主机"
+              description="可在主机管理中为此用户新建云主机"
+            />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>主机 ID</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>Slot</TableHead>
-                  <TableHead>创建时间</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {hosts.map((host) => (
-                  <TableRow key={host.id}>
-                    <TableCell className="font-mono text-xs">
-                      <Link
-                        to="/hosts/$hostId"
-                        params={{ hostId: host.id }}
-                        className="text-primary hover:underline"
-                      >
-                        {host.id}
-                      </Link>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          host.status === "running" ? "default" : "secondary"
-                        }
-                      >
-                        {host.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{host.slot_key}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {formatDate(host.created_at)}
-                    </TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>主机 ID</TableHead>
+                    <TableHead>状态</TableHead>
+                    <TableHead>Slot</TableHead>
+                    <TableHead>创建时间</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {hosts.map((host) => (
+                    <TableRow key={host.id}>
+                      <TableCell className="font-mono text-xs">
+                        <Link
+                          to="/hosts/$hostId"
+                          params={{ hostId: host.id }}
+                          className="text-primary hover:underline"
+                        >
+                          {host.id}
+                        </Link>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            host.status === "running"
+                              ? "default"
+                              : host.status === "failed"
+                                ? "destructive"
+                                : host.status === "pending"
+                                  ? "outline"
+                                  : "secondary"
+                          }
+                        >
+                          {host.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{host.slot_key}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {formatDate(host.created_at)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>

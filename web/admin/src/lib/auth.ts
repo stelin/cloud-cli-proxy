@@ -5,7 +5,10 @@ const AUTH_EVENT = "auth:sessions-changed";
 
 export interface AuthSession {
   id: string;
+  /** 用户短 ID（curl 入口等）；会话列表展示优先使用 username */
   shortId: string;
+  /** 用户名，网页登录账号；旧会话可能为空 */
+  username?: string;
   token: string;
   role: string;
   userId: string;
@@ -106,13 +109,18 @@ export function getToken(): string | null {
   return getCurrentSession()?.token ?? null;
 }
 
-export function saveSession(shortId: string, token: string): AuthSession | null {
+export function saveSession(
+  shortId: string,
+  token: string,
+  username?: string,
+): AuthSession | null {
   const payload = parseTokenPayloadFromToken(token);
   if (!payload) return null;
 
   const session: AuthSession = {
     id: `${payload.role}:${payload.user_id}:${shortId}`,
     shortId,
+    ...(username ? { username } : {}),
     token,
     role: payload.role,
     userId: payload.user_id,

@@ -10,6 +10,9 @@ import {
   Lock,
   ShieldCheck,
   Rocket,
+  ChevronLeft,
+  ChevronRight,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -33,10 +36,10 @@ const adminSteps: Step[] = [
     details: [
       "点击左侧菜单「用户管理」",
       "点击「新建用户」按钮，输入用户名",
-      "系统会自动生成登录密码和短 ID",
-      "将密码和短 ID 发送给用户（仅此一次可见）",
+      "系统会自动生成登录密码与用户短 ID",
+      "将用户名与登录密码发给用户（仅此一次可见）；短 ID 用于 curl 一键连接等场景",
     ],
-    tip: "短 ID 是用户登录的唯一凭证，请妥善保管。",
+    tip: "Web 后台与门户使用「用户名 + 登录密码」登录；短 ID 不是网页登录账号，但需告知用户以便使用一键连接。",
   },
   {
     icon: Globe,
@@ -239,108 +242,98 @@ export function OnboardingGuide({
 
   return (
     <div
-      className="fixed inset-0 z-9998 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-9998 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) handleClose();
       }}
     >
-      <div className="w-full max-w-lg rounded-xl bg-background shadow-2xl border overflow-hidden">
-        {/* Progress bar */}
-        <div className="h-1 bg-muted">
-          <div
-            className="h-full bg-primary transition-all duration-300"
-            style={{ width: `${((step + 1) / steps.length) * 100}%` }}
-          />
+      <div className="w-full max-w-lg rounded-2xl bg-background shadow-2xl border overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 pt-5 pb-0">
+          <p className="text-xs font-medium text-muted-foreground tracking-wide">
+            {role === "admin" ? "管理员引导" : "使用引导"} · {step + 1} / {steps.length}
+          </p>
+          <button
+            onClick={handleClose}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
 
-        {/* Step indicator */}
-        <div className="flex items-center justify-between px-6 pt-4">
-          <div className="flex gap-1.5">
+        {/* Progress */}
+        <div className="px-6 pt-3">
+          <div className="flex gap-1">
             {steps.map((_, i) => (
               <button
                 key={i}
                 onClick={() => setStep(i)}
-                className={`h-2 rounded-full transition-all duration-200 ${
-                  i === step
-                    ? "w-6 bg-primary"
-                    : i < step
-                      ? "w-2 bg-primary/40"
-                      : "w-2 bg-muted-foreground/20"
-                }`}
+                className="h-1 flex-1 rounded-full transition-all duration-300"
+                style={{
+                  backgroundColor:
+                    i <= step
+                      ? "hsl(var(--primary))"
+                      : "hsl(var(--muted))",
+                  opacity: i <= step ? 1 : 0.6,
+                }}
               />
             ))}
           </div>
-          <button
-            onClick={handleClose}
-            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            跳过引导 (Esc)
-          </button>
         </div>
 
         {/* Content */}
-        <div className="px-6 py-6 space-y-5">
-          <div className="flex items-center gap-4">
-            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-primary/10">
-              <Icon className="h-7 w-7 text-primary" />
+        <div className="px-6 pt-6 pb-2 space-y-4">
+          <div className="flex items-start gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+              <Icon className="h-6 w-6 text-primary" />
             </div>
-            <div>
-              <p className="text-xs font-medium text-muted-foreground">
-                {role === "admin" ? "管理员引导" : "使用引导"} · 第 {step + 1}/{steps.length} 步
-              </p>
-              <h3 className="text-xl font-bold">{current.title}</h3>
+            <div className="space-y-1 pt-0.5">
+              <h3 className="text-lg font-semibold leading-tight">{current.title}</h3>
+              <p className="text-sm text-muted-foreground">{current.description}</p>
             </div>
           </div>
 
-          <p className="text-sm text-muted-foreground">{current.description}</p>
-
-          <ol className="space-y-2.5">
+          <div className="space-y-2 pl-1">
             {current.details.map((detail, i) => (
-              <li key={i} className="flex gap-3 text-sm">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+              <div key={i} className="flex items-start gap-3 text-sm">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-muted text-[11px] font-semibold text-muted-foreground mt-0.5">
                   {i + 1}
                 </span>
-                <span className="pt-0.5">{detail}</span>
-              </li>
+                <span className="text-foreground/80 leading-relaxed">{detail}</span>
+              </div>
             ))}
-          </ol>
+          </div>
 
           {current.tip && (
-            <div className="rounded-lg border bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800 px-4 py-2.5 text-xs text-amber-700 dark:text-amber-400">
-              💡 {current.tip}
-            </div>
+            <p className="text-xs text-muted-foreground border-l-2 border-primary/30 pl-3 ml-1">
+              {current.tip}
+            </p>
           )}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between border-t px-6 py-4 bg-muted/20">
+        <div className="flex items-center justify-between px-6 py-4 mt-2">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setStep((s) => s - 1)}
             disabled={step === 0}
+            className="gap-1"
           >
+            <ChevronLeft className="h-4 w-4" />
             上一步
           </Button>
-          <div className="flex gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleClose}
-              className="text-muted-foreground"
-            >
-              跳过
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => {
-                if (isLast) handleClose();
-                else setStep((s) => s + 1);
-              }}
-            >
-              {isLast ? "开始使用" : "下一步"}
-            </Button>
-          </div>
+          <Button
+            size="sm"
+            onClick={() => {
+              if (isLast) handleClose();
+              else setStep((s) => s + 1);
+            }}
+            className="gap-1"
+          >
+            {isLast ? "开始使用" : "下一步"}
+            {!isLast && <ChevronRight className="h-4 w-4" />}
+          </Button>
         </div>
       </div>
     </div>

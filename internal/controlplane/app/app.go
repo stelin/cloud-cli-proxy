@@ -189,7 +189,7 @@ func (a *App) ensureSeedAdmin(ctx context.Context) error {
 		a.logger.Warn("seed admin: ADMIN_USERNAME or ADMIN_PASSWORD not set, skipping")
 		return nil
 	}
-	_, err := a.repo.GetUserByShortIDForAuth(ctx, a.cfg.AdminUsername)
+	_, err := a.repo.GetUserByLoginIdentifierForAuth(ctx, a.cfg.AdminUsername)
 	if err == nil {
 		return nil // 已存在
 	}

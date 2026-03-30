@@ -1,12 +1,25 @@
 import { useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, Check, Copy, KeyRound, Monitor, Terminal } from "lucide-react";
+import {
+  Check,
+  Copy,
+  KeyRound,
+  Monitor,
+  PanelTop,
+  Terminal,
+} from "lucide-react";
 import { toast } from "sonner";
 import { getToken } from "@/lib/auth";
 import { useHostDetail } from "@/hooks/use-hosts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { BindingManager } from "@/components/hosts/binding-manager";
 import { HostLifecycleActions } from "@/components/hosts/host-lifecycle-actions";
@@ -74,109 +87,151 @@ function HostDetailPage() {
     );
   }
 
+  const displayName = host.hostname || host.short_id || host.id.slice(0, 8) + "…";
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Link
-          to="/hosts"
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="h-5 w-5" />
+      <nav aria-label="面包屑" className="text-sm text-muted-foreground">
+        <Link to="/hosts" className="hover:text-foreground">
+          主机管理
         </Link>
-        <h1 className="text-2xl font-bold">主机详情</h1>
+        <span className="mx-2 text-border">/</span>
+        <span className="font-medium text-foreground">{displayName}</span>
+      </nav>
+
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-bold tracking-tight">{displayName}</h1>
+            <Badge variant={sc.variant}>{sc.label}</Badge>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            所属用户{" "}
+            <Link
+              to="/users/$userId"
+              params={{ userId: user.id }}
+              className="font-medium text-primary hover:underline"
+            >
+              {user.username}
+            </Link>
+          </p>
+        </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>基本信息</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-            <div>
-              <dt className="text-muted-foreground">主机 ID</dt>
-              <dd className="font-mono">{host.id}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">主机短 ID</dt>
-              <dd className="font-mono">{host.short_id || "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">状态</dt>
-              <dd>
-                <Badge variant={sc.variant}>{sc.label}</Badge>
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">所属用户</dt>
-              <dd>
-                <Link
-                  to="/users/$userId"
-                  params={{ userId: user.id }}
-                  className="text-primary hover:underline"
-                >
-                  {user.username}
-                </Link>
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Slot Key</dt>
-              <dd>{host.slot_key}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">主机名</dt>
-              <dd>{host.hostname || "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">镜像模板</dt>
-              <dd className="font-mono text-xs">{host.template_image_ref}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">时区</dt>
-              <dd>{host.timezone || "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">创建时间</dt>
-              <dd>{formatDate(host.created_at)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">更新时间</dt>
-              <dd>{formatDate(host.updated_at)}</dd>
-            </div>
-          </dl>
-        </CardContent>
-      </Card>
+      <div className="rounded-xl border border-border/80 bg-card shadow-sm">
+        <div className="border-b border-border/60 px-6 py-4">
+          <h2 className="text-sm font-semibold">基本信息</h2>
+        </div>
+        <div className="grid gap-0 md:grid-cols-2">
+          <div className="border-border/60 p-6 md:border-r">
+            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              标识与归属
+            </h3>
+            <dl className="grid gap-3 text-sm">
+              <div className="space-y-1">
+                <dt className="text-xs text-muted-foreground">主机 ID</dt>
+                <dd className="break-all font-mono text-sm">{host.id}</dd>
+              </div>
+              <div className="space-y-1">
+                <dt className="text-xs text-muted-foreground">主机短 ID</dt>
+                <dd className="font-mono text-sm">{host.short_id || "—"}</dd>
+              </div>
+              <div className="space-y-1">
+                <dt className="text-xs text-muted-foreground">主机名</dt>
+                <dd className="text-sm">{host.hostname || "—"}</dd>
+              </div>
+              <div className="space-y-1">
+                <dt className="text-xs text-muted-foreground">所属用户</dt>
+                <dd>
+                  <Link
+                    to="/users/$userId"
+                    params={{ userId: user.id }}
+                    className="text-sm text-primary hover:underline"
+                  >
+                    {user.username}
+                  </Link>
+                </dd>
+              </div>
+              <div className="space-y-1">
+                <dt className="text-xs text-muted-foreground">Slot Key</dt>
+                <dd className="text-sm">{host.slot_key}</dd>
+              </div>
+            </dl>
+          </div>
+          <div className="p-6">
+            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              配置
+            </h3>
+            <dl className="grid gap-3 text-sm">
+              <div className="space-y-1">
+                <dt className="text-xs text-muted-foreground">镜像模板</dt>
+                <dd className="break-all font-mono text-xs">
+                  {host.template_image_ref}
+                </dd>
+              </div>
+              <div className="space-y-1">
+                <dt className="text-xs text-muted-foreground">时区</dt>
+                <dd className="text-sm">{host.timezone || "—"}</dd>
+              </div>
+            </dl>
+            <h3 className="mb-3 mt-6 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              时间
+            </h3>
+            <dl className="grid gap-3 text-sm">
+              <div className="space-y-1">
+                <dt className="text-xs text-muted-foreground">创建时间</dt>
+                <dd>{formatDate(host.created_at)}</dd>
+              </div>
+              <div className="space-y-1">
+                <dt className="text-xs text-muted-foreground">更新时间</dt>
+                <dd>{formatDate(host.updated_at)}</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </div>
 
       {data.connection_info && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+        <Card className="overflow-hidden rounded-xl border-border/80 shadow-sm">
+          <CardHeader className="border-b bg-muted/30">
+            <CardTitle className="flex items-center gap-2 text-base">
               <Terminal className="h-5 w-5" />
               连接方式
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-6 pt-6">
             <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">
-                一键连接（curl 入口）：
+              <p className="text-sm font-medium text-muted-foreground">
+                一键连接（curl 入口）
               </p>
               <CopyableCommand command={data.connection_info.curl_command} />
             </div>
             <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">
-                SSH 直连（需要这台主机的 SSH 密码）：
+              <p className="text-sm font-medium text-muted-foreground">
+                SSH 直连（需要这台主机的 SSH 密码）
               </p>
               <CopyableCommand command={data.connection_info.ssh_command} />
             </div>
             {data.connection_info.vnc_url && (
-              <div className="space-y-2">
-                <p className="text-sm text-muted-foreground">
-                  VNC 登录入口：
+              <div className="space-y-3">
+                <p className="text-sm font-medium text-muted-foreground">
+                  VNC 登录入口
                 </p>
-                <div className="flex flex-wrap gap-2">
-                  <CopyableCommand command={data.connection_info.vnc_url} />
-                  <Button type="button" variant="outline" onClick={openVNC}>
-                    <Monitor className="mr-2 h-4 w-4" />
-                    打开桌面
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
+                  <div className="min-w-0 flex-1">
+                    <CopyableCommand command={data.connection_info.vnc_url} />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-auto shrink-0 flex-col gap-2 py-4 sm:w-40"
+                    onClick={openVNC}
+                  >
+                    <div className="relative flex h-12 w-12 items-center justify-center rounded-xl bg-background shadow-sm ring-1 ring-border">
+                      <PanelTop className="h-6 w-6 text-muted-foreground/80" />
+                      <Monitor className="absolute bottom-1.5 right-1.5 h-4 w-4 text-primary" />
+                    </div>
+                    <span className="text-xs font-medium">打开浏览器桌面</span>
                   </Button>
                 </div>
               </div>
@@ -185,12 +240,15 @@ function HostDetailPage() {
         </Card>
       )}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>出口 IP 绑定</CardTitle>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
+        <Card className="rounded-xl border-border/80 shadow-sm">
+          <CardHeader className="border-b bg-muted/30 pb-4">
+            <CardTitle className="text-base">出口 IP 绑定</CardTitle>
+            <CardDescription className="text-xs leading-relaxed">
+              未运行时可增删绑定；运行中主机需先停止后再调整。
+            </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-6 pt-5">
             <BindingManager
               hostId={hostId}
               hostStatus={host.status}
@@ -199,38 +257,63 @@ function HostDetailPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>生命周期与密码操作</CardTitle>
+        <Card className="rounded-xl border-border/80 shadow-sm">
+          <CardHeader className="border-b bg-muted/30 pb-4">
+            <CardTitle className="text-base">生命周期与密码操作</CardTitle>
+            <CardDescription className="text-xs leading-relaxed">
+              电源与重建会生成任务；密码与桌面操作异步执行。
+            </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <HostLifecycleActions hostId={hostId} hostStatus={host.status} />
-            <Separator className="my-4" />
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setRotateSSHOpen(true)}
-              >
-                <KeyRound className="mr-2 h-4 w-4" />
-                重置主机 SSH 密码
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setRotateLoginOpen(true)}
-              >
-                <KeyRound className="mr-2 h-4 w-4" />
-                轮换用户登录密码
-              </Button>
-              <Button type="button" variant="outline" onClick={openVNC}>
-                <Monitor className="mr-2 h-4 w-4" />
-                打开 VNC 桌面
-              </Button>
+          <CardContent className="space-y-0 p-0">
+            <div className="p-6 pt-5">
+              <HostLifecycleActions hostId={hostId} hostStatus={host.status} />
             </div>
-            <p className="text-xs text-muted-foreground">
-              操作提交后将异步执行，请在任务列表中查看进度。
-            </p>
+            <Separator />
+            <div className="space-y-4 bg-muted/25 p-6">
+              <div>
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  凭据与远程
+                </p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-11 justify-start gap-2 px-4 sm:col-span-1"
+                    onClick={() => setRotateSSHOpen(true)}
+                  >
+                    <KeyRound className="h-4 w-4 shrink-0" />
+                    <span className="text-left text-sm leading-snug">
+                      重置主机 SSH 密码
+                    </span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-11 justify-start gap-2 px-4"
+                    onClick={() => setRotateLoginOpen(true)}
+                  >
+                    <KeyRound className="h-4 w-4 shrink-0" />
+                    <span className="text-left text-sm leading-snug">
+                      轮换用户登录密码
+                    </span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-11 justify-start gap-2 px-4 sm:col-span-2"
+                    onClick={openVNC}
+                  >
+                    <Monitor className="h-4 w-4 shrink-0" />
+                    <span className="text-left text-sm leading-snug">
+                      打开 VNC 桌面
+                    </span>
+                  </Button>
+                </div>
+              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                操作提交后将异步执行，请在「任务列表」中查看进度。
+              </p>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -261,11 +344,18 @@ function CopyableCommand({ command }: { command: string }) {
   }
 
   return (
-    <div className="flex items-center gap-2 rounded-md border bg-muted p-3">
-      <code className="flex-1 break-all font-mono text-sm">{command}</code>
-      <Button variant="ghost" size="icon" className="shrink-0" onClick={handleCopy}>
+    <div className="flex items-stretch gap-2 overflow-hidden rounded-lg border border-white/10 bg-sidebar px-3 py-2.5 text-sidebar-foreground shadow-inner">
+      <code className="flex-1 break-all font-mono text-sm leading-relaxed">
+        {command}
+      </code>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-9 w-9 shrink-0 hover:bg-white/10"
+        onClick={handleCopy}
+      >
         {copied ? (
-          <Check className="h-4 w-4 text-green-600" />
+          <Check className="h-4 w-4 text-emerald-400" />
         ) : (
           <Copy className="h-4 w-4" />
         )}

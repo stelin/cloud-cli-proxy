@@ -1,5 +1,5 @@
 import { useRouterState } from "@tanstack/react-router";
-import { ChevronDown, CircleHelp, LogOut, Users } from "lucide-react";
+import { ChevronDown, CircleHelp, LogOut, User } from "lucide-react";
 import {
   clearAllSessions,
   logout,
@@ -40,33 +40,45 @@ export function Topbar({ onHelpClick }: TopbarProps = {}) {
   const roleLabel = currentSession?.role === "admin" ? "管理员" : "用户";
 
   return (
-    <header className="flex h-16 items-center justify-between border-b bg-background px-6">
-      <h2 className="text-lg font-semibold">{title}</h2>
-      <div className="flex items-center gap-3">
+    <header className="flex h-14 items-center justify-between border-b bg-background/80 backdrop-blur-sm px-6">
+      <h2 className="text-sm font-semibold">{title}</h2>
+      <div className="flex items-center gap-2">
         {onHelpClick && (
           <Button
             type="button"
             variant="ghost"
             size="icon"
+            className="h-8 w-8"
             onClick={onHelpClick}
             title="使用引导"
           >
-            <CircleHelp className="h-5 w-5 text-muted-foreground" />
+            <CircleHelp className="h-4 w-4 text-muted-foreground" />
           </Button>
         )}
-        <span className="text-sm text-muted-foreground">{roleLabel}</span>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button type="button" variant="outline" className="gap-2">
-              <Users className="h-4 w-4" />
-              <span className="max-w-32 truncate font-mono">
-                {currentSession?.shortId ?? "未登录"}
-              </span>
-              <ChevronDown className="h-4 w-4" />
-            </Button>
+            <button
+              type="button"
+              className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors hover:bg-accent"
+            >
+              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10">
+                <User className="h-3.5 w-3.5 text-primary" />
+              </div>
+              <div className="text-left hidden sm:block">
+                <p className="text-xs font-medium leading-none">
+                  {currentSession?.username ?? currentSession?.shortId ?? "未登录"}
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {roleLabel}
+                </p>
+              </div>
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-72">
-            <DropdownMenuLabel>已保存会话</DropdownMenuLabel>
+          <DropdownMenuContent align="end" className="w-64">
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+              已保存会话
+            </DropdownMenuLabel>
             {sessions.map((session) => (
               <DropdownMenuItem
                 key={session.id}
@@ -74,15 +86,17 @@ export function Topbar({ onHelpClick }: TopbarProps = {}) {
                 className="flex items-center justify-between"
               >
                 <div className="min-w-0">
-                  <div className="truncate font-mono text-sm">
-                    {session.shortId}
+                  <div className="truncate text-sm">
+                    {session.username ?? session.shortId}
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {session.role === "admin" ? "管理员" : "用户"}
                   </div>
                 </div>
                 {session.id === currentSession?.id ? (
-                  <span className="text-xs text-muted-foreground">当前</span>
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                    当前
+                  </span>
                 ) : null}
               </DropdownMenuItem>
             ))}

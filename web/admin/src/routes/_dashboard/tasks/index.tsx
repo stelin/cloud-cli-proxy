@@ -1,6 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { ListTodo } from "lucide-react";
 import { useTasks } from "@/hooks/use-tasks";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/page-header";
+import { DataTableShell } from "@/components/layout/data-table-shell";
+import { EmptyState } from "@/components/layout/empty-state";
 import {
   Table,
   TableBody,
@@ -25,7 +29,10 @@ function formatDate(dateStr: string) {
   });
 }
 
-const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
+const statusConfig: Record<
+  string,
+  { label: string; variant: "default" | "secondary" | "destructive" | "outline" }
+> = {
   pending: { label: "等待中", variant: "outline" },
   running: { label: "运行中", variant: "default" },
   succeeded: { label: "成功", variant: "default" },
@@ -39,12 +46,12 @@ function TasksPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">任务列表</h1>
-        <p className="text-sm text-muted-foreground">每 5 秒自动刷新</p>
-      </div>
+      <PageHeader
+        title="任务列表"
+        description="异步任务与主机操作编排的执行进度，每 5 秒自动刷新"
+      />
 
-      <div className="rounded-md border bg-background">
+      <DataTableShell>
         <Table>
           <TableHeader>
             <TableRow>
@@ -70,11 +77,12 @@ function TasksPage() {
               ))
             ) : tasks.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={7}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  暂无任务
+                <TableCell colSpan={7} className="p-0">
+                  <EmptyState
+                    icon={ListTodo}
+                    title="暂无任务"
+                    description="创建、启动或重建主机等操作会在此生成任务记录"
+                  />
                 </TableCell>
               </TableRow>
             ) : (
@@ -108,7 +116,7 @@ function TasksPage() {
             )}
           </TableBody>
         </Table>
-      </div>
+      </DataTableShell>
     </div>
   );
 }

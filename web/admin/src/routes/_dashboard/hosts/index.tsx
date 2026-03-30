@@ -10,6 +10,7 @@ import {
   Square,
   RotateCcw,
   Globe,
+  Server,
 } from "lucide-react";
 import { toast } from "sonner";
 import { getToken } from "@/lib/auth";
@@ -49,6 +50,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { PageHeader } from "@/components/layout/page-header";
+import { DataTableShell } from "@/components/layout/data-table-shell";
+import { EmptyState } from "@/components/layout/empty-state";
 
 export const Route = createFileRoute("/_dashboard/hosts/")({
   component: HostsPage,
@@ -122,17 +126,19 @@ function HostsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">主机管理</h1>
+      <PageHeader
+        title="主机管理"
+        description="查看并管理所有用户云主机、容器状态与生命周期操作"
+      >
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />
           新建主机
         </Button>
-      </div>
+      </PageHeader>
 
       <CreateHostDialog open={createOpen} onOpenChange={setCreateOpen} />
 
-      <div className="rounded-md border bg-background">
+      <DataTableShell>
         <Table>
           <TableHeader>
             <TableRow>
@@ -159,11 +165,18 @@ function HostsPage() {
               ))
             ) : hosts.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={8}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  暂无主机
+                <TableCell colSpan={8} className="p-0">
+                  <EmptyState
+                    icon={Server}
+                    title="暂无主机"
+                    description="创建主机后，可在此查看容器状态、出口 IP 绑定与运维操作"
+                    action={
+                      <Button onClick={() => setCreateOpen(true)}>
+                        <Plus className="mr-2 h-4 w-4" />
+                        新建主机
+                      </Button>
+                    }
+                  />
                 </TableCell>
               </TableRow>
             ) : (
@@ -360,7 +373,7 @@ function HostsPage() {
             )}
           </TableBody>
         </Table>
-      </div>
+      </DataTableShell>
 
       <AlertDialog
         open={!!deleteTarget}

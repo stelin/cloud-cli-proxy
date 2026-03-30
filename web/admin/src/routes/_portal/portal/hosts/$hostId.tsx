@@ -1,5 +1,13 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, Globe, Shield, Monitor, Terminal, Copy, Check } from "lucide-react";
+import {
+  Check,
+  Copy,
+  Globe,
+  Monitor,
+  PanelTop,
+  Shield,
+  Terminal,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { getToken } from "@/lib/auth";
@@ -92,13 +100,13 @@ function PortalHostDetail() {
   if (!host) {
     return (
       <div className="space-y-4">
-        <Link
-          to="/portal"
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          返回主机列表
-        </Link>
+        <nav className="text-sm text-muted-foreground">
+          <Link to="/portal" className="hover:text-foreground">
+            我的主机
+          </Link>
+          <span className="mx-2">/</span>
+          <span className="text-foreground">未找到</span>
+        </nav>
         <p className="text-muted-foreground">主机未找到</p>
       </div>
     );
@@ -120,49 +128,55 @@ function PortalHostDetail() {
     });
   }
 
+  const displayName = host.hostname || "未命名主机";
+
   return (
     <div className="space-y-6">
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Link
-          to="/portal"
-          className="inline-flex items-center gap-1 hover:text-foreground"
-        >
-          <ArrowLeft className="h-4 w-4" />
+      <nav aria-label="面包屑" className="text-sm text-muted-foreground">
+        <Link to="/portal" className="hover:text-foreground">
           我的主机
         </Link>
-        <span>/</span>
-        <span className="text-foreground">{host.hostname || "主机详情"}</span>
+        <span className="mx-2 text-border">/</span>
+        <span className="font-medium text-foreground">{displayName}</span>
+      </nav>
+
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-bold tracking-tight">{displayName}</h1>
+            <Badge variant={sc.variant}>{sc.label}</Badge>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            查看出口绑定、连接命令与运维操作
+          </p>
+        </div>
       </div>
 
-      {/* Basic info */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="text-xl">{host.hostname || "未命名主机"}</CardTitle>
-          <Badge variant={sc.variant}>{sc.label}</Badge>
+      <Card className="overflow-hidden rounded-xl border-border/80 shadow-sm">
+        <CardHeader className="border-b bg-muted/30">
+          <CardTitle className="text-base">基本信息</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <dt className="text-sm font-medium text-muted-foreground">时区</dt>
+              <dt className="text-xs font-medium text-muted-foreground">时区</dt>
               <dd className="mt-1 text-sm">{host.timezone || "未设置"}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-muted-foreground">创建时间</dt>
+              <dt className="text-xs font-medium text-muted-foreground">创建时间</dt>
               <dd className="mt-1 text-sm">{formatDateTime(host.created_at)}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-muted-foreground">更新时间</dt>
+              <dt className="text-xs font-medium text-muted-foreground">更新时间</dt>
               <dd className="mt-1 text-sm">{formatDateTime(host.updated_at)}</dd>
             </div>
           </dl>
         </CardContent>
       </Card>
 
-      {/* Egress bindings */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">出口 IP</CardTitle>
+      <Card className="overflow-hidden rounded-xl border-border/80 shadow-sm">
+        <CardHeader className="border-b bg-muted/30">
+          <CardTitle className="text-base">出口 IP</CardTitle>
         </CardHeader>
         <CardContent>
           {host.egress_bindings.length === 0 ? (
@@ -193,11 +207,11 @@ function PortalHostDetail() {
 
       {/* Quick Access */}
       {host.status === "running" && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">快速访问</CardTitle>
+        <Card className="overflow-hidden rounded-xl border-border/80 shadow-sm">
+          <CardHeader className="border-b bg-muted/30">
+            <CardTitle className="text-base">快速访问</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-4 pt-6">
             <Button
               onClick={() => {
                 const token = getToken() || "";
@@ -209,11 +223,14 @@ function PortalHostDetail() {
                   "_blank"
                 );
               }}
-              className="w-full justify-start gap-2"
-              variant="outline"
+              className="h-auto w-full flex-col gap-2 py-5 sm:flex-row sm:justify-start"
+              variant="secondary"
             >
-              <Monitor className="h-4 w-4" />
-              打开桌面（VNC）
+              <div className="relative flex h-12 w-12 items-center justify-center rounded-xl bg-background shadow-sm ring-1 ring-border">
+                <PanelTop className="h-6 w-6 text-muted-foreground/80" />
+                <Monitor className="absolute bottom-1.5 right-1.5 h-4 w-4 text-primary" />
+              </div>
+              <span className="text-sm font-medium">打开浏览器桌面（VNC）</span>
             </Button>
           </CardContent>
         </Card>
@@ -221,23 +238,23 @@ function PortalHostDetail() {
 
       {/* Connection Info */}
       {host.connection_info && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg">
+        <Card className="overflow-hidden rounded-xl border-border/80 shadow-sm">
+          <CardHeader className="border-b bg-muted/30">
+            <CardTitle className="flex items-center gap-2 text-base">
               <Terminal className="h-5 w-5" />
               SSH 连接
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-6 pt-6">
             <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">
-                在终端中运行以下命令，一键连接到你的云主机：
+              <p className="text-sm font-medium text-muted-foreground">
+                在终端中运行以下命令，一键连接到你的云主机
               </p>
               <CopyableCommand command={host.connection_info.curl_command} />
             </div>
             <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">
-                或者使用 SSH 直连（需要用入口密码）：
+              <p className="text-sm font-medium text-muted-foreground">
+                或者使用 SSH 直连（需要用入口密码）
               </p>
               <CopyableCommand command={host.connection_info.ssh_command} />
             </div>
@@ -269,9 +286,9 @@ function PortalHostDetail() {
       />
 
       {/* Actions */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">操作</CardTitle>
+      <Card className="overflow-hidden rounded-xl border-border/80 shadow-sm">
+        <CardHeader className="border-b bg-muted/30">
+          <CardTitle className="text-base">操作</CardTitle>
         </CardHeader>
         <CardContent>
           <AlertDialog>
@@ -325,18 +342,18 @@ function CopyableCommand({ command }: { command: string }) {
   }
 
   return (
-    <div className="flex items-center gap-2 rounded-lg border bg-muted/50 p-3">
-      <code className="flex-1 overflow-x-auto text-sm font-mono">
+    <div className="flex items-stretch gap-2 overflow-hidden rounded-lg border border-white/10 bg-sidebar px-3 py-2.5 text-sidebar-foreground shadow-inner">
+      <code className="flex-1 overflow-x-auto break-all font-mono text-sm leading-relaxed">
         {command}
       </code>
       <Button
         variant="ghost"
         size="icon"
-        className="h-8 w-8 shrink-0"
+        className="h-9 w-9 shrink-0 hover:bg-white/10"
         onClick={handleCopy}
       >
         {copied ? (
-          <Check className="h-4 w-4 text-green-600" />
+          <Check className="h-4 w-4 text-emerald-400" />
         ) : (
           <Copy className="h-4 w-4" />
         )}

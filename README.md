@@ -1,8 +1,12 @@
 <div align="center">
 
+<img src="web/admin/public/favicon.svg" width="88" height="88" alt="Cloud CLI Proxy" />
+
 # Cloud CLI Proxy
 
-**一条命令，一台云主机，所有流量走指定出口**
+**一条命令，一台云主机，所有流量走指定出口。**
+
+为 Claude Code 和开发团队提供开箱即用的隔离云主机环境，预装 AI 编程工具，全流量强制走指定出口 IP，零泄漏。
 
 [![CI](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/build-images.yml/badge.svg)](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/build-images.yml)
 [![Release](https://img.shields.io/github/v/release/ZaneL1u/cloud-cli-proxy)](https://github.com/ZaneL1u/cloud-cli-proxy/releases)
@@ -10,92 +14,144 @@
 
 [English](README.en.md) | [Documentation](https://zanel1u.github.io/cloud-cli-proxy/)
 
+**Go · React · PostgreSQL · Docker · WireGuard**
+
 </div>
 
 ---
 
-Cloud CLI Proxy 是一个面向单宿主机的容器化 SSH 云主机平台。用户通过一条 `curl` 命令即可获得专属 Docker 容器，所有出网流量通过 WireGuard 全隧道路由至指定出口 IP，杜绝 DNS / WebRTC 等任何直连泄漏。
+## 功能特性
 
-## 核心特性
+- **一条命令接入** — `curl | bash` 自动认证、创建容器、SSH 接入，用户无需任何配置
+- **Claude Code 开箱即用** — 容器预装 Claude Code，进入即可使用，所有 API 请求自动走指定出口
+- **全流量强制出口** — WireGuard + Linux netns / sing-box tun 双通道，nftables 默认拒绝策略，杜绝 DNS / WebRTC 泄漏
+- **多协议支持** — 出口 IP 支持 WireGuard 和 5 种代理协议（SOCKS5 / VMess / Shadowsocks / Trojan / HTTP）
+- **每用户隔离** — 独立 Docker 容器，预装 KasmVNC 远程桌面 + Chromium 浏览器
+- **管理后台** — React SPA 仪表盘，用户、主机、出口 IP、事件日志一站式管理
+- **用户自助面板** — 用户可查看主机状态、重建主机、访问 VNC 桌面
+- **到期自动治理** — 过期自动停机、禁止登录
+- **多架构 CI/CD** — GitHub Actions 自动构建 `linux/amd64` + `linux/arm64` 镜像
 
-- **一条命令接入** -- `curl | bash` 启动，自动认证、创建容器、建立 SSH 会话
-- **全流量强制出口** -- WireGuard + Linux netns 全隧道，配合 nftables 默认拒绝策略，零泄漏
-- **每用户独立环境** -- Docker 容器隔离，预装 Claude Code、KasmVNC 桌面和 Chromium
-- **灵活的出口 IP 管理** -- 多出口 IP 池，按用户绑定，支持连通性测试
-- **到期自动治理** -- 用户到期后自动停机、禁止登录
-- **管理后台** -- React SPA，覆盖用户、主机、出口 IP、事件日志和仪表盘
-- **多架构 CI/CD** -- GitHub Actions 自动构建 `linux/amd64` + `linux/arm64` 镜像
+---
 
-## 快速开始
+## 部署
+
+### Docker Compose
 
 ```bash
-# 1. 克隆
 git clone https://github.com/ZaneL1u/cloud-cli-proxy.git
 cd cloud-cli-proxy
 
-# 2. 生成环境配置（交互式，自动生成密码和密钥）
 bash deploy/scripts/setup-env.sh
 
-# 3. 启动
 docker compose up -d --build
 
-# 4. 验证
 curl http://127.0.0.1:8080/healthz
 # {"status":"ok"}
 ```
 
-服务就绪后，管理员通过 API 创建用户和出口 IP，然后将以下命令发给用户：
+`setup-env.sh` 交互式生成所有密码和密钥，支持内置 Docker PostgreSQL（零配置）或外部数据库。
+
+启动后管理后台在 `http://YOUR_HOST:3000`，API 在 `:8080`。
+
+### 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `DATABASE_URL` | PostgreSQL 连接字符串（必填） | — |
+| `ADMIN_USERNAME` | 管理员用户名 | `admin` |
+| `ADMIN_PASSWORD` | 管理员密码（必填） | — |
+| `ADMIN_JWT_SECRET` | JWT 签名密钥（必填） | — |
+| `ADMIN_PORT` | 管理后台端口 | `3000` |
+| `SSH_PROXY_PORT` | SSH 代理端口 | `2222` |
+| `LOG_FORMAT` | 日志格式 `json` / `text` | `json` |
+| `LOG_LEVEL` | 日志级别 | `info` |
+
+---
+
+## 使用
+
+### 管理员设置
+
+登录管理后台，依次完成：
+
+1. **添加出口 IP** — 支持 WireGuard 配置或代理协议，可一键测试连通性
+2. **创建用户** — 设置用户名、密码、到期时间
+3. **创建主机** — 为用户创建容器并绑定出口 IP
+4. **分发接入命令** — 在主机详情页复制 `curl` 命令发给用户
+
+### 用户接入
+
+用户在终端执行管理员提供的命令即可：
 
 ```bash
-curl -sSf http://YOUR_HOST:8080/v1/bootstrap/script | bash
+curl -sSf http://YOUR_HOST/entry/abc123 | bash
+# 输入密码 → 等待启动 → 自动 SSH 进入云主机
 ```
 
-## 架构概览
+### Claude Code
 
-```
-终端用户 ──curl──> Control Plane (Go API) ──Docker──> 用户容器 (SSH + VNC + Claude)
-                        │                                    │
-                   PostgreSQL                          WireGuard 隧道
-                                                            │
-                                                       指定出口 IP
+进入云主机后 Claude Code 已预装，直接使用：
+
+```bash
+claude
 ```
 
-## 技术栈
+所有 Claude API 请求自动通过指定出口 IP 路由，无需额外配置代理。
 
-| 层 | 技术 |
-|----|------|
-| 后端 | Go, net/http, pgx v5 |
-| 前端 | React 19, TypeScript, Vite, Tailwind CSS |
-| 数据库 | PostgreSQL 18 |
-| 容器 | Docker Engine 28, Ubuntu 24.04 |
-| 网络 | WireGuard + Linux netns, nftables, sing-box |
-| 桌面 | KasmVNC + Fluxbox + Chromium |
+### KasmVNC 远程桌面
 
-## 文档
+容器内置 KasmVNC + Chromium，可通过管理后台或用户面板直接访问浏览器桌面环境。
 
-完整文档托管在 [GitHub Pages](https://zanel1u.github.io/cloud-cli-proxy/)，包括：
+---
 
-- [快速开始](https://zanel1u.github.io/cloud-cli-proxy/zh/guide/quickstart) -- 部署和首次使用
-- [部署指南](https://zanel1u.github.io/cloud-cli-proxy/zh/guide/deployment) -- systemd 原生部署详细步骤
-- [配置参考](https://zanel1u.github.io/cloud-cli-proxy/zh/guide/configuration) -- 环境变量和 WireGuard 配置
-- [架构说明](https://zanel1u.github.io/cloud-cli-proxy/zh/guide/architecture) -- 系统架构和项目结构
-- [API 参考](https://zanel1u.github.io/cloud-cli-proxy/zh/reference/api) -- 完整 Admin API 文档
-- [故障排查](https://zanel1u.github.io/cloud-cli-proxy/zh/reference/faq) -- 常见问题和灾难恢复
+## 架构
+
+```
+用户 ──curl──> Control Plane (:8080) ──Docker──> 用户容器 (SSH + Claude Code + VNC)
+                    │                                  │
+               PostgreSQL                        WireGuard / sing-box 隧道
+                    │                                  │
+              Admin SPA (:3000)                   指定出口 IP
+                    │
+              SSH Proxy (:2222)
+```
+
+| 组件 | 说明 |
+|------|------|
+| **Control Plane** | Go API，认证、用户管理、任务编排、SSH 代理 |
+| **Host Agent** | 特权代理，管理 Docker 容器、网络命名空间和隧道 |
+| **用户容器** | Ubuntu 24.04，预装 OpenSSH + Claude Code + KasmVNC + Chromium |
+| **PostgreSQL** | 持久化用户、主机、出口 IP、任务和事件 |
+| **Admin SPA** | React 19 + TypeScript + Vite + Tailwind CSS |
+
+---
 
 ## 开发
 
 ```bash
-make setup    # 安装依赖，复制 .env.example
+make setup    # 安装依赖
 make db       # 启动 PostgreSQL
 make dev      # 后端 + 前端热重载
-make test     # 全部测试
+make test     # 运行测试
 ```
 
 更多命令见 `make help`。
 
-## 贡献
+---
 
-欢迎提交 Issue 和 Pull Request。请使用 [Conventional Commits](https://www.conventionalcommits.org/) 格式提交。
+## 文档
+
+完整文档见 [GitHub Pages](https://zanel1u.github.io/cloud-cli-proxy/)：
+
+- [快速开始](https://zanel1u.github.io/cloud-cli-proxy/zh/guide/quickstart) — 部署和首次使用
+- [部署指南](https://zanel1u.github.io/cloud-cli-proxy/zh/guide/deployment) — systemd 原生部署
+- [配置参考](https://zanel1u.github.io/cloud-cli-proxy/zh/guide/configuration) — 环境变量和 WireGuard 配置
+- [架构说明](https://zanel1u.github.io/cloud-cli-proxy/zh/guide/architecture) — 系统设计和项目结构
+- [API 参考](https://zanel1u.github.io/cloud-cli-proxy/zh/reference/api) — 完整 Admin API
+- [故障排查](https://zanel1u.github.io/cloud-cli-proxy/zh/reference/faq) — 常见问题和灾难恢复
+
+---
 
 ## 许可证
 

@@ -4,7 +4,7 @@ layout: home
 hero:
   name: Cloud CLI Proxy
   text: Containerized SSH Cloud Platform
-  tagline: One command. One cloud machine. All traffic through your exit IP.
+  tagline: One command to get a cloud host with Claude Code pre-installed. All traffic through your exit IP. Zero leaks.
   actions:
     - theme: brand
       text: Quick Start
@@ -14,12 +14,22 @@ hero:
       link: https://github.com/ZaneL1u/cloud-cli-proxy
 
 features:
-  - title: One-command Access
-    details: curl | bash to authenticate, create container, and establish SSH session
-  - title: Full-tunnel Egress
-    details: WireGuard + Linux netns with nftables default-deny policy, zero leaks
-  - title: Per-user Isolation
-    details: Docker containers with pre-installed Claude Code, KasmVNC desktop, and Chromium
-  - title: Flexible Egress IP Management
-    details: Multi-IP pool, per-user binding, connectivity testing
+  - icon: 🚀
+    title: One-command Access
+    details: curl | bash to authenticate, create container, and SSH in — zero user configuration needed
+  - icon: 🤖
+    title: Claude Code Ready
+    details: Pre-installed in every container. Start AI-assisted coding immediately with all API requests auto-routed through exit IP
+  - icon: 🔒
+    title: Full-tunnel Egress
+    details: WireGuard + Linux netns / sing-box tun dual-channel with nftables default-deny. No DNS or WebRTC leaks
+  - icon: 🌐
+    title: Multi-protocol Proxy
+    details: Egress IPs support WireGuard and 5 proxy protocols — SOCKS5, VMess, Shadowsocks, Trojan, HTTP
+  - icon: 🖥️
+    title: Remote Desktop
+    details: Built-in KasmVNC + Chromium browser desktop, accessible via admin or user panel
+  - icon: 📊
+    title: Admin Dashboard
+    details: React SPA for users, hosts, egress IPs, event logs, proxy testing — all in one place
 ---

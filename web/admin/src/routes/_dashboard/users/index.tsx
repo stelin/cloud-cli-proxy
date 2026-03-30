@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { MoreHorizontal, Plus, Eye, Ban, CheckCircle, Trash2 } from "lucide-react";
+import { MoreHorizontal, Plus, Eye, Ban, CheckCircle, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { useUsers, useUpdateUserStatus, type User } from "@/hooks/use-users";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +22,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { CreateUserDialog } from "@/components/users/create-user-dialog";
 import { DeleteUserDialog } from "@/components/users/delete-user-dialog";
+import { PageHeader } from "@/components/layout/page-header";
+import { DataTableShell } from "@/components/layout/data-table-shell";
+import { EmptyState } from "@/components/layout/empty-state";
 
 export const Route = createFileRoute("/_dashboard/users/")({
   component: UsersPage,
@@ -65,15 +68,17 @@ function UsersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">用户管理</h1>
+      <PageHeader
+        title="用户管理"
+        description="管理系统中的所有用户账号、到期时间与登录凭证"
+      >
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="h-4 w-4" />
           创建用户
         </Button>
-      </div>
+      </PageHeader>
 
-      <div className="rounded-md border bg-background">
+      <DataTableShell>
         <Table>
           <TableHeader>
             <TableRow>
@@ -105,11 +110,18 @@ function UsersPage() {
               ))
             ) : users.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={5}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  暂无用户
+                <TableCell colSpan={5} className="p-0">
+                  <EmptyState
+                    icon={Users}
+                    title="暂无用户"
+                    description="创建第一个用户账号，即可为其分配云主机与出口 IP"
+                    action={
+                      <Button onClick={() => setCreateOpen(true)}>
+                        <Plus className="h-4 w-4" />
+                        创建用户
+                      </Button>
+                    }
+                  />
                 </TableCell>
               </TableRow>
             ) : (
@@ -200,7 +212,7 @@ function UsersPage() {
             )}
           </TableBody>
         </Table>
-      </div>
+      </DataTableShell>
 
       <CreateUserDialog open={createOpen} onOpenChange={setCreateOpen} />
       {deleteUser && (

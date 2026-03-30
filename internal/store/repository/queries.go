@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -1175,13 +1176,28 @@ func (r *Repository) MarkStaleTasks(ctx context.Context, threshold time.Duration
 	return scanTasks(rows)
 }
 
-func (r *Repository) GetUserByShortIDForAuth(ctx context.Context, shortID string) (User, error) {
+// GetUserByLoginIdentifierForAuth 使用用户名或用户短 ID 查找账号（网页登录入口）。
+// 优先匹配用户名，再匹配短 ID，兼容旧行为与 curl 入口等场景。
+func (r *Repository) GetUserByLoginIdentifierForAuth(ctx context.Context, identifier string) (User, error) {
 	var item User
+	err := r.db.QueryRow(ctx, `
+		SELECT id::text, username, status, COALESCE(short_id, ''), role,
+		       COALESCE(password_hash, ''), expires_at, created_at, updated_at
+		FROM users WHERE username = $1
+	`, identifier).Scan(&item.ID, &item.Username, &item.Status, &item.ShortID, &item.Role,
+		&item.PasswordHash, &item.ExpiresAt, &item.CreatedAt, &item.UpdatedAt)
+	if err == nil {
+		return item, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return User{}, fmt.Errorf("get user by username for auth: %w", err)
+	}
+
 	if err := r.db.QueryRow(ctx, `
 		SELECT id::text, username, status, COALESCE(short_id, ''), role,
 		       COALESCE(password_hash, ''), expires_at, created_at, updated_at
 		FROM users WHERE short_id = $1
-	`, shortID).Scan(&item.ID, &item.Username, &item.Status, &item.ShortID, &item.Role,
+	`, identifier).Scan(&item.ID, &item.Username, &item.Status, &item.ShortID, &item.Role,
 		&item.PasswordHash, &item.ExpiresAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return User{}, fmt.Errorf("get user by short_id for auth: %w", err)
 	}
