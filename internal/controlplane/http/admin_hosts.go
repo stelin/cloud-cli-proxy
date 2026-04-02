@@ -412,6 +412,48 @@ func (h *AdminHostsHandler) RotateSSHPassword() nethttp.Handler {
 	})
 }
 
+func (h *AdminHostsHandler) RestartVNC() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		hostID := r.PathValue("hostID")
+
+		host, err := h.store.GetHost(r.Context(), hostID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "host not found"})
+				return
+			}
+			h.logger.Error("get host for vnc restart failed", "host_id", hostID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "get host failed"})
+			return
+		}
+		if host.Status != "running" {
+			writeJSON(w, nethttp.StatusConflict, map[string]string{"error": "host is not running"})
+			return
+		}
+
+		containerName := "cloudproxy-" + hostID
+		if err := restartContainerVNC(containerName); err != nil {
+			h.logger.Error("restart vnc failed", "host_id", hostID, "container", containerName, "error", err)
+			writeJSON(w, nethttp.StatusBadGateway, map[string]string{"error": "restart vnc failed"})
+			return
+		}
+
+		if h.events != nil {
+			if _, err := h.events.RecordEvent(r.Context(), repository.RecordEventParams{
+				HostID:   &hostID,
+				Level:    "info",
+				Type:     "admin.host.vnc_restarted",
+				Message:  "管理员重启 VNC 服务",
+				Metadata: map[string]any{"operator": "admin"},
+			}); err != nil {
+				h.logger.Error("record event failed", "type", "admin.host.vnc_restarted", "error", err)
+			}
+		}
+
+		writeJSON(w, nethttp.StatusOK, map[string]any{"status": "restarted"})
+	})
+}
+
 // syncContainerPassword updates the Linux user password inside a running container via docker exec.
 func syncContainerPassword(containerName, user, password string) error {
 	cmd := exec.CommandContext(context.Background(), "docker", "exec", "-i", containerName,

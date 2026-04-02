@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="web/admin/public/favicon.svg" width="88" height="88" alt="Cloud CLI Proxy" />
+<img src="docs/public/logo.svg" width="88" height="88" alt="Cloud CLI Proxy" />
 
 # Cloud CLI Proxy
 
@@ -8,7 +8,8 @@
 
 为 Claude Code 和开发团队提供开箱即用的隔离云主机环境，预装 AI 编程工具，全流量强制走指定出口 IP，零泄漏。
 
-[![CI](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/build-images.yml/badge.svg)](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/build-images.yml)
+[![CI](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/ci.yml)
+[![Images](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/build-images.yml/badge.svg)](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/build-images.yml)
 [![Release](https://img.shields.io/github/v/release/ZaneL1u/cloud-cli-proxy)](https://github.com/ZaneL1u/cloud-cli-proxy/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -44,7 +45,9 @@ cd cloud-cli-proxy
 
 bash deploy/scripts/setup-env.sh
 
-docker compose up -d --build
+# 推荐：优先使用预构建镜像（latest）
+docker compose pull --policy always
+docker compose up -d
 
 curl http://127.0.0.1:8080/healthz
 # {"status":"ok"}
@@ -53,6 +56,13 @@ curl http://127.0.0.1:8080/healthz
 `setup-env.sh` 交互式生成所有密码和密钥，支持内置 Docker PostgreSQL（零配置）或外部数据库。
 
 启动后管理后台在 `http://YOUR_HOST:3000`，API 在 `:8080`。
+
+本地源码构建（可选，作为预构建不可用时的兜底）：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yaml --profile build-only build --no-cache
+docker compose -f docker-compose.yml -f docker-compose.build.yaml up -d --force-recreate
+```
 
 ### 环境变量
 
@@ -137,6 +147,30 @@ make test     # 运行测试
 ```
 
 更多命令见 `make help`。
+
+---
+
+## 发布与 Changelog
+
+推送 `v*` 标签会自动触发 `Release` 工作流，完成三件事：
+
+- 先执行 CI 门禁（Go tests + Admin 前端构建）
+- 创建 GitHub Release
+- 触发多架构镜像发布（`semver` + `latest`）
+- 按 monorepo 分组生成发布说明并回写 [CHANGELOG.md](CHANGELOG.md)
+
+当前 changelog 默认按路径分组为：
+
+- Backend（Go / API，`cmd` + `internal`）
+- Frontend（`web/admin`）
+- Runtime & Deployment（`deploy`、compose、workflow）
+- Docs（`docs` + README）
+
+手动发版示例：
+
+```bash
+make release VERSION=1.5.0
+```
 
 ---
 

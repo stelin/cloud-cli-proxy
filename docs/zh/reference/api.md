@@ -390,6 +390,13 @@ curl -s -X POST http://YOUR_HOST:8080/v1/admin/hosts/{hostID}/rotate-ssh-passwor
   -H "Authorization: Bearer $TOKEN"
 ```
 
+### 重启 VNC 服务（不中断主机）
+
+```bash
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/hosts/{hostID}/vnc/restart \
+  -H "Authorization: Bearer $TOKEN"
+```
+
 ### 删除主机
 
 ```bash
@@ -454,6 +461,13 @@ curl -s http://YOUR_HOST:8080/v1/user/hosts/{hostID} \
 
 ```bash
 curl -s -X POST http://YOUR_HOST:8080/v1/user/hosts/{hostID}/rebuild \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### 重启自己的 VNC 服务
+
+```bash
+curl -s -X POST http://YOUR_HOST:8080/v1/user/hosts/{hostID}/vnc/restart \
   -H "Authorization: Bearer $TOKEN"
 ```
 

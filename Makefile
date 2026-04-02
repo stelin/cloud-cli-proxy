@@ -3,7 +3,7 @@ export
 
 DEV_COMPOSE := docker compose -f deploy/compose/control-plane.dev.yml
 
-.PHONY: dev dev-api dev-web db test test-go test-smoke build clean gateway-image
+.PHONY: dev dev-api dev-web db test test-go test-smoke build clean gateway-image up up-build down logs release
 
 # ── Development ──────────────────────────────────────────────
 
@@ -77,14 +77,25 @@ build-web: ## Build frontend only
 
 # ── Production ───────────────────────────────────────────────
 
-up: ## Start production stack (docker compose)
-	docker compose up -d --build
+up: ## Start production stack (prefer prebuilt latest images)
+	docker compose pull --policy always
+	docker compose up -d
+
+up-build: ## Start production stack from local source build
+	docker compose -f docker-compose.yml -f docker-compose.build.yaml --profile build-only build --no-cache
+	docker compose -f docker-compose.yml -f docker-compose.build.yaml up -d --force-recreate
 
 down: ## Stop production stack
 	docker compose down
 
 logs: ## Tail production logs
 	docker compose logs -f
+
+release: ## Create and push release tag (usage make release VERSION=1.5.0)
+	@test -n "$(VERSION)" || (echo "VERSION is required. Example: make release VERSION=1.5.0" && exit 1)
+	@test -z "$$(git status --porcelain)" || (echo "Working tree is dirty. Commit/stash changes before release." && exit 1)
+	git tag v$(VERSION)
+	git push origin v$(VERSION)
 
 # ── Setup ────────────────────────────────────────────────────
 

@@ -68,3 +68,16 @@ export function useRebuildHost() {
     },
   });
 }
+
+export function useRestartMyHostVNC() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (hostId: string) =>
+      portalApiFetch<{ status: string }>(`/hosts/${hostId}/vnc/restart`, {
+        method: "POST",
+      }),
+    onSuccess: (_data, hostId) => {
+      qc.invalidateQueries({ queryKey: ["portal", "hosts", hostId] });
+    },
+  });
+}

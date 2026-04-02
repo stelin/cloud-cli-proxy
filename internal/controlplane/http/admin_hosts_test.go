@@ -19,8 +19,10 @@ import (
 type stubHostStore struct {
 	hosts     []repository.HostWithUsername
 	detail    repository.HostDetail
+	host      repository.Host
 	listErr   error
 	detailErr error
+	hostErr   error
 }
 
 func (s *stubHostStore) ListHostsWithUsername(_ context.Context) ([]repository.HostWithUsername, error) {
@@ -32,7 +34,7 @@ func (s *stubHostStore) GetHostDetail(_ context.Context, _ string) (repository.H
 }
 
 func (s *stubHostStore) GetHost(_ context.Context, _ string) (repository.Host, error) {
-	return repository.Host{}, nil
+	return s.host, s.hostErr
 }
 
 func (s *stubHostStore) UpsertHost(_ context.Context, _ repository.UpsertHostParams) (repository.Host, error) {
@@ -68,15 +70,15 @@ func TestAdminHostsHandler(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
-		method      string
-		path        string
-		hostStore   *stubHostStore
-		queue       *stubQueuer
-		wantStatus  int
-		wantField   string
-		wantAction  agentapi.HostAction
-		wantQueued  bool
+		name       string
+		method     string
+		path       string
+		hostStore  *stubHostStore
+		queue      *stubQueuer
+		wantStatus int
+		wantField  string
+		wantAction agentapi.HostAction
+		wantQueued bool
 	}{
 		{
 			name:       "List hosts 200",
@@ -149,6 +151,22 @@ func TestAdminHostsHandler(t *testing.T) {
 			wantStatus: 202,
 			wantQueued: true,
 			wantAction: agentapi.ActionRebuildHost,
+		},
+		{
+			name:       "Restart VNC host 409 when not running",
+			method:     "POST",
+			path:       "/v1/admin/hosts/h1/vnc/restart",
+			hostStore:  &stubHostStore{host: repository.Host{ID: "h1", Status: "stopped"}},
+			queue:      &stubQueuer{},
+			wantStatus: 409,
+		},
+		{
+			name:       "Restart VNC host 404",
+			method:     "POST",
+			path:       "/v1/admin/hosts/missing/vnc/restart",
+			hostStore:  &stubHostStore{hostErr: pgx.ErrNoRows},
+			queue:      &stubQueuer{},
+			wantStatus: 404,
 		},
 	}
 

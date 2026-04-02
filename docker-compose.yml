@@ -15,9 +15,8 @@ services:
       - cloudproxy-postgres:/var/lib/postgresql
 
   control-plane:
-    build:
-      context: .
-      dockerfile: deploy/docker/control-plane/Dockerfile
+    image: ghcr.io/zanel1u/cloud-cli-proxy/control-plane:latest
+    pull_policy: always
     restart: unless-stopped
     depends_on:
       postgres:
@@ -32,6 +31,7 @@ services:
       ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:?Set ADMIN_JWT_SECRET in .env}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      CLOUD_CLI_PROXY_GATEWAY_IMAGE: ghcr.io/zanel1u/cloud-cli-proxy/sing-box-gateway:latest
     ports:
       - "${SSH_PROXY_PORT:-2222}:2222"
     volumes:
@@ -45,9 +45,8 @@ services:
       start_period: 30s
 
   admin:
-    build:
-      context: .
-      dockerfile: deploy/docker/admin/Dockerfile
+    image: ghcr.io/zanel1u/cloud-cli-proxy/admin:latest
+    pull_policy: always
     restart: unless-stopped
     depends_on:
       control-plane:
@@ -56,10 +55,8 @@ services:
       - "${ADMIN_PORT:-3000}:80"
 
   sing-box-gateway:
-    build:
-      context: .
-      dockerfile: deploy/docker/sing-box-gateway/Dockerfile
-    image: cloud-cli-proxy-sing-gateway:local
+    image: ghcr.io/zanel1u/cloud-cli-proxy/sing-box-gateway:latest
+    pull_policy: always
     profiles:
       - build-only
 

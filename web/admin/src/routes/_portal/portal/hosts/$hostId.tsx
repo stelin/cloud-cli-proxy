@@ -14,6 +14,7 @@ import { getToken } from "@/lib/auth";
 import {
   useMyHostDetail,
   useRebuildHost,
+  useRestartMyHostVNC,
 } from "@/hooks/use-portal-hosts";
 import {
   useMySSHKeys,
@@ -74,6 +75,7 @@ const tunnelTypeLabels: Record<string, string> = {
 function PortalHostDetail() {
   const { hostId } = Route.useParams();
   const rebuildMutation = useRebuildHost();
+  const restartVNCMutation = useRestartMyHostVNC();
   const sshKeysQuery = useMySSHKeys();
   const generateSSHKey = useMyGenerateSSHKey();
   const setSSHKey = useMySetSSHKey();
@@ -231,6 +233,19 @@ function PortalHostDetail() {
                 <Monitor className="absolute bottom-1.5 right-1.5 h-4 w-4 text-primary" />
               </div>
               <span className="text-sm font-medium">打开浏览器桌面（VNC）</span>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={restartVNCMutation.isPending}
+              onClick={() =>
+                restartVNCMutation.mutate(host.id, {
+                  onSuccess: () => toast.success("VNC 服务已重启"),
+                  onError: () => toast.error("重启 VNC 失败，请稍后重试"),
+                })
+              }
+            >
+              {restartVNCMutation.isPending ? "重启中..." : "重启 VNC 服务"}
             </Button>
           </CardContent>
         </Card>

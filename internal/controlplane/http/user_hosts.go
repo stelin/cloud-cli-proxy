@@ -140,6 +140,64 @@ func (h *UserHostsHandler) Get() nethttp.Handler {
 	})
 }
 
+// RestartVNC returns a handler for POST /v1/user/hosts/{hostID}/vnc/restart.
+func (h *UserHostsHandler) RestartVNC() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		userID := UserIDFromContext(r.Context())
+		role := RoleFromContext(r.Context())
+		hostID := r.PathValue("hostID")
+
+		if userID == "" {
+			writeJSON(w, nethttp.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+
+		host, err := h.store.GetHost(r.Context(), hostID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "host not found"})
+				return
+			}
+			h.logger.Error("get host failed", "host_id", hostID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "get host failed"})
+			return
+		}
+
+		if role != "admin" && host.UserID != userID {
+			writeJSON(w, nethttp.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
+		if host.Status != "running" {
+			writeJSON(w, nethttp.StatusConflict, map[string]string{"error": "host is not running"})
+			return
+		}
+
+		containerName := "cloudproxy-" + hostID
+		if err := restartContainerVNC(containerName); err != nil {
+			h.logger.Error("restart vnc failed", "host_id", hostID, "container", containerName, "error", err)
+			writeJSON(w, nethttp.StatusBadGateway, map[string]string{"error": "restart vnc failed"})
+			return
+		}
+
+		if h.events != nil {
+			if _, err := h.events.RecordEvent(r.Context(), repository.RecordEventParams{
+				HostID:  &hostID,
+				UserID:  &userID,
+				Level:   "info",
+				Type:    "user.host.vnc_restarted",
+				Message: "用户重启 VNC 服务",
+				Metadata: map[string]any{
+					"user_id": userID,
+				},
+			}); err != nil {
+				h.logger.Error("record event failed", "type", "user.host.vnc_restarted", "error", err)
+			}
+		}
+
+		writeJSON(w, nethttp.StatusOK, map[string]any{"status": "restarted"})
+	})
+}
+
 // Rebuild returns a handler for POST /v1/user/hosts/{hostID}/rebuild.
 func (h *UserHostsHandler) Rebuild() nethttp.Handler {
 	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {

@@ -390,6 +390,13 @@ curl -s -X POST http://YOUR_HOST:8080/v1/admin/hosts/{hostID}/rotate-ssh-passwor
   -H "Authorization: Bearer $TOKEN"
 ```
 
+### Restart VNC Service (without rebuilding host)
+
+```bash
+curl -s -X POST http://YOUR_HOST:8080/v1/admin/hosts/{hostID}/vnc/restart \
+  -H "Authorization: Bearer $TOKEN"
+```
+
 ### Delete Host
 
 ```bash
@@ -454,6 +461,13 @@ curl -s http://YOUR_HOST:8080/v1/user/hosts/{hostID} \
 
 ```bash
 curl -s -X POST http://YOUR_HOST:8080/v1/user/hosts/{hostID}/rebuild \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Restart Own VNC Service
+
+```bash
+curl -s -X POST http://YOUR_HOST:8080/v1/user/hosts/{hostID}/vnc/restart \
   -H "Authorization: Bearer $TOKEN"
 ```
 

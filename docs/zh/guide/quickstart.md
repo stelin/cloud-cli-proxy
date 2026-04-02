@@ -36,12 +36,23 @@ bash deploy/scripts/setup-env.sh
 
 ### 第 3 步：启动服务
 
+默认推荐：**优先使用预构建镜像**（`latest`），启动更快，且与 CI 发布保持一致。
+
 ```bash
 # 内置 Docker PostgreSQL
-docker compose up -d --build
+docker compose pull --policy always
+docker compose up -d
 
 # 外部 PostgreSQL（跳过内置数据库）
-docker compose up -d --build control-plane admin
+docker compose pull --policy always control-plane admin
+docker compose up -d control-plane admin
+```
+
+本地源码构建（可选）：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yaml --profile build-only build --no-cache
+docker compose -f docker-compose.yml -f docker-compose.build.yaml up -d --force-recreate
 ```
 
 ### 第 4 步：验证

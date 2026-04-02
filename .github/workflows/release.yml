@@ -9,8 +9,16 @@ permissions:
   packages: write
 
 jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   create-release:
+    needs: verify
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,28 +28,30 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Generate changelog from git log
-        id: changelog
+      - name: Resolve release range
+        id: range
         run: |
-          # Find previous tag
           PREV_TAG=$(git tag --sort=-v:refname | sed -n '2p')
           if [ -z "$PREV_TAG" ]; then
             RANGE="HEAD"
           else
             RANGE="${PREV_TAG}..HEAD"
           fi
+          echo "prev_tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
+          echo "range=${RANGE}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes (monorepo grouped)
+        id: changelog
+        run: |
+          bash scripts/release/generate-release-notes.sh \
+            "${{ steps.version.outputs.version }}" \
+            "${{ steps.range.outputs.range }}" \
+            "${{ steps.range.outputs.prev_tag }}" \
+            > RELEASE_BODY.md
 
           {
             echo 'body<<CHANGELOG_EOF'
-            echo "## What's Changed"
-            echo ""
-            git log "$RANGE" --pretty=format:"- %s" --no-merges \
-              | grep -v "^- docs(" \
-              | grep -v "^- chore(" \
-              || true
-            echo ""
-            echo ""
-            echo "**Full Changelog:** https://github.com/${{ github.repository }}/compare/${PREV_TAG:-initial}...${{ github.ref_name }}"
+            cat RELEASE_BODY.md
             echo 'CHANGELOG_EOF'
           } >> "$GITHUB_OUTPUT"
 
@@ -54,11 +64,63 @@ jobs:
           draft: false
           prerelease: false
 
+      - name: Update CHANGELOG.md in default branch
+        continue-on-error: true
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "${DEFAULT_BRANCH}"
+          git checkout -B "${DEFAULT_BRANCH}" "origin/${DEFAULT_BRANCH}"
+
+          if [ ! -f CHANGELOG.md ]; then
+            printf '%s\n' \
+              '# Changelog' \
+              '' \
+              'All notable changes to this project are documented in this file.' \
+              '' \
+              '<!-- release-entries -->' \
+              > CHANGELOG.md
+          fi
+
+          if grep -q "^## v${VERSION} " CHANGELOG.md; then
+            echo "CHANGELOG.md already contains v${VERSION}, skip."
+            exit 0
+          fi
+
+          DATE_UTC="$(date -u +%Y-%m-%d)"
+          awk -v version="${VERSION}" -v date_utc="${DATE_UTC}" '
+            {
+              print
+              if ($0 == "<!-- release-entries -->" && !done) {
+                print ""
+                print "## v" version " - " date_utc
+                while ((getline line < "RELEASE_BODY.md") > 0) {
+                  print line
+                }
+                print ""
+                done = 1
+              }
+            }
+          ' CHANGELOG.md > CHANGELOG.md.tmp
+          mv CHANGELOG.md.tmp CHANGELOG.md
+
+          if git diff --quiet -- CHANGELOG.md; then
+            echo "No CHANGELOG diff, skip commit."
+            exit 0
+          fi
+
+          git add CHANGELOG.md
+          git commit -m "docs(changelog): update for v${VERSION}"
+          git push origin "HEAD:${DEFAULT_BRANCH}"
+
   publish-images:
     needs: create-release
     uses: ./.github/workflows/build-images.yml
     with:
-      version: ${{ github.ref_name }}
+      version: ${{ needs.create-release.outputs.version }}
     permissions:
       contents: read
       packages: write

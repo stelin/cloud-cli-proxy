@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="web/admin/public/favicon.svg" width="88" height="88" alt="Cloud CLI Proxy" />
+<img src="docs/public/logo.svg" width="88" height="88" alt="Cloud CLI Proxy" />
 
 # Cloud CLI Proxy
 
@@ -8,7 +8,8 @@
 
 Out-of-the-box isolated cloud hosts for Claude Code and dev teams. Pre-installed AI coding tools, full-tunnel egress through designated IPs, zero leaks.
 
-[![CI](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/build-images.yml/badge.svg)](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/build-images.yml)
+[![CI](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/ci.yml)
+[![Images](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/build-images.yml/badge.svg)](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/build-images.yml)
 [![Release](https://img.shields.io/github/v/release/ZaneL1u/cloud-cli-proxy)](https://github.com/ZaneL1u/cloud-cli-proxy/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -44,7 +45,9 @@ cd cloud-cli-proxy
 
 bash deploy/scripts/setup-env.sh
 
-docker compose up -d --build
+# Recommended: prefer prebuilt images (latest)
+docker compose pull --policy always
+docker compose up -d
 
 curl http://127.0.0.1:8080/healthz
 # {"status":"ok"}
@@ -53,6 +56,13 @@ curl http://127.0.0.1:8080/healthz
 `setup-env.sh` interactively generates all passwords and secrets. Supports built-in Docker PostgreSQL (zero-config) or external database.
 
 Admin dashboard at `http://YOUR_HOST:3000`, API at `:8080`.
+
+Optional local source build (fallback when prebuilt images are unavailable):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yaml --profile build-only build --no-cache
+docker compose -f docker-compose.yml -f docker-compose.build.yaml up -d --force-recreate
+```
 
 ### Environment Variables
 
@@ -137,6 +147,30 @@ make test     # Run tests
 ```
 
 See `make help` for all commands.
+
+---
+
+## Release And Changelog
+
+Pushing a `v*` tag triggers the `Release` workflow automatically and does three things:
+
+- Runs CI quality gates first (Go tests + admin web build)
+- Creates a GitHub Release
+- Publishes multi-arch images (`semver` + `latest`)
+- Generates monorepo-grouped release notes and writes them to [CHANGELOG.md](CHANGELOG.md)
+
+The default changelog groups are path-based:
+
+- Backend (Go / API, `cmd` + `internal`)
+- Frontend (`web/admin`)
+- Runtime & Deployment (`deploy`, compose files, workflows)
+- Docs (`docs` + READMEs)
+
+Manual release example:
+
+```bash
+make release VERSION=1.5.0
+```
 
 ---
 

@@ -237,6 +237,7 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 			mux.Handle("POST /v1/admin/hosts/{hostID}/start", adminGuard(hostsHandler.Start()))
 			mux.Handle("POST /v1/admin/hosts/{hostID}/stop", adminGuard(hostsHandler.Stop()))
 			mux.Handle("POST /v1/admin/hosts/{hostID}/rebuild", adminGuard(hostsHandler.Rebuild()))
+			mux.Handle("POST /v1/admin/hosts/{hostID}/vnc/restart", adminGuard(hostsHandler.RestartVNC()))
 			mux.Handle("POST /v1/admin/hosts/{hostID}/rotate-ssh-password", adminGuard(hostsHandler.RotateSSHPassword()))
 			mux.Handle("DELETE /v1/admin/hosts/{hostID}", adminGuard(hostsHandler.Delete()))
 
@@ -276,6 +277,7 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 			mux.Handle("GET /v1/user/hosts", userGuard(userHostsHandler.List()))
 			mux.Handle("GET /v1/user/hosts/{hostID}", userGuard(userHostsHandler.Get()))
 			mux.Handle("POST /v1/user/hosts/{hostID}/rebuild", userGuard(userHostsHandler.Rebuild()))
+			mux.Handle("POST /v1/user/hosts/{hostID}/vnc/restart", userGuard(userHostsHandler.RestartVNC()))
 
 			userVNCProxy := NewUserVNCProxyHandler(deps.Logger, deps.UserHosts)
 			mux.Handle("/v1/user/hosts/{hostID}/vnc/{path...}", userGuard(userVNCProxy))

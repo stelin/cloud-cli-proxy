@@ -1,0 +1,31 @@
+services:
+  control-plane:
+    build:
+      context: .
+      dockerfile: deploy/docker/control-plane/Dockerfile
+    image: ghcr.io/zanel1u/cloud-cli-proxy/control-plane:latest
+    pull_policy: never
+
+  admin:
+    build:
+      context: .
+      dockerfile: deploy/docker/admin/Dockerfile
+    image: ghcr.io/zanel1u/cloud-cli-proxy/admin:latest
+    pull_policy: never
+
+  sing-box-gateway:
+    build:
+      context: .
+      dockerfile: deploy/docker/sing-box-gateway/Dockerfile
+    image: ghcr.io/zanel1u/cloud-cli-proxy/sing-box-gateway:latest
+    pull_policy: never
+
+  managed-user-image:
+    build:
+      context: .
+      dockerfile: deploy/docker/managed-user/Dockerfile
+    image: ghcr.io/zanel1u/cloud-cli-proxy/managed-user:latest
+    pull_policy: never
+    command: ["true"]
+    profiles:
+      - build-only

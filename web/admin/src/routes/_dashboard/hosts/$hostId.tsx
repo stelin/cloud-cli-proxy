@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { getToken } from "@/lib/auth";
-import { useHostDetail } from "@/hooks/use-hosts";
+import { useHostDetail, useRestartHostVNC } from "@/hooks/use-hosts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -51,6 +51,7 @@ const statusConfig: Record<string, { label: string; variant: "default" | "second
 function HostDetailPage() {
   const { hostId } = Route.useParams();
   const { data, isLoading } = useHostDetail(hostId);
+  const restartVNCMutation = useRestartHostVNC();
   const [rotateLoginOpen, setRotateLoginOpen] = useState(false);
   const [rotateSSHOpen, setRotateSSHOpen] = useState(false);
 
@@ -84,6 +85,13 @@ function HostDetailPage() {
       `/v1/admin/hosts/${host.id}/vnc/vnc.html?autoconnect=true&resize=remote&path=${wsPath}&token=${token}`,
       "_blank",
     );
+  }
+
+  function restartVNC() {
+    restartVNCMutation.mutate(host.id, {
+      onSuccess: () => toast.success("VNC 服务已重启"),
+      onError: () => toast.error("重启 VNC 失败，请稍后重试"),
+    });
   }
 
   const displayName = host.hostname || host.short_id || host.id.slice(0, 8) + "…";
@@ -224,6 +232,16 @@ function HostDetailPage() {
                     <Monitor className="h-4 w-4" />
                     打开浏览器桌面
                   </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 gap-2"
+                    disabled={restartVNCMutation.isPending}
+                    onClick={restartVNC}
+                  >
+                    <Monitor className="h-4 w-4" />
+                    {restartVNCMutation.isPending ? "重启中..." : "重启 VNC 服务"}
+                  </Button>
                 </div>
               )}
             </div>
@@ -297,6 +315,18 @@ function HostDetailPage() {
                     <Monitor className="h-4 w-4 shrink-0" />
                     <span className="text-left text-sm leading-snug">
                       打开 VNC 桌面
+                    </span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-11 justify-start gap-2 px-4 sm:col-span-2"
+                    disabled={restartVNCMutation.isPending}
+                    onClick={restartVNC}
+                  >
+                    <Monitor className="h-4 w-4 shrink-0" />
+                    <span className="text-left text-sm leading-snug">
+                      {restartVNCMutation.isPending ? "重启 VNC 中..." : "重启 VNC 服务"}
                     </span>
                   </Button>
                 </div>

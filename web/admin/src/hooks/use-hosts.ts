@@ -143,6 +143,19 @@ export function useRotateHostSSHPassword() {
   });
 }
 
+export function useRestartHostVNC() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (hostId: string) =>
+      apiFetch<{ status: string }>(`/hosts/${hostId}/vnc/restart`, {
+        method: "POST",
+      }),
+    onSuccess: (_data, hostId) => {
+      qc.invalidateQueries({ queryKey: ["hosts", hostId] });
+    },
+  });
+}
+
 export function useBindEgressIP() {
   const qc = useQueryClient();
   return useMutation({

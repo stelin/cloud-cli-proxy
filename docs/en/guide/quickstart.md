@@ -36,12 +36,23 @@ The script displays the admin password once. Save it immediately!
 
 ### Step 3: Start Services
 
+Default recommendation: **prefer prebuilt images** (`latest`) for faster and consistent CI-aligned deployment.
+
 ```bash
 # Built-in Docker PostgreSQL
-docker compose up -d --build
+docker compose pull --policy always
+docker compose up -d
 
 # External PostgreSQL (skip built-in DB)
-docker compose up -d --build control-plane admin
+docker compose pull --policy always control-plane admin
+docker compose up -d control-plane admin
+```
+
+Optional local source build:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yaml --profile build-only build --no-cache
+docker compose -f docker-compose.yml -f docker-compose.build.yaml up -d --force-recreate
 ```
 
 ### Step 4: Verify

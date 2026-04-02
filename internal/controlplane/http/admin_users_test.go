@@ -89,10 +89,14 @@ var testJWTSecret = []byte("test-jwt-secret-for-admin-api")
 
 func validAdminToken(t *testing.T) string {
 	t.Helper()
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
-		Subject:   "admin",
-		Issuer:    "cloud-cli-proxy",
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, AuthClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "admin",
+			Issuer:    "cloud-cli-proxy",
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+		UserID: "admin",
+		Role:   "admin",
 	})
 	s, err := token.SignedString(testJWTSecret)
 	if err != nil {
@@ -166,12 +170,13 @@ func TestAdminUsersHandler(t *testing.T) {
 			wantStatus: 400,
 		},
 		{
-			name:       "Create user missing password 400",
+			name:       "Create user ignores legacy password field 201",
 			method:     "POST",
 			path:       "/v1/admin/users",
 			body:       map[string]string{"username": "newuser", "password": "short"},
-			store:      &stubUserStore{},
-			wantStatus: 400,
+			store:      &stubUserStore{createUser: sampleUser},
+			wantStatus: 201,
+			wantField:  "user",
 		},
 		{
 			name:       "Get user 200",
@@ -319,7 +324,7 @@ func TestAdminAuthBoundary(t *testing.T) {
 		},
 		{
 			name:       "Valid token succeeds",
-			auth:       "Bearer " + func() string { s, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{Subject: "admin", Issuer: "cloud-cli-proxy", ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))}).SignedString(testJWTSecret); return s }(),
+			auth:       "Bearer " + validAdminToken(t),
 			wantStatus: 200,
 		},
 	}

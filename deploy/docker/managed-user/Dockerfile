@@ -72,7 +72,10 @@ RUN userdel -f ubuntu 2>/dev/null || true \
 
 RUN adduser "${WORKSPACE_USER}" ssl-cert 2>/dev/null || true
 
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @anthropic-ai/claude-code \
+    && CLAUDE_BIN="$(command -v claude)" \
+    && mv "${CLAUDE_BIN}" /usr/local/bin/claude-real \
+    && chmod +x /usr/local/bin/claude-real
 
 RUN mkdir -p /workspace/.ssh /var/run/sshd \
     && chown -R "${WORKSPACE_UID}:${WORKSPACE_GID}" /workspace \
@@ -81,8 +84,10 @@ RUN mkdir -p /workspace/.ssh /var/run/sshd \
 COPY deploy/docker/managed-user/sshd_config /etc/ssh/sshd_config
 COPY deploy/docker/managed-user/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY deploy/docker/managed-user/launch-chromium.sh /usr/local/bin/launch-chromium.sh
+COPY deploy/docker/managed-user/restart-vnc.sh /usr/local/bin/restart-vnc
+COPY deploy/docker/managed-user/claude-wrapper.sh /usr/local/bin/claude
 
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/launch-chromium.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/launch-chromium.sh /usr/local/bin/restart-vnc /usr/local/bin/claude
 
 WORKDIR /workspace
 
