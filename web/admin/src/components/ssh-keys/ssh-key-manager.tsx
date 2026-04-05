@@ -111,6 +111,7 @@ function KeyItemCard({
   showPublicKey?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const isContainerOnly = sshKey.source === "container";
 
   return (
     <div className="rounded-lg border p-4 space-y-2">
@@ -118,47 +119,66 @@ function KeyItemCard({
         <div className="flex items-center gap-2 min-w-0">
           <Key className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="font-medium text-sm truncate">{sshKey.label}</span>
-          <Badge variant="outline" className="text-[10px] shrink-0">
-            {sshKey.key_type}
-          </Badge>
+          {sshKey.key_type && (
+            <Badge variant="outline" className="text-[10px] shrink-0">
+              {sshKey.key_type}
+            </Badge>
+          )}
+          {isContainerOnly && (
+            <Badge variant="secondary" className="text-[10px] shrink-0">
+              容器内
+            </Badge>
+          )}
+          {sshKey.source === "managed" && sshKey.synced === false && (
+            <Badge variant="destructive" className="text-[10px] shrink-0">
+              未同步
+            </Badge>
+          )}
+          {sshKey.source === "managed" && sshKey.synced === true && sshKey.purpose === "inbound" && (
+            <Badge variant="outline" className="text-[10px] shrink-0 text-emerald-600 border-emerald-300">
+              已同步
+            </Badge>
+          )}
         </div>
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 gap-1 text-xs text-destructive hover:text-destructive shrink-0"
-              disabled={isDeleting}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              删除
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>确认删除密钥「{sshKey.label}」？</AlertDialogTitle>
-              <AlertDialogDescription>
-                删除后无法恢复。如果已在外部平台配置了该公钥，请一并清理。
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>取消</AlertDialogCancel>
-              <AlertDialogAction
+        {!isContainerOnly && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 text-xs text-destructive hover:text-destructive shrink-0"
                 disabled={isDeleting}
-                onClick={() => onDelete(sshKey.id)}
               >
-                {isDeleting ? "删除中..." : "确认删除"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+                <Trash2 className="h-3.5 w-3.5" />
+                删除
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>确认删除密钥「{sshKey.label}」？</AlertDialogTitle>
+                <AlertDialogDescription>
+                  删除后无法恢复。如果已在外部平台配置了该公钥，请一并清理。
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>取消</AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={isDeleting}
+                  onClick={() => onDelete(sshKey.id)}
+                >
+                  {isDeleting ? "删除中..." : "确认删除"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
         {sshKey.fingerprint && (
           <span className="font-mono">{sshKey.fingerprint}</span>
         )}
-        <span>{formatDate(sshKey.created_at)}</span>
+        {sshKey.created_at && <span>{formatDate(sshKey.created_at)}</span>}
       </div>
 
       {showPublicKey && sshKey.public_key && (

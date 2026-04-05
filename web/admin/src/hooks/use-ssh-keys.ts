@@ -12,6 +12,8 @@ export interface SSHKey {
   key_type: string;
   fingerprint: string;
   created_at: string;
+  source?: "managed" | "container";
+  synced?: boolean;
 }
 
 // Admin hooks
