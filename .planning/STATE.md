@@ -5,7 +5,7 @@ milestone_name: 用户自助面板与 Bootstrap 重设计
 status: planning
 stopped_at: Completed 260405-hai quick task
 last_updated: "2026-04-05T04:23:13.097Z"
-last_activity: 2026-03-29
+last_activity: 2026-04-05
 progress:
   total_phases: 6
   completed_phases: 2
@@ -78,9 +78,10 @@ None.
 | 260405-h13 | 容器管理 API (root 密码/Claude settings/状态/更新) + 前端集成 | 2026-04-05 | 6affd42 | [260405-h13-root-claude-settings-claude-claude-code](./quick/260405-h13-root-claude-settings-claude-claude-code/) |
 | 260405-hai | 增强 Claude 状态 API：返回每个进程的 PID、工作目录和运行时间 | 2026-04-05 | 2ae9592 | [260405-hai-claude-api-pid](./quick/260405-hai-claude-api-pid/) |
 | 260405-hio | Claude Code 深度配置集成：结构化settings编辑面板+系统指纹查看 | 2026-04-05 | bea7886 | [260405-hio-claude-code-settings](./quick/260405-hio-claude-code-settings/) |
+| 260405-jji | 镜像版本管理：自动拉取最新镜像+版本展示+一键升级 | 2026-04-05 | 6aad37a | [260405-jji-image-version-mgmt](./quick/260405-jji-image-version-mgmt/) |
 
 ## Session Continuity
 
-Last session: 2026-04-05T04:45:00.000Z
-Stopped at: Completed 260405-hio quick task
+Last session: 2026-04-05T06:10:00.000Z
+Stopped at: Completed 260405-jji quick task
 Resume file: None
