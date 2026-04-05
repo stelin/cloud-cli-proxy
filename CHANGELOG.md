@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v1.6.1 - 2026-04-05
+## What's Changed
+
+### Runtime & Deployment
+- fix(ci): 镜像构建仅由打 tag 触发，移除 push to main 触发 (b3353d0)
+- fix: control-plane 镜像缺少 migrations 目录导致数据库迁移不执行 (4f33cd5)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v1.6.0...v1.6.1
+
+
 ## v1.6.0 - 2026-04-05
 ## What's Changed
 
