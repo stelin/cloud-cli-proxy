@@ -18,6 +18,9 @@ import (
 type EntryStore interface {
 	GetUserByShortID(context.Context, string) (repository.User, error)
 	GetPrimaryHostByUserID(context.Context, string) (repository.Host, error)
+	GetHostByShortID(context.Context, string) (repository.HostSSHAuth, error)
+	GetUser(context.Context, string) (repository.User, error)
+	GetHost(context.Context, string) (repository.Host, error)
 }
 
 type EntryHandler struct {
@@ -96,15 +99,50 @@ func (h *EntryHandler) Auth() nethttp.Handler {
 			return
 		}
 
-		user, err := h.store.GetUserByShortID(r.Context(), shortID)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				writeJSON(w, nethttp.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		var user repository.User
+		var host repository.Host
+
+		hostAuth, hostErr := h.store.GetHostByShortID(r.Context(), shortID)
+		if hostErr == nil {
+			u, err := h.store.GetUser(r.Context(), hostAuth.UserID)
+			if err != nil {
+				h.logger.Error("entry auth: lookup host owner failed", "host_id", hostAuth.HostID, "error", err)
+				writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "internal error"})
 				return
 			}
-			h.logger.Error("entry auth: lookup user failed", "short_id", shortID, "error", err)
-			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "internal error"})
-			return
+			user = u
+			fullHost, err := h.store.GetHost(r.Context(), hostAuth.HostID)
+			if err != nil {
+				h.logger.Error("entry auth: lookup host failed", "host_id", hostAuth.HostID, "error", err)
+				writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "internal error"})
+				return
+			}
+			host = fullHost
+		} else {
+			u, err := h.store.GetUserByShortID(r.Context(), shortID)
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					writeJSON(w, nethttp.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+					return
+				}
+				h.logger.Error("entry auth: lookup user failed", "short_id", shortID, "error", err)
+				writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "internal error"})
+				return
+			}
+			user = u
+			h, err := h.store.GetPrimaryHostByUserID(r.Context(), user.ID)
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					writeJSON(w, nethttp.StatusNotFound, map[string]string{
+						"error":  "no host assigned",
+						"status": "no_host",
+					})
+					return
+				}
+				writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "internal error"})
+				return
+			}
+			host = h
 		}
 
 		if user.Status != "active" {
@@ -114,20 +152,6 @@ func (h *EntryHandler) Auth() nethttp.Handler {
 
 		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(body.Password)); err != nil {
 			writeJSON(w, nethttp.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
-			return
-		}
-
-		host, err := h.store.GetPrimaryHostByUserID(r.Context(), user.ID)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				writeJSON(w, nethttp.StatusNotFound, map[string]string{
-					"error":  "no host assigned",
-					"status": "no_host",
-				})
-				return
-			}
-			h.logger.Error("entry auth: lookup host failed", "user_id", user.ID, "error", err)
-			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "internal error"})
 			return
 		}
 

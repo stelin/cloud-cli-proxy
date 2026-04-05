@@ -127,8 +127,12 @@ func (h *UserHostsHandler) Get() nethttp.Handler {
 				sshTarget = user.ShortID
 			}
 			if user.ShortID != "" || sshTarget != "" {
+				entryID := detail.Host.ShortID
+				if entryID == "" {
+					entryID = user.ShortID
+				}
 				resp.ConnectionInfo = &repository.ConnectionInfo{
-					CurlCommand: fmt.Sprintf("curl -sSL %s/entry/%s | bash", baseURL, user.ShortID),
+					CurlCommand: fmt.Sprintf("curl -sSL %s/entry/%s | bash", baseURL, entryID),
 					SSHCommand:  fmt.Sprintf("ssh %s@%s -p 2222", sshTarget, host),
 					SSHPort:     2222,
 					VNCURL:      fmt.Sprintf("%s/v1/user/hosts/%s/vnc/vnc.html", baseURL, detail.Host.ID),

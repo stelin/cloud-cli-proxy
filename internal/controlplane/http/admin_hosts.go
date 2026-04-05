@@ -130,8 +130,12 @@ func (h *AdminHostsHandler) Get() nethttp.Handler {
 			}
 			baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
 			vncPath := fmt.Sprintf("/v1/admin/hosts/%s/vnc/vnc.html", detail.Host.ID)
+			entryID := detail.Host.ShortID
+			if entryID == "" {
+				entryID = detail.User.ShortID
+			}
 			resp.ConnectionInfo = &repository.ConnectionInfo{
-				CurlCommand: fmt.Sprintf("curl -sSL %s/entry/%s | bash", baseURL, detail.User.ShortID),
+				CurlCommand: fmt.Sprintf("curl -sSL %s/entry/%s | bash", baseURL, entryID),
 				SSHCommand:  fmt.Sprintf("ssh %s@%s -p 2222", sshTarget, host),
 				SSHPort:     2222,
 				VNCURL:      fmt.Sprintf("%s%s", baseURL, vncPath),
