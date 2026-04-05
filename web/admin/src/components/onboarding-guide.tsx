@@ -90,11 +90,11 @@ const adminSteps: Step[] = [
   {
     icon: Key,
     title: "管理 SSH 密钥",
-    description: "为用户生成或导入 SSH 密钥",
+    description: "为用户管理入站和出站 SSH 密钥",
     details: [
-      "进入用户详情页，找到「SSH 密钥」区域",
-      "点击「生成密钥」选择 Ed25519 或 RSA",
-      "将生成的公钥提供给用户配置 GitHub 等平台",
+      "进入用户详情页，找到「SSH 密钥管理」区域",
+      "入站密钥：添加用户本地公钥，实现免密 SSH 登录",
+      "出站密钥：生成密钥对，公钥添加到 GitHub 等平台用于 Git 鉴权",
       "密钥会在主机启动/重建时自动注入容器",
     ],
     tip: "用户也可以在自己的门户页面管理密钥。",
@@ -150,14 +150,14 @@ const userSteps: Step[] = [
   {
     icon: Key,
     title: "SSH 密钥管理",
-    description: "生成专用 SSH 密钥用于 Git 鉴权",
+    description: "管理入站和出站 SSH 密钥",
     details: [
-      "在主机详情页找到「SSH 密钥」区域",
-      "点击「生成密钥」选择 Ed25519（推荐）或 RSA",
-      "复制公钥，到 GitHub / GitLab 添加为 SSH Key",
+      "在主机详情页找到「SSH 密钥管理」区域",
+      "入站密钥：添加你本地电脑的公钥，免密 SSH 连接到云主机",
+      "出站密钥：生成密钥对，将公钥添加到 GitHub / GitLab 用于 Git 鉴权",
       "密钥在主机重建后会自动重新注入",
     ],
-    tip: "请为本平台生成专用密钥，不要使用你本地的主力密钥！",
+    tip: "建议为本平台生成专用的出站密钥，不要使用你本地的主力密钥。",
   },
   {
     icon: Lock,

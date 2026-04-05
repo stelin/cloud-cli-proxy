@@ -235,6 +235,18 @@ type ClaudeAccount struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type SSHKey struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	Purpose     string    `json:"purpose"`
+	Label       string    `json:"label"`
+	PublicKey   string    `json:"public_key"`
+	PrivateKey  string    `json:"private_key,omitempty"`
+	KeyType     string    `json:"key_type"`
+	Fingerprint string    `json:"fingerprint"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type CreateTaskParams struct {
 	HostID           *string
 	Kind             string

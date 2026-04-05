@@ -34,6 +34,7 @@ type Service struct {
 		GetHost(context.Context, string) (repository.Host, error)
 		GetUser(context.Context, string) (repository.User, error)
 		CreateTask(context.Context, repository.CreateTaskParams) (repository.Task, error)
+		ListSSHKeysByUser(context.Context, string) ([]repository.SSHKey, error)
 	}
 	dispatcher interface {
 		Dispatch(context.Context, agentapi.HostActionRequest) (agentapi.HostActionResponse, error)
@@ -47,6 +48,7 @@ func NewService(
 		GetHost(context.Context, string) (repository.Host, error)
 		GetUser(context.Context, string) (repository.User, error)
 		CreateTask(context.Context, repository.CreateTaskParams) (repository.Task, error)
+		ListSSHKeysByUser(context.Context, string) ([]repository.SSHKey, error)
 	},
 	dispatcher interface {
 		Dispatch(context.Context, agentapi.HostActionRequest) (agentapi.HostActionResponse, error)
@@ -102,6 +104,23 @@ func (s *Service) QueueHostAction(ctx context.Context, hostID string, action age
 		return repository.Task{}, fmt.Errorf("create lifecycle task: %w", err)
 	}
 
+	var keyEntries []agentapi.SSHKeyEntry
+	sshKeys, sshKeysErr := s.repo.ListSSHKeysByUser(ctx, host.UserID)
+	if sshKeysErr != nil {
+		slog.Warn("failed to query ssh keys, container will have no ssh keys",
+			"host_id", hostID, "user_id", host.UserID, "error", sshKeysErr)
+	} else {
+		for _, k := range sshKeys {
+			keyEntries = append(keyEntries, agentapi.SSHKeyEntry{
+				Purpose:    k.Purpose,
+				Label:      k.Label,
+				PublicKey:  k.PublicKey,
+				PrivateKey: k.PrivateKey,
+				KeyType:    k.KeyType,
+			})
+		}
+	}
+
 	request := agentapi.HostActionRequest{
 		TaskID:        task.ID,
 		HostID:        host.ID,
@@ -122,8 +141,9 @@ func (s *Service) QueueHostAction(ctx context.Context, hostID string, action age
 		CPULimit:      defaultFloatIfZero(host.CPULimit, 2.0),
 		Username:      owner.Username,
 		EntryPassword: host.EntryPassword,
-		SSHPublicKey:  owner.SSHPublicKey,
-		SSHPrivateKey: owner.SSHPrivateKey,
+		SSHPublicKey:  "",
+		SSHPrivateKey: "",
+		SSHKeys:       keyEntries,
 	}
 
 	if request.EntryPassword == "" {

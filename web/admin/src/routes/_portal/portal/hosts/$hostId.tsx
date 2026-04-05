@@ -18,8 +18,8 @@ import {
 } from "@/hooks/use-portal-hosts";
 import {
   useMySSHKeys,
-  useMyGenerateSSHKey,
-  useMySetSSHKey,
+  useMyCreateSSHKey,
+  useMyDeleteSSHKey,
 } from "@/hooks/use-ssh-keys";
 import { SSHKeyManager } from "@/components/ssh-keys/ssh-key-manager";
 import { Badge } from "@/components/ui/badge";
@@ -77,8 +77,8 @@ function PortalHostDetail() {
   const rebuildMutation = useRebuildHost();
   const restartVNCMutation = useRestartMyHostVNC();
   const sshKeysQuery = useMySSHKeys();
-  const generateSSHKey = useMyGenerateSSHKey();
-  const setSSHKey = useMySetSSHKey();
+  const createSSHKey = useMyCreateSSHKey();
+  const deleteSSHKey = useMyDeleteSSHKey();
 
   const isRebuilding = (status: string) =>
     status === "rebuilding" || status === "pending";
@@ -277,25 +277,23 @@ function PortalHostDetail() {
 
       {/* SSH Keys */}
       <SSHKeyManager
-        data={sshKeysQuery.data}
+        keys={sshKeysQuery.data?.keys ?? []}
         isLoading={sshKeysQuery.isLoading}
-        onGenerate={(keyType) =>
-          generateSSHKey.mutate(keyType, {
-            onSuccess: () => toast.success("SSH 密钥已生成"),
-            onError: () => toast.error("生成失败"),
+        onCreate={(params) =>
+          createSSHKey.mutate(params, {
+            onSuccess: () => toast.success("SSH 密钥已创建"),
+            onError: () => toast.error("创建失败"),
           })
         }
-        onSet={(publicKey, privateKey) =>
-          setSSHKey.mutate(
-            { publicKey, privateKey },
-            {
-              onSuccess: () => toast.success("SSH 密钥已保存"),
-              onError: () => toast.error("保存失败"),
-            },
-          )
+        onDelete={(keyId) =>
+          deleteSSHKey.mutate(keyId, {
+            onSuccess: () => toast.success("SSH 密钥已删除"),
+            onError: () => toast.error("删除失败"),
+          })
         }
-        isGenerating={generateSSHKey.isPending}
-        isSetting={setSSHKey.isPending}
+        isCreating={createSSHKey.isPending}
+        isDeleting={deleteSSHKey.isPending}
+        lastCreatedKey={createSSHKey.data?.key}
       />
 
       {/* Actions */}

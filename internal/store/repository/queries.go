@@ -1316,3 +1316,83 @@ func defaultIfEmpty(value, fallback string) string {
 
 	return value
 }
+
+func (r *Repository) ListSSHKeysByUser(ctx context.Context, userID string) ([]SSHKey, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id::text, user_id::text, purpose, label, public_key, private_key, key_type, fingerprint, created_at
+		FROM ssh_keys WHERE user_id = $1
+		ORDER BY created_at ASC
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("query ssh keys: %w", err)
+	}
+	defer rows.Close()
+
+	keys := make([]SSHKey, 0)
+	for rows.Next() {
+		var k SSHKey
+		if err := rows.Scan(&k.ID, &k.UserID, &k.Purpose, &k.Label, &k.PublicKey, &k.PrivateKey, &k.KeyType, &k.Fingerprint, &k.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan ssh key: %w", err)
+		}
+		keys = append(keys, k)
+	}
+	return keys, rows.Err()
+}
+
+func (r *Repository) ListSSHKeysByUserAndPurpose(ctx context.Context, userID, purpose string) ([]SSHKey, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id::text, user_id::text, purpose, label, public_key, private_key, key_type, fingerprint, created_at
+		FROM ssh_keys WHERE user_id = $1 AND purpose = $2
+		ORDER BY created_at ASC
+	`, userID, purpose)
+	if err != nil {
+		return nil, fmt.Errorf("query ssh keys by purpose: %w", err)
+	}
+	defer rows.Close()
+
+	keys := make([]SSHKey, 0)
+	for rows.Next() {
+		var k SSHKey
+		if err := rows.Scan(&k.ID, &k.UserID, &k.Purpose, &k.Label, &k.PublicKey, &k.PrivateKey, &k.KeyType, &k.Fingerprint, &k.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan ssh key: %w", err)
+		}
+		keys = append(keys, k)
+	}
+	return keys, rows.Err()
+}
+
+func (r *Repository) CreateSSHKey(ctx context.Context, userID, purpose, label, publicKey, privateKey, keyType, fingerprint string) (SSHKey, error) {
+	var k SSHKey
+	if err := r.db.QueryRow(ctx, `
+		INSERT INTO ssh_keys (user_id, purpose, label, public_key, private_key, key_type, fingerprint)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id::text, user_id::text, purpose, label, public_key, private_key, key_type, fingerprint, created_at
+	`, userID, purpose, label, publicKey, privateKey, keyType, fingerprint).Scan(
+		&k.ID, &k.UserID, &k.Purpose, &k.Label, &k.PublicKey, &k.PrivateKey, &k.KeyType, &k.Fingerprint, &k.CreatedAt,
+	); err != nil {
+		return SSHKey{}, fmt.Errorf("create ssh key: %w", err)
+	}
+	return k, nil
+}
+
+func (r *Repository) DeleteSSHKey(ctx context.Context, keyID, userID string) error {
+	tag, err := r.db.Exec(ctx, `DELETE FROM ssh_keys WHERE id = $1 AND user_id = $2`, keyID, userID)
+	if err != nil {
+		return fmt.Errorf("delete ssh key: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+func (r *Repository) GetSSHKey(ctx context.Context, keyID string) (SSHKey, error) {
+	var k SSHKey
+	if err := r.db.QueryRow(ctx, `
+		SELECT id::text, user_id::text, purpose, label, public_key, private_key, key_type, fingerprint, created_at
+		FROM ssh_keys WHERE id = $1
+	`, keyID).Scan(&k.ID, &k.UserID, &k.Purpose, &k.Label, &k.PublicKey, &k.PrivateKey, &k.KeyType, &k.Fingerprint, &k.CreatedAt); err != nil {
+		return SSHKey{}, fmt.Errorf("get ssh key: %w", err)
+	}
+	return k, nil
+}

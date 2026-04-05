@@ -10,6 +10,14 @@ const (
 	ActionPrepareHost HostAction = "prepare_host"
 )
 
+type SSHKeyEntry struct {
+	Purpose    string `json:"purpose"`
+	Label      string `json:"label"`
+	PublicKey  string `json:"public_key"`
+	PrivateKey string `json:"private_key,omitempty"`
+	KeyType    string `json:"key_type"`
+}
+
 type HostActionRequest struct {
 	TaskID        string            `json:"task_id"`
 	HostID        string            `json:"host_id"`
@@ -29,6 +37,7 @@ type HostActionRequest struct {
 	EntryPassword string            `json:"entry_password,omitempty"`
 	SSHPublicKey  string            `json:"ssh_public_key,omitempty"`
 	SSHPrivateKey string            `json:"ssh_private_key,omitempty"`
+	SSHKeys       []SSHKeyEntry     `json:"ssh_keys,omitempty"`
 }
 
 type TaskStatusUpdate struct {

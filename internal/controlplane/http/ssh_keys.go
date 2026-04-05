@@ -16,11 +16,14 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/zanel1u/cloud-cli-proxy/internal/store/repository"
 )
 
 type SSHKeyStore interface {
-	GetUserSSHKeys(ctx context.Context, userID string) (publicKey, privateKey, keyType string, err error)
-	UpdateUserSSHKeys(ctx context.Context, userID, publicKey, privateKey, keyType string) error
+	ListSSHKeysByUser(ctx context.Context, userID string) ([]repository.SSHKey, error)
+	CreateSSHKey(ctx context.Context, userID, purpose, label, publicKey, privateKey, keyType, fingerprint string) (repository.SSHKey, error)
+	DeleteSSHKey(ctx context.Context, keyID, userID string) error
 }
 
 type SSHKeyHandler struct {
@@ -32,139 +35,125 @@ func NewSSHKeyHandler(logger *slog.Logger, store SSHKeyStore) *SSHKeyHandler {
 	return &SSHKeyHandler{logger: logger, store: store}
 }
 
-func (h *SSHKeyHandler) Generate() nethttp.Handler {
+func (h *SSHKeyHandler) List() nethttp.Handler {
 	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		userID := r.PathValue("userID")
 		if userID == "" {
 			userID = UserIDFromContext(r.Context())
 		}
 		if userID == "" {
-			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "user_id is required"})
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "缺少 user_id"})
+			return
+		}
+
+		keys, err := h.store.ListSSHKeysByUser(r.Context(), userID)
+		if err != nil {
+			h.logger.Error("list ssh keys failed", "user_id", userID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "查询密钥失败"})
+			return
+		}
+
+		inbound := make([]repository.SSHKey, 0)
+		outbound := make([]repository.SSHKey, 0)
+		for _, k := range keys {
+			switch k.Purpose {
+			case "inbound":
+				inbound = append(inbound, k)
+			case "outbound":
+				sanitized := k
+				sanitized.PrivateKey = ""
+				outbound = append(outbound, sanitized)
+			}
+		}
+
+		writeJSON(w, nethttp.StatusOK, map[string]any{
+			"inbound":  inbound,
+			"outbound": outbound,
+		})
+	})
+}
+
+func (h *SSHKeyHandler) Create() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		userID := r.PathValue("userID")
+		if userID == "" {
+			userID = UserIDFromContext(r.Context())
+		}
+		if userID == "" {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "缺少 user_id"})
 			return
 		}
 
 		var req struct {
-			KeyType string `json:"key_type"`
+			Purpose    string `json:"purpose"`
+			Label      string `json:"label"`
+			KeyType    string `json:"key_type"`
+			PublicKey  string `json:"public_key"`
+			PrivateKey string `json:"private_key"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			req.KeyType = "ed25519"
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "请求体格式错误"})
+			return
+		}
+
+		req.Purpose = strings.TrimSpace(req.Purpose)
+		req.PublicKey = strings.TrimSpace(req.PublicKey)
+		req.PrivateKey = strings.TrimSpace(req.PrivateKey)
+
+		if req.Purpose != "inbound" && req.Purpose != "outbound" {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "purpose 必须为 inbound 或 outbound"})
+			return
 		}
 		if req.KeyType == "" {
 			req.KeyType = "ed25519"
 		}
 		if req.KeyType != "ed25519" && req.KeyType != "rsa" {
-			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "key_type must be ed25519 or rsa"})
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "key_type 必须为 ed25519 或 rsa"})
 			return
 		}
 
-		pubKeyStr, privKeyStr, err := generateSSHKeyPair(req.KeyType, userID)
+		if req.Purpose == "inbound" {
+			if req.PublicKey == "" {
+				writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "入站密钥必须提供 public_key"})
+				return
+			}
+			req.PrivateKey = ""
+		}
+
+		if req.Purpose == "outbound" && req.PublicKey == "" {
+			pubKeyStr, privKeyStr, err := generateSSHKeyPair(req.KeyType, req.Label)
+			if err != nil {
+				h.logger.Error("generate ssh key pair failed", "user_id", userID, "error", err)
+				writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "生成密钥对失败"})
+				return
+			}
+			req.PublicKey = pubKeyStr
+			req.PrivateKey = privKeyStr
+		}
+
+		fingerprint := computeFingerprint(req.PublicKey)
+
+		key, err := h.store.CreateSSHKey(r.Context(), userID, req.Purpose, req.Label, req.PublicKey, req.PrivateKey, req.KeyType, fingerprint)
 		if err != nil {
-			h.logger.Error("generate ssh key pair failed", "user_id", userID, "error", err)
-			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "generate key pair failed"})
+			h.logger.Error("create ssh key failed", "user_id", userID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "创建密钥失败"})
 			return
 		}
 
-		if err := h.store.UpdateUserSSHKeys(r.Context(), userID, pubKeyStr, privKeyStr, req.KeyType); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "user not found"})
-				return
-			}
-			h.logger.Error("save ssh keys failed", "user_id", userID, "error", err)
-			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "save keys failed"})
-			return
+		resp := map[string]any{
+			"id":          key.ID,
+			"purpose":     key.Purpose,
+			"label":       key.Label,
+			"public_key":  key.PublicKey,
+			"key_type":    key.KeyType,
+			"fingerprint": key.Fingerprint,
+			"created_at":  key.CreatedAt,
+		}
+		if req.Purpose == "outbound" && key.PrivateKey != "" {
+			resp["private_key"] = key.PrivateKey
 		}
 
-		writeJSON(w, nethttp.StatusOK, map[string]any{
-			"public_key":  pubKeyStr,
-			"private_key": privKeyStr,
-			"key_type":    req.KeyType,
-		})
-	})
-}
-
-func (h *SSHKeyHandler) Set() nethttp.Handler {
-	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
-		userID := r.PathValue("userID")
-		if userID == "" {
-			userID = UserIDFromContext(r.Context())
-		}
-		if userID == "" {
-			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "user_id is required"})
-			return
-		}
-
-		var req struct {
-			PublicKey  string `json:"public_key"`
-			PrivateKey string `json:"private_key"`
-			KeyType    string `json:"key_type"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "invalid request body"})
-			return
-		}
-
-		req.PublicKey = strings.TrimSpace(req.PublicKey)
-		req.PrivateKey = strings.TrimSpace(req.PrivateKey)
-		if req.PublicKey == "" {
-			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "public_key is required"})
-			return
-		}
-
-		if req.KeyType == "" {
-			if strings.Contains(req.PublicKey, "ssh-ed25519") {
-				req.KeyType = "ed25519"
-			} else if strings.Contains(req.PublicKey, "ssh-rsa") {
-				req.KeyType = "rsa"
-			} else {
-				req.KeyType = "custom"
-			}
-		}
-
-		if err := h.store.UpdateUserSSHKeys(r.Context(), userID, req.PublicKey, req.PrivateKey, req.KeyType); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "user not found"})
-				return
-			}
-			h.logger.Error("set ssh keys failed", "user_id", userID, "error", err)
-			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "save keys failed"})
-			return
-		}
-
-		writeJSON(w, nethttp.StatusOK, map[string]any{
-			"public_key": req.PublicKey,
-			"key_type":   req.KeyType,
-			"has_private": req.PrivateKey != "",
-		})
-	})
-}
-
-func (h *SSHKeyHandler) Get() nethttp.Handler {
-	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
-		userID := r.PathValue("userID")
-		if userID == "" {
-			userID = UserIDFromContext(r.Context())
-		}
-		if userID == "" {
-			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "user_id is required"})
-			return
-		}
-
-		pubKey, privKey, keyType, err := h.store.GetUserSSHKeys(r.Context(), userID)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "user not found"})
-				return
-			}
-			h.logger.Error("get ssh keys failed", "user_id", userID, "error", err)
-			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "get keys failed"})
-			return
-		}
-
-		writeJSON(w, nethttp.StatusOK, map[string]any{
-			"public_key":  pubKey,
-			"private_key": privKey,
-			"key_type":    keyType,
-		})
+		writeJSON(w, nethttp.StatusCreated, resp)
 	})
 }
 
@@ -175,22 +164,36 @@ func (h *SSHKeyHandler) Delete() nethttp.Handler {
 			userID = UserIDFromContext(r.Context())
 		}
 		if userID == "" {
-			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "user_id is required"})
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "缺少 user_id"})
 			return
 		}
 
-		if err := h.store.UpdateUserSSHKeys(r.Context(), userID, "", "", ""); err != nil {
+		keyID := r.PathValue("keyID")
+		if keyID == "" {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "缺少 keyID"})
+			return
+		}
+
+		if err := h.store.DeleteSSHKey(r.Context(), keyID, userID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "user not found"})
+				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "密钥不存在"})
 				return
 			}
-			h.logger.Error("delete ssh keys failed", "user_id", userID, "error", err)
-			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "delete keys failed"})
+			h.logger.Error("delete ssh key failed", "user_id", userID, "key_id", keyID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "删除密钥失败"})
 			return
 		}
 
 		w.WriteHeader(nethttp.StatusNoContent)
 	})
+}
+
+func computeFingerprint(pubKeyStr string) string {
+	pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubKeyStr))
+	if err != nil {
+		return ""
+	}
+	return ssh.FingerprintSHA256(pubKey)
 }
 
 func generateSSHKeyPair(keyType, comment string) (publicKey, privateKey string, err error) {

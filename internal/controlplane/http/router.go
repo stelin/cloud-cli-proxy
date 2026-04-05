@@ -261,10 +261,9 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 
 		if deps.SSHKeys != nil {
 			sshKeyHandler := NewSSHKeyHandler(deps.Logger, deps.SSHKeys)
-			mux.Handle("GET /v1/admin/users/{userID}/ssh-keys", adminGuard(sshKeyHandler.Get()))
-			mux.Handle("POST /v1/admin/users/{userID}/ssh-keys/generate", adminGuard(sshKeyHandler.Generate()))
-			mux.Handle("PUT /v1/admin/users/{userID}/ssh-keys", adminGuard(sshKeyHandler.Set()))
-			mux.Handle("DELETE /v1/admin/users/{userID}/ssh-keys", adminGuard(sshKeyHandler.Delete()))
+			mux.Handle("GET /v1/admin/users/{userID}/ssh-keys", adminGuard(sshKeyHandler.List()))
+			mux.Handle("POST /v1/admin/users/{userID}/ssh-keys", adminGuard(sshKeyHandler.Create()))
+			mux.Handle("DELETE /v1/admin/users/{userID}/ssh-keys/{keyID}", adminGuard(sshKeyHandler.Delete()))
 		}
 
 		mux.Handle("GET /v1/admin/tasks", adminGuard(tasksHandler))
@@ -292,10 +291,9 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 
 		if deps.SSHKeys != nil {
 			userSSHKeyHandler := NewSSHKeyHandler(deps.Logger, deps.SSHKeys)
-			mux.Handle("GET /v1/user/ssh-keys", userGuard(userSSHKeyHandler.Get()))
-			mux.Handle("POST /v1/user/ssh-keys/generate", userGuard(userSSHKeyHandler.Generate()))
-			mux.Handle("PUT /v1/user/ssh-keys", userGuard(userSSHKeyHandler.Set()))
-			mux.Handle("DELETE /v1/user/ssh-keys", userGuard(userSSHKeyHandler.Delete()))
+			mux.Handle("GET /v1/user/ssh-keys", userGuard(userSSHKeyHandler.List()))
+			mux.Handle("POST /v1/user/ssh-keys", userGuard(userSSHKeyHandler.Create()))
+			mux.Handle("DELETE /v1/user/ssh-keys/{keyID}", userGuard(userSSHKeyHandler.Delete()))
 		}
 	}
 

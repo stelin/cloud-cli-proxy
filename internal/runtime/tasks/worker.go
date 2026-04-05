@@ -411,10 +411,104 @@ func (w *Worker) syncContainerCredentials(ctx context.Context, request agentapi.
 }
 
 func (w *Worker) injectSSHKeys(ctx context.Context, request agentapi.HostActionRequest, containerName string) {
-	if request.SSHPublicKey == "" && request.SSHPrivateKey == "" {
+	if len(request.SSHKeys) == 0 {
+		if request.SSHPublicKey == "" && request.SSHPrivateKey == "" {
+			return
+		}
+		w.injectSSHKeysLegacy(ctx, request, containerName)
 		return
 	}
 
+	user := firstNonEmpty(request.Username, "workspace")
+	sshDir := "/workspace/.ssh"
+
+	var authorizedKeys []string
+	for _, key := range request.SSHKeys {
+		if key.Purpose == "inbound" && key.PublicKey != "" {
+			authorizedKeys = append(authorizedKeys, strings.TrimSpace(key.PublicKey))
+		}
+	}
+	if len(authorizedKeys) > 0 {
+		content := strings.Join(authorizedKeys, "\n") + "\n"
+		script := fmt.Sprintf(
+			"mkdir -p %s && cat > %s/authorized_keys && chmod 600 %s/authorized_keys && chown %s:%s %s/authorized_keys",
+			sshDir, sshDir, sshDir, user, user, sshDir,
+		)
+		cmd := exec.CommandContext(ctx, "docker", "exec", "-i", containerName, "bash", "-c", script)
+		cmd.Stdin = strings.NewReader(content)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			w.repo.RecordEvent(ctx, repository.RecordEventParams{
+				HostID:  &request.HostID,
+				Level:   "warn",
+				Type:    "runtime.ssh_authorized_keys_failed",
+				Message: fmt.Sprintf("inject authorized_keys failed: %s", strings.TrimSpace(string(out))),
+			})
+		}
+	}
+
+	outboundIdx := 0
+	for _, key := range request.SSHKeys {
+		if key.Purpose != "outbound" {
+			continue
+		}
+
+		var keyFile, pubFile string
+		if outboundIdx == 0 {
+			if key.KeyType == "rsa" || strings.Contains(key.PublicKey, "ssh-rsa") {
+				keyFile = sshDir + "/id_rsa"
+				pubFile = sshDir + "/id_rsa.pub"
+			} else {
+				keyFile = sshDir + "/id_ed25519"
+				pubFile = sshDir + "/id_ed25519.pub"
+			}
+		} else {
+			safeName := key.Label
+			if safeName == "" {
+				safeName = fmt.Sprintf("id_%d", outboundIdx)
+			}
+			keyFile = sshDir + "/" + safeName
+			pubFile = sshDir + "/" + safeName + ".pub"
+		}
+
+		if key.PrivateKey != "" {
+			script := fmt.Sprintf(
+				"mkdir -p %s && cat > %s && chmod 600 %s && chown %s:%s %s",
+				sshDir, keyFile, keyFile, user, user, keyFile,
+			)
+			cmd := exec.CommandContext(ctx, "docker", "exec", "-i", containerName, "bash", "-c", script)
+			cmd.Stdin = strings.NewReader(key.PrivateKey)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				w.repo.RecordEvent(ctx, repository.RecordEventParams{
+					HostID:  &request.HostID,
+					Level:   "warn",
+					Type:    "runtime.ssh_key_inject_failed",
+					Message: fmt.Sprintf("inject outbound private key failed: %s", strings.TrimSpace(string(out))),
+				})
+			}
+		}
+
+		if key.PublicKey != "" {
+			script := fmt.Sprintf(
+				"mkdir -p %s && cat > %s && chmod 644 %s && chown %s:%s %s",
+				sshDir, pubFile, pubFile, user, user, pubFile,
+			)
+			cmd := exec.CommandContext(ctx, "docker", "exec", "-i", containerName, "bash", "-c", script)
+			cmd.Stdin = strings.NewReader(key.PublicKey)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				w.repo.RecordEvent(ctx, repository.RecordEventParams{
+					HostID:  &request.HostID,
+					Level:   "warn",
+					Type:    "runtime.ssh_key_inject_failed",
+					Message: fmt.Sprintf("inject outbound public key failed: %s", strings.TrimSpace(string(out))),
+				})
+			}
+		}
+
+		outboundIdx++
+	}
+}
+
+func (w *Worker) injectSSHKeysLegacy(ctx context.Context, request agentapi.HostActionRequest, containerName string) {
 	user := firstNonEmpty(request.Username, "workspace")
 	sshDir := "/workspace/.ssh"
 

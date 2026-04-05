@@ -2,57 +2,54 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { portalApiFetch } from "@/lib/portal-api";
 
-export interface SSHKeyData {
+export interface SSHKey {
+  id: string;
+  user_id: string;
+  purpose: "inbound" | "outbound";
+  label: string;
   public_key: string;
   private_key: string;
   key_type: string;
+  fingerprint: string;
+  created_at: string;
 }
 
+// Admin hooks
 export function useAdminSSHKeys(userId: string) {
   return useQuery({
     queryKey: ["admin", "ssh-keys", userId],
-    queryFn: () => apiFetch<SSHKeyData>(`/users/${userId}/ssh-keys`),
+    queryFn: () => apiFetch<{ keys: SSHKey[] }>(`/users/${userId}/ssh-keys`),
     enabled: !!userId,
   });
 }
 
-export function useAdminGenerateSSHKey() {
+export function useAdminCreateSSHKey() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({
       userId,
+      purpose,
+      label,
       keyType,
-    }: {
-      userId: string;
-      keyType: "ed25519" | "rsa";
-    }) =>
-      apiFetch<SSHKeyData>(`/users/${userId}/ssh-keys/generate`, {
-        method: "POST",
-        body: JSON.stringify({ key_type: keyType }),
-      }),
-    onSuccess: (_data, variables) => {
-      qc.invalidateQueries({
-        queryKey: ["admin", "ssh-keys", variables.userId],
-      });
-    },
-  });
-}
-
-export function useAdminSetSSHKey() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      userId,
       publicKey,
       privateKey,
     }: {
       userId: string;
-      publicKey: string;
-      privateKey: string;
+      purpose: "inbound" | "outbound";
+      label: string;
+      keyType?: "ed25519" | "rsa";
+      publicKey?: string;
+      privateKey?: string;
     }) =>
-      apiFetch<SSHKeyData>(`/users/${userId}/ssh-keys`, {
-        method: "PUT",
-        body: JSON.stringify({ public_key: publicKey, private_key: privateKey }),
+      apiFetch<{ key: SSHKey }>(`/users/${userId}/ssh-keys`, {
+        method: "POST",
+        body: JSON.stringify({
+          purpose,
+          label,
+          key_type: keyType || "ed25519",
+          public_key: publicKey,
+          private_key: privateKey,
+        }),
       }),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({
@@ -65,28 +62,49 @@ export function useAdminSetSSHKey() {
 export function useAdminDeleteSSHKey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (userId: string) =>
-      apiFetch(`/users/${userId}/ssh-keys`, { method: "DELETE" }),
-    onSuccess: (_data, userId) => {
-      qc.invalidateQueries({ queryKey: ["admin", "ssh-keys", userId] });
+    mutationFn: ({ userId, keyId }: { userId: string; keyId: string }) =>
+      apiFetch(`/users/${userId}/ssh-keys/${keyId}`, { method: "DELETE" }),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({
+        queryKey: ["admin", "ssh-keys", variables.userId],
+      });
     },
   });
 }
 
+// User portal hooks
 export function useMySSHKeys() {
   return useQuery({
     queryKey: ["portal", "ssh-keys"],
-    queryFn: () => portalApiFetch<SSHKeyData>("/ssh-keys"),
+    queryFn: () => portalApiFetch<{ keys: SSHKey[] }>("/ssh-keys"),
   });
 }
 
-export function useMyGenerateSSHKey() {
+export function useMyCreateSSHKey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (keyType: "ed25519" | "rsa") =>
-      portalApiFetch<SSHKeyData>("/ssh-keys/generate", {
+    mutationFn: ({
+      purpose,
+      label,
+      keyType,
+      publicKey,
+      privateKey,
+    }: {
+      purpose: "inbound" | "outbound";
+      label: string;
+      keyType?: "ed25519" | "rsa";
+      publicKey?: string;
+      privateKey?: string;
+    }) =>
+      portalApiFetch<{ key: SSHKey }>("/ssh-keys", {
         method: "POST",
-        body: JSON.stringify({ key_type: keyType }),
+        body: JSON.stringify({
+          purpose,
+          label,
+          key_type: keyType || "ed25519",
+          public_key: publicKey,
+          private_key: privateKey,
+        }),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["portal", "ssh-keys"] });
@@ -94,20 +112,11 @@ export function useMyGenerateSSHKey() {
   });
 }
 
-export function useMySetSSHKey() {
+export function useMyDeleteSSHKey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      publicKey,
-      privateKey,
-    }: {
-      publicKey: string;
-      privateKey: string;
-    }) =>
-      portalApiFetch<SSHKeyData>("/ssh-keys", {
-        method: "PUT",
-        body: JSON.stringify({ public_key: publicKey, private_key: privateKey }),
-      }),
+    mutationFn: (keyId: string) =>
+      portalApiFetch(`/ssh-keys/${keyId}`, { method: "DELETE" }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["portal", "ssh-keys"] });
     },

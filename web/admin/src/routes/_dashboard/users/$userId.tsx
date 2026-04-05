@@ -46,8 +46,7 @@ import { RotatePasswordDialog } from "@/components/users/rotate-password-dialog"
 import { SSHKeyManager } from "@/components/ssh-keys/ssh-key-manager";
 import {
   useAdminSSHKeys,
-  useAdminGenerateSSHKey,
-  useAdminSetSSHKey,
+  useAdminCreateSSHKey,
   useAdminDeleteSSHKey,
 } from "@/hooks/use-ssh-keys";
 import { EmptyState } from "@/components/layout/empty-state";
@@ -78,8 +77,7 @@ function UserDetailPage() {
   const [expiryOpen, setExpiryOpen] = useState(false);
   const [expiryValue, setExpiryValue] = useState("");
   const sshKeysQuery = useAdminSSHKeys(userId);
-  const generateSSHKey = useAdminGenerateSSHKey();
-  const setSSHKey = useAdminSetSSHKey();
+  const createSSHKey = useAdminCreateSSHKey();
   const deleteSSHKey = useAdminDeleteSSHKey();
 
   if (isLoading) {
@@ -306,35 +304,29 @@ function UserDetailPage() {
       </Card>
 
       <SSHKeyManager
-        data={sshKeysQuery.data}
+        keys={sshKeysQuery.data?.keys ?? []}
         isLoading={sshKeysQuery.isLoading}
-        onGenerate={(keyType) =>
-          generateSSHKey.mutate(
-            { userId, keyType },
+        onCreate={(params) =>
+          createSSHKey.mutate(
+            { userId, ...params },
             {
-              onSuccess: () => toast.success("SSH 密钥已生成"),
-              onError: () => toast.error("生成失败"),
+              onSuccess: () => toast.success("SSH 密钥已创建"),
+              onError: () => toast.error("创建失败"),
             },
           )
         }
-        onSet={(publicKey, privateKey) =>
-          setSSHKey.mutate(
-            { userId, publicKey, privateKey },
+        onDelete={(keyId) =>
+          deleteSSHKey.mutate(
+            { userId, keyId },
             {
-              onSuccess: () => toast.success("SSH 密钥已保存"),
-              onError: () => toast.error("保存失败"),
+              onSuccess: () => toast.success("SSH 密钥已删除"),
+              onError: () => toast.error("删除失败"),
             },
           )
         }
-        onDelete={() =>
-          deleteSSHKey.mutate(userId, {
-            onSuccess: () => toast.success("SSH 密钥已删除"),
-            onError: () => toast.error("删除失败"),
-          })
-        }
-        isGenerating={generateSSHKey.isPending}
-        isSetting={setSSHKey.isPending}
+        isCreating={createSSHKey.isPending}
         isDeleting={deleteSSHKey.isPending}
+        lastCreatedKey={createSSHKey.data?.key}
       />
 
       <Card className="overflow-hidden rounded-xl border-border/80 shadow-sm">
