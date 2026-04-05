@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v1.6.0 - 2026-04-05
+## What's Changed
+
+### Backend (Go / API)
+- feat(260405-qk2): SSH密钥体系改造：拆分为入站免密登录和出站外部鉴权 (8b994dc)
+
+### Frontend (Admin Web)
+- feat(260405-qk2): SSH密钥体系改造：拆分为入站免密登录和出站外部鉴权 (8b994dc)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v1.5.1...v1.6.0
+
+
 ## v1.5.1 - 2026-04-05
 ## What's Changed
 
