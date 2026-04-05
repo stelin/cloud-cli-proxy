@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v1.5.1 - 2026-04-05
+## What's Changed
+
+### Backend (Go / API)
+- feat(260405-jji): 镜像版本管理：自动拉取最新镜像 + 版本展示 + 一键升级 (507b288)
+
+### Frontend (Admin Web)
+- feat(260405-jji): 镜像版本管理：自动拉取最新镜像 + 版本展示 + 一键升级 (507b288)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v1.5.0...v1.5.1
+
+
 ## v1.5.0 - 2026-04-05
 ## What's Changed
 
