@@ -15,7 +15,4 @@ Phase 2 只允许在这个模板旁边新增网络准备钩子接口，不在本
 ## 容器内运维脚本
 
 - `restart-vnc`：重启 KasmVNC + 桌面进程（不重建容器）。
-- `claude`：默认包装为基于 `tmux` 的持久会话模式：
-  - 会话名按当前目录计算，同目录重复执行会复用同一 Claude 进程。
-  - SSH 断开不会结束 Claude 进程。
-  - 临时关闭该行为：`CLAUDE_NO_TMUX=1 claude ...`
+- `claude`：直接启动 `claude-real`，不额外包 `tmux` 或其他中转层，优先保证 SSH + 输入法场景下的交互兼容性。
