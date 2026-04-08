@@ -222,14 +222,17 @@ func (s *Server) handleChannel(newChan ssh.NewChannel, targetAddr, targetUser, t
 		user = s.containerUser
 	}
 
-	authMethods := []ssh.AuthMethod{
-		ssh.PublicKeys(s.hostKey),
-	}
 	pass := targetPassword
 	if pass == "" {
 		pass = s.containerPassword
 	}
-	authMethods = append(authMethods, ssh.Password(pass))
+	// 密码优先：先尝试公钥会占用 OpenSSH 的 MaxAuthTries，导致密码未尝试；
+	// 部分发行版仅宣告 keyboard-interactive，需同时提供 KeyboardInteractive。
+	authMethods := []ssh.AuthMethod{
+		ssh.Password(pass),
+		passwordKeyboardInteractive(pass),
+		ssh.PublicKeys(s.hostKey),
+	}
 
 	targetConfig := &ssh.ClientConfig{
 		User:            user,
@@ -299,4 +302,17 @@ func (s *Server) handleChannel(newChan ssh.NewChannel, targetAddr, targetUser, t
 
 	wg.Wait()
 	s.logger.Debug("SSH proxy channel closed", "target", targetAddr)
+}
+
+func passwordKeyboardInteractive(password string) ssh.AuthMethod {
+	return ssh.KeyboardInteractive(func(_ string, _ string, questions []string, _ []bool) ([]string, error) {
+		if len(questions) == 0 {
+			return nil, nil
+		}
+		answers := make([]string, len(questions))
+		for i := range questions {
+			answers[i] = password
+		}
+		return answers, nil
+	})
 }

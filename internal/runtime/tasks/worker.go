@@ -208,6 +208,10 @@ func (w *Worker) createHost(ctx context.Context, request agentapi.HostActionRequ
 		}
 	}
 
+	if err := w.waitForSSH(ctx, request, containerName); err != nil {
+		return err
+	}
+
 	return nil
 }
 
