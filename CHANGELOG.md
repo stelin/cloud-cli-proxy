@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v1.6.8 - 2026-04-08
+## What's Changed
+
+### Backend (Go / API)
+- fix(ssh): 代理连容器认证顺序、create 后同步凭据与稳定解析容器 IP (05f763b)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v1.6.7...v1.6.8
+
+
 ## v1.6.7 - 2026-04-05
 ## What's Changed
 
