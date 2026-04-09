@@ -1,292 +1,338 @@
-# Domain Pitfalls
+# Domain Pitfalls：claude-shell 透明 Docker CLI 包装器（追加到既有 Docker 体系）
 
-**Domain:** v1.2 用户自助面板与 Bootstrap 重设计 — 为现有 Go+React+Docker 平台添加用户认证、角色视图、KasmVNC 代理、Bootstrap URL 重设计、多账号数据模型
-**Researched:** 2026-03-28
-**Confidence:** HIGH（基于项目代码审查 + 官方文档 + 社区经验）
-
----
-
-## Critical Pitfalls
-
-导致需要重写或产生严重安全/可用性问题的错误。
-
-### Pitfall 1: 用户 JWT 与管理员 JWT 共享签名密钥导致越权
-
-**What goes wrong:** 当前管理员 JWT 使用单一 `JWTSecret` 签名，Subject 固定为 `"admin"`。如果用户 JWT 也复用同一密钥，且中间件仅检查 token 有效性而不检查 role claim，那么持有用户 token 的人可以直接访问 `/v1/admin/*` 端点。
-
-**Why it happens:** 现有 `AdminAuthMiddleware` 只做了 HMAC 签名验证和过期检查，没有检查 `Subject` 或任何 role claim。这是 v1.0 合理的简化——因为只有管理员有 token。但新增用户认证后，如果不同时修改中间件，两种 token 将相互通用。
-
-**Consequences:** 任何普通用户都能执行管理员操作：删除用户、解绑出口 IP、停止他人主机、查看所有事件日志。
-
-**Prevention:**
-1. 用户和管理员使用**不同的签名密钥**，或使用不同的 `Issuer`/`Audience` claim，且在各自中间件中严格校验
-2. `AdminAuthMiddleware` 必须增加 `Subject == "admin"` 或 `role == "admin"` 检查
-3. 新建 `UserAuthMiddleware`，只接受 `role == "user"` 的 token
-4. 添加测试：用用户 token 请求 admin 端点，断言返回 403
-
-**Detection:** 在 CI 中加入越权测试；代码审查时检查所有 auth 中间件是否有 role 断言。
-
-**Phase:** 必须在用户认证体系阶段**第一个任务**就解决。
+**Domain:** 在已有「控制面 + host-agent + `--network=none` + WireGuard/sing-box」模型上，增加独立 Go 二进制：透明拉起容器、TTY 透传、指纹与 `/proc` 伪装、sing-box tun、garble 交付与跨平台镜像。
+**Researched:** 2026-04-09
+**Overall confidence:** MEDIUM–HIGH（Docker/sing-box/官方文档为主；Anthropic 行为以公开文档与 issue 为准，属 MEDIUM）
 
 ---
 
-### Pitfall 2: 前端角色路由仅做 UI 隐藏，不做后端鉴权
+## 总览：与「从零造容器」不同的集成风险
 
-**What goes wrong:** React SPA 中通过 `role` 判断显示管理员导航还是用户面板，但后端 API 没有对应的 per-user 数据隔离。用户通过 DevTools 或直接 curl 调用管理员 API 即可越权。
-
-**Why it happens:** 前端路由保护给人一种"已经做了权限控制"的错觉。现有 `apiFetch` 硬编码 `API_BASE = "/v1/admin"`，如果用户端也用同一个 fetch 工具调用用户端点（如 `/v1/user/...`），很容易在重构时把 admin 端点暴露给用户请求路径。
-
-**Consequences:** 前端权限形同虚设，任何有 token 的用户都能操作非己资源。
-
-**Prevention:**
-1. 后端是唯一的权限边界：每个 handler 必须从 JWT 中提取 `user_id`，查询时用 `WHERE user_id = $1` 过滤
-2. 用户端点（`/v1/user/*`）和管理员端点（`/v1/admin/*`）使用不同的中间件栈
-3. 前端角色路由只是 UX 优化，不是安全措施
-4. 测试矩阵：用户 A 的 token 不能查到用户 B 的主机/账号
-
-**Detection:** API 测试用两个不同用户的 token 交叉请求对方资源。
-
-**Phase:** 用户自助面板 API 设计阶段。
+在**已有**系统上追加本地透明包装器时，典型错误不是「会不会用 Docker」，而是：**信号与 TTY 语义、宿主机与容器身份映射、Docker Desktop 与 Linux 生产路径差异、为 tun/nft 追加的 capability 与最小权限的平衡、以及把「反检测」当成可承诺的产品特性**。下列条目按主题编号，每条包含：会出什么问题、征兆、预防、建议由哪类工作项承接（对应 v1.3 里程碑内的子域）。
 
 ---
 
-### Pitfall 3: Bootstrap URL `/{short_id}` 与现有路由冲突
+## 1. TTY：raw 模式、信号转发、终端缩放
 
-**What goes wrong:** 将 bootstrap 入口从 `/v1/bootstrap/script` 改为 `/{short_id}` 后，`short_id` 可能与现有路径冲突：`/healthz`、`/v1`、`/login`、`/entry/{shortId}`、前端 SPA 的 HTML5 History 路径（`/hosts`、`/users` 等）。
+### 会出什么问题
 
-**Why it happens:** Go `net/http.ServeMux` 的路由匹配规则是最长前缀匹配。`/{short_id}` 是一个 catch-all 通配符，如果注册不当会吞掉本应匹配其他 handler 的请求。此外，SPA 需要一个 catch-all 来返回 `index.html`，两个 catch-all 会冲突。
+- **PID 1 与信号：** Linux 下容器内 PID 1 对默认动作为「忽略」的信号（如 `SIGINT`）行为特殊；若包装命令未正确处理 `SIGTERM`/`SIGINT`，表现为 Ctrl+C 无效或容器僵死（Docker 文档明确提示 PID 1 特性）。可用 `--init` 或确保主进程非 PID 1 且正确转发。
+- **SIGWINCH：** 分配伪 TTY（`-t`）时，终端窗口变化会向容器内进程转发 `SIGWINCH`。部分守护进程（历史上如 Apache）将 `SIGWINCH` 用作**优雅退出**而非「窗口尺寸变化」，导致一resize 就退出——这是应用语义问题，不是 Docker bug。
+- **信号代理：** 默认 `--sig-proxy=true`（foreground attach 场景）会把宿主收到的一些信号传给容器进程；若需要 resize 但不希望某些信号到达子进程，需理解 `--sig-proxy` 与「是否 `-t`」的组合效果。
+- **Raw 模式：** 全屏 TUI（含部分 CLI 编辑器）依赖宿主 stty raw；若包装层额外包了一层 shell 或未使用 `-it`，可能出现按键错乱、Ctrl+C 传到错误进程。
 
-**Consequences:** 用户访问 `curl domain/abc123` 可能触发错误的 handler；或者管理后台 SPA 路由全部 404；或者 healthz 探针失败导致监控误报。
+### 征兆
 
-**Prevention:**
-1. `short_id` 格式限制为纯字母数字且固定长度（如 6-8 位），在路由注册时用正则或前置检查区分
-2. 具体路由（`/healthz`、`/v1/*`、`/login`）总是优先于 `/{short_id}` 注册
-3. 在 `/{short_id}` handler 内部，先查库确认 short_id 存在，不存在则 fallback 到 SPA 或 404
-4. 建立一个 **保留词表**（healthz、v1、admin、login、api、static 等），创建用户时校验 short_id 不在其中
-5. 考虑使用 `/s/{short_id}` 或 `/go/{short_id}` 前缀，彻底避免冲突——虽然 URL 稍长但省去大量边界问题
+- 拉终端窗口后服务无故退出、日志出现 `caught SIGWINCH, shutting down`。
+- Ctrl+C 无法结束、需 `docker kill`。
+- 交互式 CLI 方向键/补全异常。
 
-**Detection:** 集成测试覆盖所有现有路由 + short_id 路由的优先级正确性。
+### 预防策略
 
-**Phase:** Bootstrap 重设计阶段，在路由改造的**第一步**就要确定方案。
+- 对「类 REPL」的 Claude Code：**明确使用 `-i` + `-t`**，并在 Go 侧若用 `exec`/`attach`，保证与 `docker run` 行为一致；评估 **`docker run --init`** 或 entrypoint 用 **`tini`/`dumb-init`** 改善信号与僵尸进程。
+- 文档与集成测试覆盖：**resize、SIGINT、EOF**。
+- 若子进程对 SIGWINCH 过敏：查阅该进程文档，或避免以 PID 1 直接跑该进程、或调整信号处理（产品层决策，慎用 `--sig-proxy=false` 以免误伤 Ctrl+C）。
 
----
+### 建议负责范围
 
-### Pitfall 4: 数据模型从"一用户一主机"到"一用户多账号多主机"的破坏性变更
+**Go 包装器与容器入口（v1.3：本地 `claude` 二进制 + `docker run` 参数契约）**；与既有 SSH 路径解耦，需单独 UAT。
 
-**What goes wrong:** 当前 `hosts` 表有 `UNIQUE (user_id, slot_key)` 约束，且代码中大量使用 `GetPrimaryHostByUserID` 这类假设用户只有一台主机的查询。新增 Claude 账号模型后，一个用户可能有多台主机（每个 Claude 账号对应一台），所有"用户 -> 唯一主机"的假设都会崩塌。
-
-**Why it happens:** v1.0 合理简化为"一用户一主机"，代码中这个假设已经深入到 bootstrap 流程、entry handler、前端面板。迁移时如果只加了新表而没有全面审查旧代码，旧路径会在多主机场景下 panic 或返回错误数据。
-
-**Consequences:**
-- `GetPrimaryHostByUserID` 在用户有多台主机时可能返回错误的那台
-- Bootstrap 脚本中 `ssh_port: 2222` 硬编码，多主机时端口冲突
-- 出口 IP 绑定逻辑假设一个 host binding 就够了，多主机需要多绑定
-
-**Prevention:**
-1. 引入 `claude_accounts` 表作为中间层：`users -> claude_accounts -> hosts`
-2. 保留 `GetPrimaryHostByUserID` 但明确加 `LIMIT 1 ORDER BY created_at ASC` 兼容旧路径
-3. 新接口一律使用 `account_id` 或 `host_id` 定位主机，不再通过 user_id 隐式推断
-4. 迁移脚本必须处理现有数据：为每个现有 user+host 对自动创建一条 claude_account 记录
-5. SSH 端口分配必须从硬编码改为动态分配（从端口池分配或按 host_id 映射）
-
-**Detection:** 迁移后运行现有 76 个测试，确认全部通过；新增多账号场景测试。
-
-**Phase:** 数据模型变更阶段，必须先于用户面板和 bootstrap 改造。
+**Sources (HIGH/MEDIUM):** [Docker run — interactive / tty / stop-signal / init](https://docs.docker.com/engine/reference/commandline/run/)，[Docker attach — sig-proxy](https://docs.docker.com/engine/reference/commandline/attach/)；SIGWINCH 与 Apache 等行为见 [docker-library 讨论](https://github.com/docker-library/php/issues/64)（MEDIUM：应用特定）。
 
 ---
 
-### Pitfall 5: KasmVNC WebSocket 代理超时和连接中断
+## 2. Bind mount 与 UID/GID 错位
 
-**What goes wrong:** 当前 VNC 代理实现使用 `net.DialTimeout` 5 秒连接 + 原始 TCP 双向拷贝（`io.Copy`），没有设置读写超时和 keep-alive。KasmVNC 官方文档要求代理层设置至少 1800 秒（30 分钟）的读写超时。用户闲置超过 Go 默认 TCP 超时后连接会静默断开。
+### 会出什么问题
 
-**Why it happens:** 现有实现是 admin-only 的简单代理，偶尔用用没问题。但作为用户自助面板的核心功能暴露给所有用户后，长时间连接、高并发、网络抖动都会放大超时问题。
+- 容器内用户 UID 与宿主机目录所有者不一致时：**写权限拒绝、创建文件归属为 root/意外 UID**，导致 Claude Code 写 `~/.claude`、项目目录或 socket 失败。
+- 使用 user namespace / `--user` 时，映射规则与 **volume 上已有文件** ACL 交互复杂，易出现「宿主可读、容器不可写」。
 
-**Consequences:** 用户 VNC 桌面会话在几分钟空闲后断开，无法重连；或者大量僵死 goroutine（`io.Copy` 永远阻塞）耗尽服务器资源。
+### 征兆
 
-**Prevention:**
-1. 在 WebSocket hijack 后，对 `clientConn` 和 `targetConn` 都设置 `SetDeadline`，并用 goroutine 定期续期（或使用 `SetKeepAlive` + `SetKeepAlivePeriod`）
-2. 读写超时设为 30 分钟以上，与 KasmVNC 官方建议一致
-3. 在 `done` channel 双向拷贝完成后，确保两端 conn 都显式 Close（当前只 defer 了一端）
-4. 添加连接计数器和超时清理，防止 goroutine 泄漏
-5. 考虑使用 `golang.org/x/net/websocket` 或 `nhooyr.io/websocket` 库做标准 WebSocket 握手，而不是手动 hijack 重写 HTTP 请求行
+- `Permission denied` 仅在挂载卷上出现；容器内 `id` 与宿主 `ls -n` 不一致。
+- 日志或 IDE 报无法写配置目录。
 
-**Detection:** 负载测试：开 10 个 VNC 连接，闲置 10 分钟后检查是否仍然存活；用 pprof 检查 goroutine 数量。
+### 预防策略
 
-**Phase:** KasmVNC 集成阶段。
+- 在镜像或 entrypoint 中 **固定非 root 运行**并文档化 UID；或在启动前用 **`--user "$(id -u):$(id -g)"`** 与宿主对齐（需镜像支持该 UID 家目录）。
+- 对配置与缓存目录：**命名卷**或启动时 `chown`（谨慎：扩大入口脚本复杂度）。
+- 将 **「可写路径契约」** 写入 `verify` 子命令与集成测试。
 
----
+### 建议负责范围
 
-## Moderate Pitfalls
+**镜像用户模型 + 包装器默认挂载表（v1.3）**；与「宿主机项目目录 bind mount」强相关。
 
-### Pitfall 6: Entry Password 明文存储
-
-**What goes wrong:** 当前 `entry_password` 是明文存储在数据库中（`user.EntryPassword != body.Password` 直接比较）。当用户自助面板上线后，这个密码同时用于 curl bootstrap 和 Web 登录，安全风险显著升级。
-
-**Prevention:**
-1. 用户 Web 登录必须使用 bcrypt hash（与管理员一致）
-2. Entry password（curl 用）可以保持为一次性 token 或短密码，但应与 Web 登录密码分离
-3. 或者统一为一套密码，全部 bcrypt，bootstrap 脚本中的认证接口也走 hash 比较
-
-**Phase:** 用户认证体系阶段。
+**Sources:** 通用 Linux 文件权限行为；**LOW** 若无具体镜像设计需在产品阶段实测。
 
 ---
 
-### Pitfall 7: 同一 React 应用中管理员和用户状态互相污染
+## 3. Docker Desktop：与 Linux 生产环境的差异
 
-**What goes wrong:** 当前前端 `localStorage` 中存 `admin_token`，`apiFetch` 硬编码 `API_BASE = "/v1/admin"`。如果用户面板也在同一 SPA 中，需要同时处理两种 token 和两种 API 前缀。管理员登录后切换到用户视角（或反过来）时，localStorage 中的 token 冲突。
+### 会出什么问题
 
-**Prevention:**
-1. Token 存储使用不同的 key：`admin_token` vs `user_token`
-2. `apiFetch` 改为支持 base URL 参数，或创建两个 fetch 实例
-3. 路由守卫根据 token 类型判断，而不是只检查 token 是否存在
-4. 如果管理员也是用户，需要明确的"角色切换"机制而非两个 token 共存
+- **`--network host`：** 在 macOS/Windows 上 historically **不等同于 Linux host 网卡**（守护进程在 VM 内）；文档与社区长期建议用 **端口映射** 或 **host-gateway**。产品若依赖「host 网络 = 宿主 Linux」，在 Desktop 上会失真。
+- **Host 网络模式可用性：** Docker Desktop 设置里 **「Enable host networking」** 等选项影响 `--net=host` 与 localhost 互通行为；团队内若未统一版本/开关，会出现「我机器可复现你机器不行」。
+- **`--network none`：** 一般仍可用来去掉默认 bridge，但 **后续再注入 veth/tun** 的路径依赖 **Linux 内核能力**；Desktop 的 VM 内核版本、模块与 nft 行为与生产裸金属可能不同。
+- **性能与启动：** 文件系统走 osxfs/virtiofs，**大量小文件或 node_modules bind** 会放大与 Linux 的差异。
 
-**Phase:** 用户自助面板前端阶段。
+### 征兆
 
----
+- 仅 Mac 上 `host-gateway`、localhost 回连、或 sing-box 路由异常。
+- CI（Linux）通过，开发者 Desktop 失败。
 
-### Pitfall 8: ASCII Art 在不同终端中的显示问题
+### 预防策略
 
-**What goes wrong:** Bootstrap 脚本中加入 ASCII 欢迎艺术字，但不同终端对字符宽度、编码、颜色码的支持差异很大。CJK 字符在非 UTF-8 终端上乱码，ANSI 颜色码在管道传输（`curl | sh`）中可能被解析为乱码。
+- 在 PROJECT 约束中明确：**生产仍为单台 Linux**；Desktop 仅作开发级 **Tier-2** 支持，文档写明差异与推荐（Linux VM 或远端 dev）。
+- 对 `host.docker.internal` / **`--add-host=host.docker.internal:host-gateway`** 建立单一事实来源（compose/run 参数表）。
+- 网络正确性门禁以 **Linux 裸机/等同 VM** 为准绳，Desktop 上不重复承诺「三重校验」同级保证。
 
-**Prevention:**
-1. ASCII art 只使用 7-bit ASCII 字符，不使用中文
-2. 颜色码使用 `tput` 或检测 `$TERM` 而非硬编码 ANSI 转义序列
-3. 检测 `[ -t 1 ]`（stdout 是否为 tty）来决定是否输出颜色
-4. 宽度控制在 60 列以内，兼容窄终端
-5. 在 `curl | bash` 模式下不输出颜色（stdin 不是 tty 时 tput 无效）
+### 建议负责范围
 
-**Phase:** Bootstrap 重设计阶段。
+**文档与验证矩阵 + 可选的 dev override（v1.3）**；核心仍落在 **Linux host-agent 路径**。
 
----
-
-### Pitfall 9: Docker 容器 IP 获取方式不可靠
-
-**What goes wrong:** 当前 `getContainerIP` 通过 `docker inspect` 取容器 IP，在 `--network=none` 的容器上可能返回空（因为容器没有常规网络接口，IP 是通过 netns 内部的 veth pair 分配的）。当用户面板需要代理 VNC 到容器时，IP 发现机制可能失效。
-
-**Prevention:**
-1. 确认当前 WireGuard/sing-box 注入后容器是否有可路由的 IP
-2. 如果 IP 来自 netns 内部，考虑通过 host-agent 查询 namespace 内的 IP
-3. 或在容器启动时将 VNC 端口通过 `socat` 或 `nsenter` 暴露到宿主机的 Unix socket
-4. 建立明确的容器 IP 发现契约，不依赖 Docker inspect 的 NetworkSettings
-
-**Phase:** KasmVNC 集成阶段。
+**Sources (MEDIUM):** [Docker Desktop Settings — Network / host networking](https://docs.docker.com/desktop/settings-and-maintenance/settings/)；[Docker 网络模式概述（社区/博客类作辅证）](https://oneuptime.com/blog/post/2026-01-25-docker-container-networking-modes/view)。
 
 ---
 
-### Pitfall 10: 多主机场景下 SSH 端口冲突
+## 4. `/proc` bind mount、`--privileged` 与 `CAP_SYS_ADMIN`
 
-**What goes wrong:** 当前 bootstrap 返回 `ssh_port: 2222` 硬编码。当一个用户拥有多台主机时，所有主机都监听 2222 端口，无法通过同一个宿主机 IP 区分。
+### 会出什么问题
 
-**Prevention:**
-1. 端口分配改为动态：在 host 创建时从端口池分配唯一端口
-2. 端口存储在 `hosts` 表中（新增 `ssh_port` 列）
-3. Bootstrap 和 entry handler 从数据库读取端口而非硬编码
-4. 端口池管理需要考虑回收（主机删除后端口释放）
+- **在容器内执行 `mount --bind`（含绑定 `/proc` 下某些路径）需要 `CAP_SYS_ADMIN`**；默认 Docker 丢弃 capability，**即使 UID 0 也会 `permission denied`**（mount(2) 语义）。
+- **`--privileged`** 会授予**全部 capabilities** 并放宽 device 访问，攻击面远大于「只为 mount」；合规与客户环境可能直接否决。
+- **runc 对 /proc 挂载有安全检查**（`checkProcMount`）：部分 `/proc/...` 绑定会被拒绝，错误信息为「cannot be mounted because it is inside /proc」——与「只加 SYS_ADMIN」仍不够的情况并存。
+- **绑定伪造的 `cpuinfo`/`meminfo`：** 若用宿主文件覆盖容器内 `/proc/cpuinfo`，需通过 **Docker `-v` 在创建时挂载**，而非依赖容器内再 mount；容器内二次 mount 受 capability 与安全配置约束更大。
 
-**Phase:** 数据模型变更阶段，与多账号模型一起设计。
+### 征兆
 
----
+- entrypoint 脚本中 `mount --bind` 失败；或仅在加了 `--privileged` 才成功。
+- 安全扫描报告 capability 过多。
 
-### Pitfall 11: 数据库迁移中断导致不一致状态
+### 预防策略
 
-**What goes wrong:** 添加新表（`claude_accounts`）和修改现有表的迁移如果中途失败，数据库可能处于半迁移状态：新表已建但外键未加，或旧数据未回填。
+- **优先在 `docker run` 层用 `-v` 注入伪造文件**，避免在容器内执行 mount。
+- 若必须在容器内 mount：**最小化**为 `--cap-add=SYS_ADMIN` + 必要 `--security-opt`、并审计是否还需 `/dev` 访问；**避免习惯性 `--privileged`**。
+- 对 **gVisor、rootless、Podman** 等替代运行时提前声明不支持或需单独测试（嵌套与 mount 行为差异大）。
 
-**Prevention:**
-1. 每个迁移文件内使用事务包裹（`BEGIN; ... COMMIT;`）
-2. 回填现有数据的迁移与 DDL 变更分开为两个迁移文件
-3. 新列先用 `DEFAULT` 值或 `NULL` 允许，数据回填后再加 `NOT NULL` 约束
-4. 在测试环境先用生产数据量级验证迁移
+### 建议负责范围
 
-**Phase:** 数据模型变更阶段。
+**容器安全基线评审（v1.3 网络/指纹阶段）**；与「反容器检测」条目联动——伪造 proc 的**工程实现**应偏向 **OCI 挂载** 而非容器内特权 mount。
 
----
-
-## Minor Pitfalls
-
-### Pitfall 12: Cookie 路径冲突
-
-**What goes wrong:** 当前 admin token cookie 路径设为 `/v1/admin/`。如果用户端也设置 cookie（路径 `/v1/user/`），浏览器在跨路径请求时可能带错 cookie，或者同域下的 cookie 互相覆盖。
-
-**Prevention:** 用户 token 和管理员 token 使用不同的 cookie name 和 path，且确保 `SameSite` 和 `HttpOnly` 属性正确。
-
-**Phase:** 用户认证体系阶段。
+**Sources (HIGH):** [Docker — runtime privilege and Linux capabilities](https://docs.docker.com/engine/reference/run/#runtime-privilege-and-linux-capabilities)；[mount(2) 需要 CAP_SYS_ADMIN 的通用说明](https://stackoverflow.com/questions/36553617/how-do-i-mount-bind-inside-a-docker-container)（MEDIUM）；[runc checkProcMount 讨论](https://github.com/opencontainers/runc/issues/2826)（MEDIUM）。
 
 ---
 
-### Pitfall 13: KasmVNC 容器内未启动或端口未就绪
+## 5. sing-box TUN 在容器内：能力与设备、常见误配
 
-**What goes wrong:** 用户点击 VNC 连接时，容器内的 KasmVNC 进程可能还未启动完成（镜像刚创建、服务初始化中），代理连接失败但错误提示不清晰。
+### 会出什么问题
 
-**Prevention:**
-1. 容器启动流程中加入 KasmVNC ready check（类似现有 SSH ready check）
-2. 用户面板显示明确的"桌面正在启动..."状态
-3. 代理层返回 503 + Retry-After header
+- TUN 创建与路由改写通常需要：**`NET_ADMIN`**；访问 `/dev/net/tun` 需将设备暴露进容器（`--device /dev/net/tun` 或等价）。
+- sing-box 文档说明：**非特权模式**下 TUN 的地址/MTU **不会自动配置**，需自行保证配置正确（易配错导致「进程起来但无流量」）。
+- **`auto_route` + `auto_redirect`（Linux）：** 文档推荐用于与 **Docker bridge** 共存及性能；若与 **nftables 默认拒绝**、mark、策略路由叠加，可能出现 **规则顺序冲突、环路或本机流量未进 tun**。
+- **MPTCP：** 1.13+ 对 MPTCP 有特殊处理；未正确 `exclude_mptcp` 时可能出现 **直连泄漏或连接异常**（与 Apple 客户端相关流量文档一致）。
+- **UID 分流：** `include_uid` / `exclude_uid` 仅在 Linux 且 `auto_route` 下生效——与容器内跑 claude 的用户 UID 设定强相关，配错则 **部分进程绕开 tun**。
 
-**Phase:** KasmVNC 集成阶段。
+### 征兆
+
+- sing-box 日志显示 tun 已 up，但 `curl` 出口 IP 仍非预期；或仅部分 TCP 走代理。
+- DNS 仍走宿主 resolver（泄漏）。
+
+### 预防策略
+
+- 能力/device 清单写死：**`NET_ADMIN` + `/dev/net/tun` + nft 权限模型**（是否与现有 host-agent 统一由实现决定）。
+- 使用与生产 **相同版本 sing-box**（PROJECT 已锁 v1.13.3），升级前对照 [Tun 文档](https://sing-box.sagernet.org/configuration/inbound/tun/) 变更日志。
+- 将 **strict_route、route_exclude、loopback_address、exclude_mptcp** 纳入 `verify` 与自动化网络测试。
+
+### 建议负责范围
+
+**sing-box + nftables 集成（v1.3 核心）**；与 v1.1 已有代理路径复用时要防 **两套防火墙规则互相踩**。
+
+**Sources (HIGH):** [sing-box Tun inbound 文档](https://sing-box.sagernet.org/configuration/inbound/tun/)。
+
+---
+
+## 6. 容器启动延迟：如何压到可接受
+
+### 会出什么问题
+
+- **冷启动 pull**：首次拉镜像耗时可掩盖「二进制慢」 perception，引发支持成本。
+- **层过多 / 未合并 RUN**：每次构建变更导致缓存失效。
+- **入口脚本串行**：等 tun 就绪再等 claude，未做并行或 readiness 拆分。
+- **Desktop 上文件系统**：bind mount 巨大目录会拖慢启动。
+
+### 征兆
+
+- 用户抱怨「第一次极慢」；后续仍慢则查镜像体积与 entrypoint。
+
+### 预防策略
+
+- **多阶段构建**、删除包管理器缓存、**稳定 base digest**；文档提供 **预拉取** `docker pull`。
+- 将 **健康检查** 拆为：网络栈就绪 / Claude Code 进程就绪 / 认证可用。
+- 对包装器：**复用已存在容器**（若产品设计允许）比每次 `run --rm` 更快——需权衡隔离与状态。
+
+### 建议负责范围
+
+**镜像流水线 + 包装器默认策略（v1.3）**。
+
+**Sources:** Docker 最佳实践（镜像层）为通用知识；**MEDIUM**。
 
 ---
 
-### Pitfall 14: Short ID 碰撞和可预测性
+## 7. Claude Code 在容器内：自动更新、登录状态、是否会「弄坏」容器
 
-**What goes wrong:** 如果 `short_id` 生成算法使用简单的自增或短随机串，可能出现碰撞或被枚举。攻击者可以遍历 `/{short_id}` 发现所有用户的 bootstrap 入口。
+### 会出什么问题
 
-**Prevention:**
-1. 使用密码学安全随机生成器，至少 6 位 base62（62^6 = 568 亿种可能）
-2. 数据库 `UNIQUE` 约束已有（当前已实现）
-3. 认证端点加入速率限制，防止暴力枚举
-4. 失败响应不泄露 short_id 是否存在（统一返回"invalid credentials"）
+- **原生安装通道**文档写明：会**后台检查更新**并在下次启动生效；需 **显式关闭** 时应用官方推荐方式。
+- 官方推荐在 `settings.json` 的 `env` 中设置 **`DISABLE_AUTOUPDATER=1`**（`autoUpdates` 等旧键曾被弃用或引发混淆，GitHub 有多起 issue）。
+- 若仍尝试自更新：可能因 **权限、只读层、网络策略** 导致 **半升级**、二进制消失或路径错乱（issue 社区有「self-update 卸载/找不到命令」类报告）。
+- **认证状态**：通常落在用户目录下配置与密钥文件；容器无持久卷时 **每次重建需重新登录**；有卷时需明确 **与宿主隔离** 以防串账号。
 
-**Phase:** Bootstrap 重设计阶段。
+### 征兆
+
+- 容器内 `claude` 版本漂移与镜像 tag 不一致；更新失败横幅。
+- 无卷时每次启动要求登录。
+
+### 预防策略
+
+- 镜像内交付路径下 **默认设置 `DISABLE_AUTOUPDATER=1`**，由产品节奏统一升级镜像；或在文档中允许更新但 **声明不支持矩阵**。
+- **命名卷**挂载 `~/.claude`（或等价路径）并文档化；CI 测「重启容器仍登录」可选。
+- 将 **`claude doctor`** 纳入 `verify` 或故障排查手册。
+
+### 建议负责范围
+
+**Claude Code 安装与配置阶段（v1.3）**；与 **镜像版本发布流程** 绑定。
+
+**Sources (MEDIUM):** [Claude Code Advanced setup — Auto-updates](https://code.claude.com/docs/en/setup)；[anthropics/claude-code issues — autoupdate / DISABLE_AUTOUPDATER](https://github.com/anthropics/claude-code/issues/3479)（行为以官方最新文档为准）。
+
+---
+
+## 8. 反检测：Anthropic 侧容器检测与「从内检测难度」
+
+### 会出什么问题
+
+- **删除 `/.dockerenv`、改 cgroup** 等可被用户态篡改的路径，**无法对抗**具备宿主机协作或 hypervisor 视图的检测；对方若在 **客户端二进制或服务器侧启发式** 增加规则，属于持续 arms race。
+- **从内检测容器：** 低权限下仍可观察 **cgroup、mountinfo、init 进程、DMI、时钟与 CPU 特征、驱动缺失** 等；难度随检测深度变化，不应在对外承诺中写死「不可检测」。
+- **合规风险：** 「规避平台技术措施」可能触及服务条款与法律风险——产品应聚焦 **透明代理与安全隔离的工程诚实表述**，而非对抗性营销。
+
+### 征兆
+
+- 服务端行为突变（额外验证、风控）；内部 `verify` 全绿仍被策略拒绝。
+
+### 预防策略
+
+- 将「反检测」降级为 **最佳努力指纹统一**（与 `/etc/machine-id`、proc 注入目标一致），并在路线图标注 **依赖外部政策**。
+- **服务端契约**以官方 API 文档与 ToS 为准；预留 **非欺骗性** 的企业部署叙事（受控出口、审计）。
+
+### 建议负责范围
+
+**产品/合规评审 + 技术实现分离**；工程上归 **v1.3 指纹与 verify**，商业与法律归 **项目决策**。
+
+**Sources:** 无权威第三方「检测难度」指标；本段 **LOW–MEDIUM**（推理与行业常识）。
 
 ---
 
-## Phase-Specific Warnings
+## 9. garble 混淆：已知问题、不能保护的面、运行时开销
 
-| Phase Topic | Likely Pitfall | Severity | Mitigation |
-|-------------|---------------|----------|------------|
-| 用户认证体系 | JWT 签名密钥共享导致越权 (P1) | Critical | 独立密钥 + role claim + 中间件断言 |
-| 用户认证体系 | Entry password 明文存储 (P6) | Moderate | bcrypt 或双密码分离 |
-| 用户认证体系 | Cookie 路径冲突 (P12) | Minor | 不同 cookie name + path |
-| 用户自助面板 API | 前端角色保护不等于后端鉴权 (P2) | Critical | 所有 handler 必须从 JWT 提取 user_id 过滤 |
-| 用户自助面板前端 | 管理员/用户状态互相污染 (P7) | Moderate | 分离 token key、fetch 实例、角色切换机制 |
-| Bootstrap 重设计 | URL 路由冲突 (P3) | Critical | 保留词表 + 路由优先级测试 + 考虑前缀方案 |
-| Bootstrap 重设计 | ASCII art 终端兼容 (P8) | Moderate | 纯 ASCII + tty 检测 + 60 列宽度 |
-| Bootstrap 重设计 | Short ID 可枚举 (P14) | Minor | 密码学随机 + 速率限制 |
-| 数据模型变更 | 一用户一主机假设崩塌 (P4) | Critical | 中间层表 + 全面审查旧查询 + 数据回填 |
-| 数据模型变更 | SSH 端口冲突 (P10) | Moderate | 动态端口分配 |
-| 数据模型变更 | 迁移中断导致不一致 (P11) | Moderate | 事务迁移 + 分步迁移 |
-| KasmVNC 集成 | WebSocket 超时和 goroutine 泄漏 (P5) | Critical | 超时设置 + keep-alive + 标准 WS 库 |
-| KasmVNC 集成 | 容器 IP 发现不可靠 (P9) | Moderate | 明确的 IP 发现契约 |
-| KasmVNC 集成 | VNC 服务未就绪 (P13) | Minor | ready check + 用户状态提示 |
+### 会出什么问题
 
-## Recommended Phase Ordering (Based on Pitfalls)
+- **反射与跨包类型：** historically 为 garble 主要破坏源；近年有 **反射处理 rework**（如 PR/Issue #884、#889 方向），但仍可能在与 **重度反射、Wails、某些 RPC** 组合时出问题。
+- **官方自述：** `-literals` 可逆、可能拖慢；`-tiny` 去掉 panic 信息**加大排障难度**；**导出方法**等仍有不混淆策略边界。
+- **`runtime/debug.ReadBuildInfo`、`runtime.GOROOT`** 等与构建信息相关的 API 在混淆二进制中可能异常（官方 caveats）。
+- **安全预期：** 混淆 **不** 等于加密或防逆向；仅提高成本。
 
-1. **数据模型变更** -- 先做，因为 P4 (Critical) 表明几乎所有后续功能都依赖正确的多账号数据结构
-2. **用户认证体系** -- 紧随其后，因为 P1 (Critical) 和 P2 (Critical) 是安全基础
-3. **Bootstrap 重设计** -- 在认证就位后做，P3 (Critical) 需要独立解决路由冲突
-4. **用户自助面板** -- 依赖认证和数据模型两者就位
-5. **KasmVNC 集成** -- 最后做，P5 需要较多工程投入但不阻塞其他功能
+### 征兆
 
-## "Looks Done But Isn't" Checklist
+- 仅 garble 构建崩溃或间歇故障；堆栈无符号难以诊断。
 
-- [ ] **JWT 中间件:** AdminAuthMiddleware 是否增加了 role/subject 检查 -- 用用户 token 请求 admin API 应返回 403
-- [ ] **数据隔离:** 用户 A 的 token 能否查到用户 B 的资源 -- 交叉请求测试
-- [ ] **路由优先级:** `/{short_id}` 是否吞掉了 `/healthz` 或 SPA 路由 -- 全路由集成测试
-- [ ] **数据迁移:** 现有 user+host 是否自动获得 claude_account 记录 -- 迁移后查数据
-- [ ] **VNC 超时:** 闲置 10 分钟后 VNC 连接是否存活 -- 手动测试
-- [ ] **SSH 端口:** 两台主机是否分配了不同端口 -- 多主机创建测试
-- [ ] **密码安全:** entry_password 是否仍然明文存储 -- grep 代码确认
-- [ ] **goroutine 泄漏:** 多个 VNC 连接断开后 goroutine 数量是否回到基线 -- pprof 检查
+### 预防策略
 
-## Sources
+- **CI 双轨：** `go build` 与 `garble build` 全量测试；发布前对 **Docker 驱动路径** 做冒烟。
+- 谨慎开启 **`-literals`**；为生产崩溃保留 **可开关** 的诊断构建（内部渠道）。
+- 阅读 [garble README caveats](https://github.com/burrowers/garble) 与当前 Go 版本要求。
 
-- 项目代码审查：`admin_auth.go`（JWT 仅验签不验角色）、`entry.go`（明文密码比较）、`admin_vnc_proxy.go`（无超时 WebSocket 代理）、`models.go`（一用户一主机数据模型）、`router.go`（路由注册模式）、`api.ts`（硬编码 admin API base）
-- [KasmVNC Reverse Proxy Documentation](https://kasmweb.com/kasmvnc/docs/master/how_to/reverse_proxy.html) -- WebSocket 超时建议 1800s+
-- [Kasm Troubleshooting - Reverse Proxies](https://www.kasmweb.com/docs/develop/guide/troubleshooting/reverse_proxies.html) -- RDP keep-alive 和连接断开问题
-- [Role-based Access Control in Golang with JWT](https://dev.to/bensonmacharia/role-based-access-control-in-golang-with-jwt-go-ijn) -- Go JWT RBAC 实现模式
-- [Auth0 Community: Best practice for role-based authorization in React SPA](https://community.auth0.com/t/best-practice-for-role-based-or-permission-based-authorization-in-a-react-spa/194364) -- 前端 RBAC 不能替代后端鉴权
+### 建议负责范围
+
+**发布工程与 CI（v1.3 收尾）**；非功能开发前置条件。
+
+**Sources (HIGH):** [garble 文档与 caveats（pkg.go.dev / 仓库 README）](https://pkg.go.dev/mvdan.cc/garble)；[burrowers/garble issues — reflection](https://github.com/burrowers/garble/issues/884)。
 
 ---
-*Pitfalls research for: v1.2 用户自助面板与 Bootstrap 重设计*
-*Researched: 2026-03-28*
+
+## 10. 跨平台：macOS arm64 / amd64 镜像与 Rosetta
+
+### 会出什么问题
+
+- **多架构 manifest：** 若只构建 `linux/amd64`，在 Apple Silicon 上常通过 **qemu/binfmt** 仿真运行，**慢且偶发兼容问题**；应发布 **arm64** 或明确仅支持 Rosetta/x86_64 Docker。
+- **Rosetta：** 在 Mac 上运行 amd64 容器依赖 **Rosetta 2 + Docker 设置**；团队需统一，否则「同样 Dockerfile 不同机器」。
+- **基础镜像选择：** `FROM` 应使用 **manifest list** 或显式 `--platform` 构建矩阵，避免 CI 与开发者本地架构漂移。
+
+### 征兆
+
+- `exec format error`、极慢、或仅 Intel Mac 可运行。
+
+### 预防策略
+
+- Release 提供 **`linux/arm64` + `linux/amd64`** 或文档写明仅一种；`docker buildx build --platform` 入 CI。
+- 在 PROJECT 的「本地 claude-shell」中写清：**推荐 Linux x86_64 生产同源**，Mac 为辅助。
+
+### 建议负责范围
+
+**镜像发布与安装文档（v1.3）**。
+
+**Sources:** Docker buildx/multi-platform 官方文档；**MEDIUM**。
+
+---
+
+## Phase-Specific Warnings（v1.3 映射）
+
+| 子域 | 高风险点 | 缓解 |
+|------|----------|------|
+| Go 包装器 | TTY/信号/SIGWINCH | §1；集成测试；必要时 `--init` |
+| 卷与权限 | UID、`.claude` 持久化 | §2、§7 |
+| Desktop 与生产差异 | host 网络、none+tun | §3 |
+| 安全挂载 | proc 伪造、privileged 蔓延 | §4 |
+| sing-box + nft | 能力、规则顺序、MPTCP/UID | §5 |
+| 体验 | 冷启动、镜像体积 | §6 |
+| Claude Code | 自动更新、登录 | §7 |
+| 交付 | garble、符号、CI | §9 |
+| 发布物 | 多架构 | §10 |
+
+---
+
+## 「看起来像做完但其实没有」检查清单
+
+- [ ] Resize 终端后 Claude Code 仍可用，且不会因 SIGWINCH 误杀主进程
+- [ ] Ctrl+C / SIGTERM 能在预期时间内结束容器
+- [ ] 绑定卷上可写配置与项目目录，UID 行为有文档
+- [ ] Linux 与 Docker Desktop 验证矩阵至少覆盖：localhost 回连、DNS、`verify` 出口 IP
+- [ ] 未使用 `--privileged` 除非书面论证；`-v` 注入 proc 伪装优先于容器内 mount
+- [ ] sing-box：`NET_ADMIN` + `/dev/net/tun` + 路由/nft 与 v1.1 路径无重复冲突
+- [ ] `DISABLE_AUTOUPDATER` 策略与镜像版本策略一致
+- [ ] garble 构建通过全套测试；发布流水线可复现
+- [ ] 镜像 arm64/amd64 声明与 CI 一致
+
+---
+
+## Gaps（需阶段内实测）
+
+- 指定宿主机发行版 + Docker 版本 + Desktop 版本下的 **nft + sing-box auto_redirect** 最小权限集合。
+- Claude Code **Bun standalone** 在只读根文件系统 + 可写卷组合下的确切路径与权限。
+- garble 与 **Docker API / x/crypto / 插件** 依赖的交互（以项目依赖为准）。
+
+---
+
+## Sources（权威优先）
+
+- Docker：`docker run`（`--tty`、`--interactive`、`--sig-proxy`、`--init`、`--privileged`、`--cap-add`）— https://docs.docker.com/engine/reference/commandline/run/
+- Docker：`docker attach`（`--sig-proxy`）— https://docs.docker.com/engine/reference/commandline/attach/
+- Docker：runtime privilege and capabilities — https://docs.docker.com/engine/reference/run/#runtime-privilege-and-linux-capabilities
+- Docker Desktop：Settings（含网络与 host networking 说明）— https://docs.docker.com/desktop/settings-and-maintenance/settings/
+- sing-box：Tun inbound — https://sing-box.sagernet.org/configuration/inbound/tun/
+- Claude Code：Setup / Auto-updates、`DISABLE_AUTOUPDATER` — https://code.claude.com/docs/en/setup
+- garble：README / caveats — https://github.com/burrowers/garble
+- runc：`checkProcMount` 讨论 — https://github.com/opencontainers/runc/issues/2826
+
+---
+*专项研究：v1.3 claude-shell 本地透明代理 — 集成陷阱*
+*Researched: 2026-04-09*

@@ -1,322 +1,205 @@
-# Feature Landscape
+# Feature Landscape：claude-shell 本地透明代理
 
-**Domain:** v1.2 用户自助面板与 Bootstrap 重设计
-**Researched:** 2026-03-28
-**Confidence:** MEDIUM-HIGH (基于现有代码库分析 + 行业惯例 + 官方文档)
+**Domain：** 单机 Go 二进制，用 Docker 透明包裹 Claude Code，全流量经 sing-box tun + nftables，宿主机指纹与容器可观测性可控。  
+**Researched：** 2026-04-09  
+**Confidence：** **MEDIUM-HIGH**（透明代理与容器检测面：多源一致 + 部分官方文档；Claude Code「源码级」细节：**以 Anthropic 官方文档为准**，社区/媒体二次解读标为 LOW）
 
-## Table Stakes
+---
 
-用户期望存在的功能。缺少 = 产品感觉不完整。
+## 与已有能力的关系（依赖边界）
+
+| 已有（云主机平台） | claude-shell 复用 / 不复用 |
+|-------------------|---------------------------|
+| 受管镜像、WireGuard/sing-box、nftables、三重网络校验思路 | **复用设计理念**；本地为**另一交付形态**，镜像与编排由 `claude` 二进制驱动，不依赖控制面 API |
+| `tools/spoof-fingerprint.js`（Node 层 patch `os`） | v1.3 目标为**容器内系统级**指纹（`/etc/machine-id`、`/proc/*` 等），**不依赖**该脚本；可作对照：Node 仅能覆盖运行时 API，挡不住直接读 `/proc` 的本机工具 |
+| 管理后台 / JWT | **非表功能**；本地 CLI 可独立发布 |
+
+---
+
+## Table Stakes（不做则不像「可替换的 claude」）
 
 | Feature | Why Expected | Complexity | Dependencies | Notes |
-|---------|--------------|------------|--------------|-------|
-| 用户自助面板：查看自己的主机状态 | 用户需要知道自己的机器在不在线 | Low | 用户认证体系 | 现有 admin hosts API 已有数据，需要按 user_id 过滤的新端点 |
-| 用户自助面板：查看绑定的出口 IP | 出口 IP 是产品核心承诺，用户必须能看到 | Low | 用户认证体系 | 只读展示，复用现有 BindingWithIP 模型 |
-| 用户登录认证（区别于管理员） | 用户需要独立入口，不能用管理员凭证 | Med | DB: users 表已有 short_id + password_hash | 复用现有 bcrypt 密码体系，新增 user JWT 签发 |
-| 角色路由分离：admin vs user 视图 | 同一 SPA 必须按角色展示不同内容 | Med | 用户登录认证 | TanStack Router beforeLoad + layout route 已有模式可套用 |
-| Bootstrap 重设计：`curl domain/{short_id}` 入口 | v1.2 需求明确要求的新入口路径 | Med | 现有 entry handler 已实现 `/entry/{shortId}` | 已有骨架，需增强脚本内容 |
-| 实时状态推送（Bootstrap 流程） | 用户等待启动时必须看到进度，否则以为卡死 | Med | 后端 SSE 端点 | 当前 bootstrap_status 是轮询，需改为 SSE 推送 |
-| Claude 账号信息展示 | v1.2 需求明确要求用户可查看 | Low | Claude 账号模型（新表） | 只读展示，管理员绑定后用户侧可见 |
+|--------|--------------|------------|--------------|-------|
+| 单一 `claude` 入口，用户可放在 `PATH` 前替代官方 CLI | 产品承诺即「透明替换」 | Med | Docker（或兼容运行时）、镜像拉取/缓存策略 | 与 PROJECT.md「单一 Go 二进制」一致 |
+| 首次/冷启动：拉镜像、建容器、健康检查可感知 | 长耗时不可接受为「卡死」 | Med | 镜像仓库、本地磁盘 | 需明确日志与退出码 |
+| 容器内安装/运行 Claude Code（如 Bun standalone） | 与「不依赖 npm/spoof.js」一致 | Med | 官方/既定安装路径、网络仅走隧道 | 安装脚本需在全隧道下可复现 |
+| 全流量出站经代理（tun）+ 默认拒绝旁路 | 与云侧产品同一安全承诺 | High | sing-box、tun、nftables | 与现有 RoutingProvider 哲学一致，实现场所在本地 |
+| 本地回环与私网访问宿主机（`localhost`、RFC1918 等） | IDE、浏览器、本地 API 常见 | Med | **host-gateway / 等价路由** | PROJECT.md 已列 host-gateway |
+| `verify`：出口 IP、DNS、指纹/容器标记自检 | 运维与用户信任 | Med | 与隧道同构的探测命令 | 对齐云侧「代理测试」心智 |
+| 反容器粗检测（如 `/.dockerenv`、`/proc/1/cgroup` 可读性） | 降低「一眼容器」信号 | Low-Med | 镜像 entrypoint + bind mount | 无法保证对抗专业沙箱指纹 |
 
-## Differentiators
+---
 
-让产品脱颖而出的功能。不是必须，但有价值。
+## Differentiators（差异化，非人人会做）
 
 | Feature | Value Proposition | Complexity | Dependencies | Notes |
-|---------|-------------------|------------|--------------|-------|
-| Bootstrap ASCII 艺术欢迎屏 | 品牌辨识度 + 专业感，curl 下来第一眼印象 | Low | 纯 shell 脚本 | 硬编码 ASCII art 比依赖 figlet 更可靠（不需要用户装 figlet） |
-| KasmVNC 远程桌面内嵌 | 用户不用离开面板就能操作桌面环境 | Med-High | 现有 VNC proxy 已实现 WebSocket 转发 | admin_vnc_proxy.go 已有反向代理骨架，需适配用户认证路径 |
-| 用户自助重建主机 | 减少管理员工单，用户自治能力 | Med | 用户认证 + 现有 rebuild task 流程 | 后端 rebuild action 已存在，需加用户权限校验 |
-| 一用户多主机（多 Claude 账号） | 支撑"每个 Claude 账号对应一台主机"的商业模型 | High | DB schema 变更 + 新表 | 当前 1:1 模型需要改为 1:N，影响面较大 |
-| Claude 账号 CRUD（管理侧） | 管理员集中管理 Claude 账号资产 | Med | 新表 + 新 API + 新前端页面 | 标准 CRUD，复用现有管理后台模式 |
-| Bootstrap 自动 SSH 接入 | 启动完成后无缝进入 SSH，不需要用户手动连 | Low-Med | SSE 完成信号 + exec ssh | 当前 entry.go 已有 exec ssh 逻辑，需与 SSE 流整合 |
+|--------|-------------------|------------|--------------|-------|
+| 与云主机**同一套**网络哲学（tun 全量 + nft 默认拒绝） | 品牌与技术叙事一致 | High | 本地内核能力、Capabilities | 本地权限模型与云端不同，需单独验证 |
+| 系统级指纹：`machine-id`、`cpuinfo`/`meminfo` 等 | 对齐安全研究中的常见采集面，优于仅 Node patch | Med | 只读 bind、稳定种子策略 | 见下文「指纹面」 |
+| `garble` 等混淆发布单一二进制 | 降低 casual reverse；非安全银弹 | Low-Med | Go 构建链 | PROJECT.md 已列 |
+| 可选：最小化 Claude Code 非必要外连（见官方 env） | 与「出口可控」叙事一致 | Low | 文档化默认 env | 见下文官方遥测 |
 
-## Anti-Features
+---
 
-明确不要做的功能。
+## Anti-Features（明确不做或慎做）
 
 | Anti-Feature | Why Avoid | What to Do Instead |
 |--------------|-----------|-------------------|
-| 用户自选代理节点 | PROJECT.md 明确排除，安全和支持风险 | 管理员统一配置，用户只能查看 |
-| 用户自定义镜像 | 削弱安全性和就绪性保证 | 统一受管镜像，由管理员控制模板 |
-| Web Terminal（独立于 KasmVNC） | v1 约束只做 SSH，Web Terminal 是额外复杂度 | KasmVNC 已包含终端能力，不需要单独的 xterm.js |
-| 用户申请/交接账号 | PROJECT.md 明确标注"流程未设计清楚，v1.2 暂不做" | 管理员手动操作 |
-| 计费/套餐/余额 | 明确 out of scope | 纯手动管理到期时间 |
-| 用户侧事件日志 | 过度暴露内部运维细节，用户不关心 | 只展示主机状态和关键时间点 |
-| 在 bootstrap 脚本中依赖 figlet/toilet | 不能假设用户终端装了这些工具 | 硬编码 ASCII art 字符串直接 echo |
-| 独立的用户前端应用 | 增加构建/部署/维护成本 | 同一 SPA 用 TanStack Router layout route 分角色 |
+| 完整「反沙箱」/ 反取证（对抗商业风控、恶意用途） | 法律、伦理与维护成本 | 仅服务**合规的出口 IP + 开发隔离**叙事 |
+| 100% 无法被检测的容器 | 技术上不承诺；cgroup/mountinfo 等面持续演化 | 明确边界：降低脚本级检测，不宣称隐身 |
+| 与 Distrobox/Toolbx 同款「深度主机融合」 | 目标相反：需网络隔离与指纹控制，非 HOME/X11 全家桶 | 最小挂载、显式 host 访问 |
+| 依赖 Docker `host` 网络作主路径 | 破坏隔离与路由可控性 | `network=none` + tun + 显式 host 路由（与现有架构一致） |
+| 把未证实的「源码泄露」细节写进产品规格 | 来源混杂 | 以 Anthropic 官方 data-usage 为准；第三方仓库标为待验证 |
 
 ---
 
-## 详细设计参考
+## 专题研究（对应需求 1–7）
 
-### 1. 角色路由：Admin vs User 同一 SPA
+### 1. 透明包裹 CLI 的既有工具（Docker / Toolbx / Distrobox）
 
-**现状分析：**
-- 当前 SPA 使用 TanStack Router `createFileRoute("/_dashboard")` + `beforeLoad` 做管理员认证守卫
-- 认证状态存 `localStorage("admin_token")`，只有 `isAuthenticated()` 布尔判断，无角色概念
-- 所有 dashboard 子路由（users/hosts/egress-ips/events/tasks）都在 `_dashboard` layout 下
+**典型模式**
 
-**推荐方案：** TanStack Router 双 layout route
+- **Toolbx（原 Toolbox）**：Podman/OCI 上叠 `toolbox create | enter | run`，面向**开发/排障**，默认把用户 HOME、X11/Wayland、D-Bus、`/run/host` 等与主机**深度绑定**；目标是「不在宿主机装包」，不是强隔离。
+- **Distrobox**：POSIX shell 包装 Docker/Podman/lilipod，`distrobox enter` 执行容器内 shell，支持 `distrobox-export` 把应用导出到宿主机菜单；README 明确 **隔离不是目标**，与主机**紧耦合**。
+- **与 claude-shell 的对比**：上述工具普遍追求**透明融入主机**；claude-shell 追求 **出网可控 + 指纹与容器信号收敛**，产品目标相反，可借鉴的是：**OCI 生命周期**（create/start/exec）、**非交互脚本化**、**dry-run 打印实际 docker 参数**（Distrobox 的 `-d` 模式）便于排障。
 
-```
-routes/
-  __root.tsx              # 不变
-  login.tsx               # 管理员登录（已有）
-  portal-login.tsx        # 用户登录（新增）
-  _dashboard.tsx          # 管理员 layout（已有，beforeLoad 检查 admin role）
-  _dashboard/
-    index.tsx             # 管理员首页（已有）
-    users/...             # 管理员用户管理（已有）
-    hosts/...             # 管理员主机管理（已有）
-    ...
-  _portal.tsx             # 用户 layout（新增，beforeLoad 检查 user role）
-  _portal/
-    index.tsx             # 用户首页：我的主机列表
-    machines.$machineId.tsx  # 单台主机详情 + VNC 入口
-    account.tsx           # Claude 账号信息
-```
-
-**为什么用双 layout 而不是条件渲染：**
-- 管理员和用户的侧边栏、导航、权限边界完全不同
-- TanStack Router 的 `beforeLoad` 天然支持这种模式，官方文档有 RBAC 指南
-- 代码边界清晰，不会出现"管理员组件意外渲染给用户"的安全问题
-
-**认证体系变更：**
-- `lib/auth.ts` 需要从纯 token 存取扩展为 `{ token, role: 'admin' | 'user' }` 结构
-- 后端需要新增 `POST /v1/portal/login` 端点，签发带 `role: "user"` 的 JWT
-- 管理员和用户 JWT 使用同一个 secret 但 claims 不同，中间件按 role 分发
-
-**Confidence:** HIGH -- TanStack Router 官方文档明确描述了 RBAC layout route 模式。
-
-### 2. KasmVNC 远程桌面内嵌
-
-**现状分析：**
-- `admin_vnc_proxy.go` 已实现完整的反向代理：HTTP 请求走 `httputil.ReverseProxy`，WebSocket 走 hijack 双向拷贝
-- 路径重写逻辑已处理 `/v1/admin/hosts/{hostID}/vnc/{path...}` 前缀剥离
-- 容器 IP 通过 `docker inspect` 获取，KasmVNC 监听 6080 端口
-- 当前只在 admin 路由下注册，受 `AdminAuthMiddleware` 保护
-
-**推荐方案：** 复用现有代理，新增用户侧路由
-
-1. **用户侧 VNC 端点：** `GET /v1/portal/machines/{machineId}/vnc/{path...}`
-   - 受用户 JWT 中间件保护
-   - 额外校验：该 machine 必须属于当前用户（防越权）
-   - 底层复用同一个 VNC proxy handler（从 AdminVNCProxyHandler 提取通用逻辑）
-
-2. **前端嵌入：** iframe 方案
-   - KasmVNC 的 Web UI 本身就是一个完整的 HTML 应用，最适合 iframe 嵌入
-   - iframe src 指向 `/v1/portal/machines/{machineId}/vnc/`
-   - 设置 `allow="clipboard-read; clipboard-write"` 以支持剪贴板
-   - iframe 内的 WebSocket 连接会自动走同一反向代理路径
-
-3. **认证传递：** Cookie 方案优于 URL token
-   - iframe 内的请求会自动携带同域 cookie
-   - 用户登录后将 JWT 同时写入 cookie（`HttpOnly; SameSite=Strict; Path=/v1/portal`）
-   - 避免 token 出现在 URL 中（安全风险 + 现代浏览器限制）
-
-**Complexity:** Med-High -- 代理骨架已有，但 iframe 内的 WebSocket 升级、cookie 认证传递、剪贴板权限需要逐一调通。
-
-**Confidence:** MEDIUM -- VNC 反向代理已验证可工作，iframe 嵌入是 KasmVNC 官方推荐模式，但具体的认证传递细节需要实际调试。
-
-### 3. Bootstrap ASCII 艺术欢迎屏
-
-**现状分析：**
-- 当前有两套 bootstrap 入口：
-  - `/v1/bootstrap/script`：读取 `deploy/bootstrap/cloud-bootstrap.sh` 静态文件
-  - `/entry/{shortId}`：动态生成 shell 脚本（entry.go），包含认证 + SSH 接入
-- v1.2 要求统一为 `curl domain/{short_id}` 入口
-
-**推荐方案：** 服务端动态生成增强脚本
-
-脚本输出流程：
-```
-1. 显示 ASCII 艺术 Logo（硬编码在脚本中，不依赖 figlet）
-2. 显示 "Cloud CLI Proxy" 品牌文字
-3. 显示用户 short_id 和连接信息
-4. read -sp 交互输入密码
-5. 调用 auth API
-6. SSE 流式读取启动状态，带动画进度条
-7. 启动完成后 exec ssh 自动接入
-```
-
-**ASCII 艺术实现：**
-- 硬编码 ASCII art 字符串，不依赖任何外部工具
-- 使用 ANSI 转义码着色（`\033[36m` 等），大部分现代终端都支持
-- 保持总宽度 <= 60 字符，避免窄终端换行破坏效果
-- 脚本开头用 `tput colors 2>/dev/null` 检测颜色支持，无色终端回退到纯文本
-
-**进度动画：**
-- 用 `while` 循环 + `curl -sN` 读取 SSE 流
-- 每收到一个 stage 事件，用 `\r` 回车覆盖当前行
-- 阶段文字：`正在启动主机...` -> `正在配置网络...` -> `正在验证连通性...` -> `SSH 就绪!`
-
-**Confidence:** HIGH -- 纯 shell 脚本，无外部依赖，完全可控。
-
-### 4. 多账号/多主机用户模型
-
-**现状分析：**
-- 当前 `users` 表与 `hosts` 表是隐式 1:1 关系（通过 `hosts.user_id` FK）
-- `GetPrimaryHostByUserID` 函数名暗示已经预留了多主机的语义空间
-- 没有 Claude 账号的概念，Claude Code 只是预装在镜像里
-
-**推荐 Schema：**
-
-```sql
--- 新增：Claude 账号表
-CREATE TABLE claude_accounts (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    label       TEXT NOT NULL,                 -- 管理员可读标签
-    email       TEXT NOT NULL,                 -- Claude 账号邮箱
-    status      TEXT NOT NULL DEFAULT 'active', -- active / suspended / expired
-    notes       TEXT,                          -- 管理员备注
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- hosts 表增加 Claude 账号关联
--- 关系链：user 1:N hosts, host 1:1 claude_account
-ALTER TABLE hosts ADD COLUMN claude_account_id UUID REFERENCES claude_accounts(id);
-```
-
-**关系模型：**
-```
-User (1) --> (N) Host (1) --> (1) ClaudeAccount
-```
-
-**为什么不用多对多绑定表：**
-- 需求明确说"每个账号对应一台独立主机"
-- 一个 Claude 账号同时只会在一台机器上使用（否则会冲突）
-- 直接在 hosts 上加 `claude_account_id` 最简单，且约束清晰
-
-**影响面：**
-- `GetPrimaryHostByUserID` -> `ListHostsByUserID`（返回列表）
-- 前端用户面板：从"我的主机"单卡片 -> 主机列表
-- Bootstrap 入口：需要支持选择哪台主机（或默认启动第一台）
-- Admin hosts CRUD：新增 claude_account_id 字段
-
-**Confidence:** MEDIUM -- 关系模型设计基于需求分析，但"一个 Claude 账号是否真的只对应一台主机"需要与业务方确认。
-
-### 5. 实时任务状态推送（SSE）
-
-**现状分析：**
-- 当前 bootstrap 状态查询是 REST 轮询：`GET /v1/bootstrap/tasks/{taskID}`
-- 返回 `task_status` + `stage_code` + `stage_text`
-- 已有 `resolveStage` 函数通过事件列表推算当前阶段
-- 前端/CLI 需要自己定时 poll
-
-**推荐方案：** 新增 SSE 端点，与现有 REST 端点共存
-
-```
-GET /v1/bootstrap/tasks/{taskID}/stream
-Accept: text/event-stream
-
-event: stage
-data: {"stage_code":"host_starting","stage_text":"主机启动中","task_status":"running"}
-
-event: stage
-data: {"stage_code":"runtime_validating","stage_text":"运行时校验中","task_status":"running"}
-
-event: stage
-data: {"stage_code":"ssh_ready","stage_text":"SSH 就绪","task_status":"succeeded"}
-
-event: done
-data: {"ssh_host":"...","ssh_port":...,"ssh_user":"..."}
-
-event: error
-data: {"error_code":"...","error_message":"..."}
-```
-
-**Go 服务端实现要点：**
-- 设置 `Content-Type: text/event-stream`，`Cache-Control: no-cache`，`Connection: keep-alive`
-- 用 `http.Flusher` 接口每次写完立即 flush
-- 每 15 秒发 `:keepalive\n\n` 心跳防止代理/CDN 断连
-- 内部用 1 秒间隔轮询 DB 事件表（而非 channel），保持实现简单
-- 客户端断开时 `r.Context().Done()` 自动清理
-
-**Bash 客户端消费：**
-```bash
-curl -sN "$BASE_URL/v1/bootstrap/tasks/$TASK_ID/stream" | while IFS= read -r line; do
-  case "$line" in
-    data:*) handle_data "${line#data: }" ;;
-  esac
-done
-```
-
-**为什么选 SSE 不选 WebSocket：**
-- 启动状态是单向推送（server -> client），不需要双向
-- curl 原生支持 SSE（`curl -N`），WebSocket 需要额外工具
-- Go 标准库直接支持，无需引入 gorilla/websocket
-- bootstrap 脚本是 bash，SSE 比 WebSocket 容易处理一个数量级
-
-**Confidence:** HIGH -- Go 标准库 SSE 实现成熟，curl -N 消费 SSE 是已验证的模式。
+**可借鉴表功能**：一键进入/执行、命名容器复用、日志与退出码。
 
 ---
 
-## Feature Dependencies
+### 2. 设备指纹：容器里常见要「对齐」的面
+
+以下为安全与运维工具常读的**系统面**（语言运行时 patch 往往盖不住）：
+
+| 表面 | 说明 |
+|------|------|
+| `/etc/machine-id`、`/var/lib/dbus/machine-id` | 稳定设备标识 |
+| `/proc/cpuinfo`、`/proc/meminfo` | CPU 型号、核数、内存叙事 |
+| `uname -a` / `uname(2)` | 内核 release、架构 |
+| `hostname` / `/etc/hostname` | 与证书、遥测主机名常见关联 |
+| 网络：`ip`/`ss`、路由表、默认网关、DNS `resolv.conf` | 与「像不像真机」强相关 |
+| **MAC / 网卡列表** | Node 的 `os.networkInterfaces` 已在本仓库 spoof 脚本覆盖；容器内需对齐虚拟网卡叙事 |
+| **容器特有**：`/.dockerenv`、`/proc/1/cgroup`、`/proc/self/mountinfo` 中的 overlay 路径等 | 见第 3 节 |
+
+**建议**：在 FEATURES 层把「指纹」定义为 **对用户可见工具一致」+ `verify` 可断言，而非对抗所有采集器。
+
+---
+
+### 3. 容器「反检测」：安全研究常见检查（防御方视角）
+
+常见**启发式**（多源一致，含社区与 systemd 讨论）：
+
+- 根文件系统 inode、`/.dockerenv` 存在性（Docker 非正式惯例；维护者曾提示勿依赖其长期存在）。
+- `/proc/1/cgroup`：v1 时代含 `docker` 路径较多；**cgroup v2** 下常简化为 `0::/`，需结合其他信号。
+- **`/proc/self/mountinfo`**：overlay、`docker/containers/<id>` 等路径可暴露运行环境。
+- **`container=` 环境变量**（systemd [容器接口](https://systemd.io/CONTAINER_INTERFACE/) 建议）：若在进程环境中存在可辅助判定。
+- **PID 1 进程名**、init 是否为 systemd 等。
+
+**对产品含义**：PROJECT.md 中的「删 `.dockerenv`、伪造 cgroup」属于**降低脚本级信号**；在 cgroup v2 + 新内核上需持续实测。**不应**在路线图写「无法被检测」。
+
+---
+
+### 4. 透明代理模式：proxychains / tsocks / tun2socks / sing-box tun
+
+| 机制 | 工作层次 | 典型优点 | 典型限制 |
+|------|----------|----------|----------|
+| **proxychains / tsocks** | `LD_PRELOAD` 钩 `connect()` 等 | 无需 root、按进程启用 | 多针对 **TCP**；**静态链接**、Go 默认 net、部分 DNS 路径易**泄漏**；与「全流量强制出网」不完全同构 |
+| **tun2socks** | TUN 三层 + 用户态栈转 SOCKS 等 | 应用无感、覆盖面大 | 需 TUN/CAP_NET_ADMIN 等；需与路由、DNS 策略一起设计 |
+| **sing-box / Clash 等 tun 模式** | 虚拟网卡 + 规则路由 | 与项目现有 **sing-box tun + nftables 默认拒绝** 一致 | 本地二进制需处理与 Docker 网络命名空间关系 |
+
+**结论**：claude-shell 的「透明」对用户是 **一条 claude 命令**；对网络栈应是 **tun 级全局策略**，而非仅 `LD_PRELOAD`。与 proxychains 同类工具**互补而非替代**（后者更适合无 root 的单次命令实验）。
+
+---
+
+### 5. PATH / alias / shim 透明替换系统命令
+
+**常见模式**
+
+- **Shim 二进制**：同名可执行文件放在 **`PATH` 更前**；内核 `execve` 解析路径顺序。稳定、可版本共存。
+- **Shell alias**：仅当前交互 shell，子进程/脚本常不继承，**不适合**作为唯一机制。
+- **Wrapper 脚本**：易注入 env（如 `NODE_OPTIONS`），但 shebang 与可移植性需测。
+- **distro 级**：`update-alternatives` 等，偏系统包管理，不适合单文件 CLI 分发。
+
+**表功能**：文档说明「把目录放在 PATH 前」；可选安装器写入 `~/.local/bin` 等。
+
+**差异化**：若 Go 二进制同时充当 **docker 编排器 + shim**，单一分发物更易叙事实；需注意与系统包管理器安装的 `claude` **冲突提示**。
+
+---
+
+### 6. Claude Code：遥测与数据流（官方 vs 未验证来源）
+
+**HIGH confidence — [Anthropic Claude Code Data usage](https://docs.anthropic.com/en/docs/claude-code/data-usage)**
+
+- **Statsig**：运营指标（延迟、可靠性、使用模式等）；文档写明 **不包含代码或文件路径**。TLS + 静态表述中的存储加密。退出：`DISABLE_TELEMETRY=1`。
+- **Sentry**：错误日志。退出：`DISABLE_ERROR_REPORTING=1`。
+- **`/feedback`**：会发送含代码的对话历史；退出：`DISABLE_FEEDBACK_COMMAND=1`。
+- **会话满意度问卷**：仅数字评分；`CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1` 或 broader：`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`。
+- **Bedrock/Vertex 等**：文档表格写明默认关闭部分遥测；以官方表格为准。
+
+**LOW confidence — 第三方「源码解析」仓库、媒体报道**
+
+- 可能存在与版本强绑定的实现细节；**不作为需求或合规依据**。若需深度列清单，应针对**具体版本**做静态或运行观测，并单独开 phase。
+
+**对产品含义**：FEATURES 层应区分：**(A)** API 交互内容（必然经 Anthropic 政策约束）与 **(B)** Statsig/Sentry 等可关通道；容器内可通过 **环境变量 + 网络策略** 组合呈现「默认最省非必要外连」，并在文档中引用官方变量名。
+
+---
+
+### 7. Docker Desktop / Engine：访问宿主机（`host.docker.internal`、`host-gateway`）
+
+**Docker Desktop（Mac/Win）**：[官方 Networking how-tos](https://docs.docker.com/desktop/networking/) 说明使用 **`host.docker.internal`** 解析到主机侧地址；另有 `gateway.docker.internal` 指向 Docker VM 网关。
+
+**Linux Engine**：`host.docker.internal` **并非**在所有环境默认存在；常见做法为  
+`--add-host=host.docker.internal:host-gateway`（Docker **20.10+** 引入特殊值 `host-gateway`，映射到宿主机网关 IP，常为 `docker0` 网段）。Compose 中为 `extra_hosts: ["host.docker.internal:host-gateway"]`。注意：**build 阶段**对 `host-gateway` 的支持与运行时不同，构建期若需访问主机常需静态 IP 或拆分阶段（见 [compose 讨论](https://github.com/docker/compose/issues/9768)）。
+
+**与 PROJECT 对齐**：「本地流量经 host-gateway 回连宿主机」应写清：**目标 IP 段 + DNS 不走泄漏路径 + 与 tun 默认路由的优先级**，并在 `verify` 中可检查。
+
+---
+
+## Feature Dependencies（简图）
 
 ```
-用户登录认证 --> 角色路由分离 --> 用户自助面板
-                                    |-->  查看主机状态
-                                    |-->  查看出口 IP
-                                    |-->  查看 Claude 账号
-                                    |-->  重建主机
-                                    \-->  KasmVNC 内嵌
-
-Claude 账号模型 --> Claude 账号 CRUD（管理侧）
-                --> hosts 表 schema 变更
-                --> 用户面板 Claude 账号展示
-
-SSE 端点 --> Bootstrap 重设计（实时进度）
-          --> ASCII 艺术欢迎屏（整合在同一脚本中）
-
-多主机模型 --> Bootstrap 入口需要处理"选哪台主机"
+单一 claude 二进制 (PATH shim)
+    → Docker 生命周期 (pull/create/start/exec)
+        → 镜像内 Claude Code 安装与运行
+            → sing-box tun + nftables（全出站）
+                → 例外路由：RFC1918 / localhost → host-gateway
+    → entrypoint：machine-id、proc 绑定、反粗检测
+    → verify 子命令
 ```
 
-## MVP Recommendation
+---
 
-**Phase 1（基础层 -- 其他一切的前提）：**
-1. 用户登录认证体系（新端点 + user JWT）
-2. 角色路由分离（双 layout route）
-3. 用户面板骨架（查看主机状态 + 出口 IP，只读）
+## MVP Recommendation（仅 claude-shell）
 
-**Phase 2（数据模型扩展）：**
-4. Claude 账号表 + CRUD（管理侧）
-5. hosts 表增加 claude_account_id
-6. 多主机支持（ListHostsByUserID）
-7. 用户面板展示 Claude 账号信息
+**优先**
 
-**Phase 3（Bootstrap 重设计）：**
-8. SSE 状态推送端点
-9. 新 bootstrap 脚本（ASCII art + 密码输入 + SSE 进度 + auto SSH）
-10. `curl domain/{short_id}` 统一入口
+1. 可复现的容器内 Claude Code 启动路径（与隧道共存）。  
+2. sing-box tun + nftables 默认拒绝 + 明确 DNS 策略。  
+3. host-gateway / 私网路由验证（`verify`）。  
+4. 系统级指纹最小集（与 PROJECT 一致）+ 文档化局限。
 
-**Phase 4（增强体验）：**
-11. KasmVNC iframe 内嵌（用户面板）
-12. 用户自助重建主机
+**可延后**
 
-**Phase ordering rationale:**
-- 认证和路由是一切用户侧功能的前提，必须先做
-- Claude 账号模型独立于 UI，可以在面板骨架就绪后并行推进
-- Bootstrap 重设计依赖 SSE，但不依赖用户面板，可以与 Phase 2 并行
-- KasmVNC 内嵌复杂度最高且不是 table stakes，放最后
+- garble 与 UI 级「艺术化」输出。  
+- 对抗级反检测（超出粗粒度）。
 
-**Defer:**
-- 用户申请/交接账号：PROJECT.md 明确排除
-- 用户侧事件日志：anti-feature，过度暴露内部细节
+---
 
 ## Sources
 
-- [TanStack Router RBAC Guide](https://tanstack.com/router/v1/docs/framework/react/how-to/setup-rbac) -- 角色路由官方文档
-- [TanStack Router Authenticated Routes](https://tanstack.com/router/v1/docs/framework/react/guide/authenticated-routes) -- 认证路由指南
-- [KasmVNC Reverse Proxy Docs](https://kasmweb.com/kasmvnc/docs/master/how_to/reverse_proxy.html) -- VNC 反向代理配置
-- [KasmVNC GitHub](https://github.com/kasmtech/KasmVNC) -- 功能特性参考
-- [Kasm Iframe Embedding](https://docs.kasm.com/docs/how-to) -- iframe 嵌入指南
-- [Go SSE Implementation](https://oneuptime.com/blog/post/2026-01-25-server-sent-events-streaming-go/view) -- Go SSE 实战参考
-- [MDN Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events) -- SSE 协议规范
-- [curl SSE Consumption](https://jvns.ca/blog/2021/01/12/day-36--server-sent-events-are-cool--and-a-fun-bug/) -- curl 消费 SSE 实践
-- 项目现有代码：`admin_vnc_proxy.go`、`entry.go`、`bootstrap_status.go`、`_dashboard.tsx`、`auth.ts`
+| 主题 | 来源 | Confidence |
+|------|------|------------|
+| Distrobox / Toolbx 目标与集成方式 | [Distrobox GitHub 文档](https://github.com/89luca89/distrobox)、[containers/toolbox README](https://github.com/containers/toolbox/) | HIGH |
+| 容器检测启发式 | [Skyper 博客](https://blog.skyplabs.net/posts/container-detection/)、[Docker run metrics / cgroup](https://docs.docker.com/config/containers/runmetrics/)、社区 cgroup v2 讨论 | MEDIUM（启发式非标准） |
+| proxychains / tun2socks 差异 | [ProxyChains-NG](https://github.com/rofl0r/proxychains)、[xjasonlyu/tun2socks](https://github.com/xjasonlyu/tun2socks)、社区对比文 | MEDIUM |
+| Claude Code 遥测与退出 | [Anthropic Data usage](https://docs.anthropic.com/en/docs/claude-code/data-usage) | HIGH |
+| host.docker.internal / host-gateway | [Docker Desktop networking](https://docs.docker.com/desktop/networking/)、[Moby host-gateway](https://github.com/moby/moby/pull/40007) 引入背景、Compose issue | HIGH-MEDIUM |
+| systemd 容器接口 | [systemd.io CONTAINER_INTERFACE](https://systemd.io/CONTAINER_INTERFACE/) | HIGH |
 
 ---
-*Feature research for: v1.2 用户自助面板与 Bootstrap 重设计*
-*Researched: 2026-03-28*
+
+## Gaps / 后续 Phase 专项
+
+- 指定 **Claude Code + Bun** 版本矩阵下的实际外连列表（需运行抓包或查阅发行说明，随版本变）。  
+- **Docker Desktop for Linux** 与纯 **Linux Engine** 行为差异的 CI 矩阵。  
+- Apple Silicon / rootless Docker 下 **tun/nft** 能力边界。

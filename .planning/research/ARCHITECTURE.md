@@ -1,596 +1,226 @@
-# Architecture Research: v1.2 用户自助面板与 Bootstrap 重设计
+# 架构研究：claude-shell 本地透明代理
 
-**Domain:** 用户认证、角色路由、KasmVNC 代理、Claude 账号模型、Bootstrap 重设计、实时状态推送
-**Researched:** 2026-03-28
-**Confidence:** HIGH
-
-## 现有架构基线
-
-```
-                    Nginx (:80)
-                   /          \
-           /v1/ ->             / ->
-     Control Plane (:8080)    React SPA (静态)
-      |          |
-      |    AdminAuthMiddleware (JWT, sub="admin")
-      |
-  Unix Socket -> Host Agent -> Docker / Network
-      |
-   PostgreSQL
-      |
-  SSH Proxy (:2222) -> Container SSH (:22 via mgmt net)
-```
-
-**当前 JWT 模型：** 管理员专用。`AdminLoginHandler` 校验硬编码用户名/密码，签发 `sub=admin` 的 HS256 JWT，24 小时有效。无 role claim。
-**当前路由守卫：** `_dashboard.tsx` 的 `beforeLoad` 仅检查 `localStorage.admin_token` 是否存在。
-**当前 VNC 代理：** `AdminVNCProxyHandler` 已实现 HTTP 反向代理 + WebSocket hijack，路径重写 `/v1/admin/hosts/{hostID}/vnc/{path...}` -> 容器 `:6080`。
-**当前 Bootstrap：** `GET /entry/{shortId}` 返回 shell 脚本 -> `POST /v1/entry/{shortId}/auth` 认证 -> 返回 SSH 连接信息。无实时状态推送。
-**当前用户模型：** `users` 表有 `short_id`、`entry_password`（明文）。一个用户对应一个 host（通过 `GetPrimaryHostByUserID`）。
+**范围：** v1.3「单一 Go 二进制透明包装 Claude Code」与既有 **Go 控制面 + Unix socket host-agent + Docker + SingBoxProvider / ContainerProxyProvider + nftables** 的关系与差异。  
+**调研日期：** 2026-04-09  
+**总体置信度：** 中高（平台内代码与 sing-box 官方路由文档为 HIGH；Docker Desktop 行为以官方/社区共识为 MEDIUM；/proc 伪装以工程经验为主、需实机验证处标 LOW）
 
 ---
 
-## 1. 用户认证：共享 JWT + role claim
+## 1. 与既有架构的对照
 
-### 方案
+| 维度 | 既有云主机路径（生产） | claude-shell（本地 CLI） |
+|------|------------------------|---------------------------|
+| 编排者 | 控制面 → host-agent（特权在 agent） | 用户本机上的 **单一 `claude` 二进制** 直接调 `docker` |
+| 容器创建 | agent 已有一套生命周期与 DB 状态 | `docker run` 由 CLI 发起，**无 PostgreSQL / 无 JWT** |
+| 网络强约束 | 受管容器 **`--network=none`**，由 **SingBoxProvider** 注入 **mgmt veth**、`nsenter` 启动 sing-box，配合 **nftables**（见 `internal/network/singbox_provider_linux.go`） | 目标仍是 **tun 全量接管 + 默认拒绝**，但 **不能再假设 host-agent 能在宿主机 netns 里打 veth**（尤其 **macOS + Docker Desktop**） |
+| 侧车 | **ContainerProxyProvider** 为 worker + **独立 gateway 容器**（bridge 子网 + sing-box tproxy），与 SingBoxProvider（进程进用户 netns）是 **两条不同产品线** | claude-shell 更可能 **单容器内 sing-box tun**（与 SingBoxProvider 的 **tun + mgmt0** 模式同源），一般不引入第二个 gateway 容器，除非要复用 `container_proxy_provider.go` 的 sidecar 模型 |
+| 配置来源 | DB `proxy_config` JSONB + 管理后台 | **本地**：环境变量、挂载的 `config.json`、或嵌入默认模板 |
 
-**使用同一套 JWT secret，通过 role claim 区分管理员和普通用户。** 不要拆成两套独立的 JWT 签发体系。
-
-理由：
-- 当前只有一个 JWT secret（`AdminJWTSecret`），复用它可以避免配置膨胀
-- 管理员和用户共享同一个 React SPA，同一个 Nginx 入口，拆 secret 没有实际安全收益
-- role claim 是 JWT RBAC 的标准做法
-
-### 具体变更
-
-**后端 — 新文件：`internal/controlplane/http/user_auth.go`**
-
-```go
-// 自定义 claims，扩展 RegisteredClaims
-type AppClaims struct {
-    jwt.RegisteredClaims
-    Role   string `json:"role"`   // "admin" | "user"
-    UserID string `json:"uid"`    // 用户 UUID（仅 role=user 时有值）
-}
-```
-
-**新增 `POST /v1/auth/login` 端点：**
-- 接受 `{ username, password }` 请求
-- 先尝试管理员凭证匹配（保持 hmac.Equal 常量时间比较）
-- 若管理员匹配：签发 `role=admin, sub=admin`
-- 若管理员不匹配：查 `users` 表，bcrypt 验证 `password_hash`，签发 `role=user, uid=<user_id>, sub=<username>`
-- 统一返回 `{ token, expires_in, role }`
-
-**修改现有文件：`admin_auth.go` -> 重命名为 `auth_middleware.go`**
-
-```go
-// AuthMiddleware 校验 JWT 并注入 claims 到 context
-func AuthMiddleware(secret []byte) func(http.Handler) http.Handler
-
-// RequireRole 从 context 读取 claims，检查角色
-func RequireRole(roles ...string) func(http.Handler) http.Handler
-
-// GetClaims 从 context 获取 AppClaims
-func GetClaims(ctx context.Context) (*AppClaims, bool)
-```
-
-**路由层变更（`router.go`）：**
-
-| 路由前缀 | 中间件 | 说明 |
-|----------|--------|------|
-| `/v1/admin/*` | `AuthMiddleware` + `RequireRole("admin")` | 保持现有行为，仅管理员 |
-| `/v1/me/*` | `AuthMiddleware` + `RequireRole("user")` | 新增，用户自助 API |
-| `/v1/auth/login` | 无 | 新增，统一登录 |
-| `/v1/bootstrap/*` | 无 | 保持现有 |
-| `/entry/{shortId}` | 无 | 保持现有 |
-
-**迁移路径：** `POST /v1/admin/login` 保留为 `/v1/auth/login` 的别名，前端切换后可废弃。
-
-**数据库变更：** `users` 表已有 `password_hash` 列。当前管理后台创建用户时会写入 bcrypt hash。无需 schema 变更。
-
-### 置信度：HIGH
-
-JWT role claim 是 golang-jwt/jwt/v5 的标准用法，无第三方依赖。
+**结论（观点）：** claude-shell 应 **复用 sing-box 配置与路由思想**（`buildSingBoxConfig` 中的 tun、`bind_interface`、`route.rules`），但 **网络外围编排** 与生产 **SingBoxProvider（Linux-only netlink）** 分叉：本地工具优先 **可移植启动路径**，Linux 上可选「加强版」与现有 agent 能力对齐。
 
 ---
 
-## 2. React 角色路由守卫
+## 2. Go 二进制结构：`docker run` + TTY + 信号
 
-### 方案
+### 2.1 推荐形态
 
-**使用 TanStack Router 的 `beforeLoad` + Router Context 实现 RBAC。** 官方文档已有 [RBAC 指南](https://tanstack.com/router/v1/docs/framework/react/how-to/setup-rbac)。
+- **主路径：** `os/exec.CommandContext` 调用 **`docker run`**（而非初期就接入 Docker Engine HTTP API），参数包含 `-i`、`-t`（当 `stdin` 是 TTY 时）、`--rm`、资源限制、环境变量、卷挂载。
+- **TTY：** 使用 `github.com/moby/go-dockerclient` 或标准库时，若走 API，需 `Attach` 流式对接；**子进程方式**则与手工 `docker run -it` 一致：将 **`cmd.Stdin = os.Stdin`、`cmd.Stdout = os.Stdout`、`cmd.Stderr = os.Stderr`**，并在启动前 **`term.SetRawTerminal`**（如 `golang.org/x/term`）在 **Unix 上**恢复 Ctrl+C、窗口大小。
+- **窗口尺寸：** 监听 `SIGWINCH`，向容器内 `docker exec` 发 `resize` 或使用 API `ContainerResize`；CLI 包装常用 **一个 goroutine 轮询 `syscall.SIGWINCH`**。
 
-### 具体变更
+### 2.2 信号转发
 
-**修改 `lib/auth.ts`：**
+- 订阅 **`os.Signal`：`SIGINT`、`SIGTERM`、`SIGQUIT`**（可选 `SIGHUP` 策略）。
+- **转发目标：** `docker kill -s` 到容器 ID，或 `docker stop`（优雅停止超时后再强杀）。**不要**只杀本地 `docker` 客户端进程而不给守护进程留清理时间，否则 `--rm` 可能滞后。
+- **父进程退出：** 使用 `context.WithCancel`，在信号处理中 cancel，等待 `cmd.Wait()`；若用户 `Ctrl+C`，通常期望 **子容器同停**。
 
-```typescript
-interface AuthState {
-  token: string | null
-  role: 'admin' | 'user' | null
-  userId: string | null
-}
+### 2.3 与既有代码的关系
 
-// 解码 JWT payload（不验签，前端仅做 UI 展示用）
-function parseJwtPayload(token: string): { role: string; uid?: string; sub: string }
+- **新代码模块**（建议）：`cmd/claude-shell` 或 `internal/claudeshell`，**不**经过 `internal/controlplane`。
+- **可复用：** `internal/network` 中的 **sing-box JSON 构造**（`buildSingBoxConfig` / `buildOutbound`）宜抽成 **与 Provider 无关的纯函数包**，供 CLI 与 Linux agent **共用**，避免两份配置漂移。
 
-export function getAuth(): AuthState
-export function setAuth(token: string): void
-export function clearAuth(): void
-export function hasRole(role: string): boolean
-```
-
-**修改 `routes/__root.tsx`：** 在 Router Context 注入 auth 状态
-
-```typescript
-export const Route = createRootRouteWithContext<{ auth: AuthState }>()({
-  component: RootLayout,
-})
-```
-
-**路由结构重组：**
-
-```
-routes/
-  __root.tsx              # 注入 auth context
-  login.tsx               # 统一登录页（替换 /v1/admin/login）
-  _dashboard.tsx          # beforeLoad: requireAuth()
-  _dashboard/
-    index.tsx             # 按 role 重定向
-    _admin.tsx            # beforeLoad: requireRole('admin')
-    _admin/
-      users/              # 现有管理员页面
-      hosts/
-      egress-ips/
-      events/
-      tasks/
-      claude-accounts/    # 新增：Claude 账号管理
-    _user.tsx             # beforeLoad: requireRole('user')
-    _user/
-      index.tsx           # 用户仪表盘
-      hosts/              # 我的主机
-      vnc/{hostId}.tsx    # KasmVNC 入口
-```
-
-**关键模式 — `_admin.tsx` 的 `beforeLoad`：**
-
-```typescript
-export const Route = createFileRoute('/_dashboard/_admin')({
-  beforeLoad: ({ context }) => {
-    if (context.auth.role !== 'admin') {
-      throw redirect({ to: '/' })
-    }
-  },
-  component: AdminLayout,
-})
-```
-
-**API 层变更（`lib/api.ts`）：**
-
-新增 `userApiFetch`，基础路径改为 `/v1/me`。现有 `apiFetch` 保持 `/v1/admin` 前缀。共享 token 存储和 401 处理逻辑。
-
-### 置信度：HIGH
-
-TanStack Router 官方文档明确支持此模式。
+**置信度：** HIGH（Go 侧为常见模式；具体 resize 细节以目标 Docker 版本测准为准）。
 
 ---
 
-## 3. KasmVNC WebSocket 代理
+## 3. 容器网络：`--network=none` + veth 注入 vs 桥接 + `host-gateway`
 
-### 当前状态
+### 3.1 生产平台为何用 `network=none` + veth
 
-`AdminVNCProxyHandler` 已完整实现了 HTTP 反向代理 + WebSocket hijack 转发到容器 `:6080`。位于 `/v1/admin/hosts/{hostID}/vnc/{path...}`，受 `adminAuth` 中间件保护。
+- 决策见 `PROJECT.md`：**彻底关闭 Docker 默认 bridge 出网**，由平台注入 **mgmt veth**，代理走 **bind_interface**，避免旁路（与 `singbox_config.go` 中 `bind_interface: mgmt0` 一致）。
 
-### 方案
+### 3.2 claude-shell「本地开发工具」哪条更简单
 
-**复用现有 `AdminVNCProxyHandler`，为用户面新增路由，加用户权限校验。**
-
-### 具体变更
-
-**新增路由（`router.go`）：**
-
-```go
-// 用户面 VNC 代理
-mux.Handle("/v1/me/hosts/{hostID}/vnc/{path...}",
-    authMiddleware(requireRole("user")(userVNCProxy)))
-```
-
-**新增 `UserVNCProxyHandler`（`user_vnc_proxy.go`）：**
-
-与 `AdminVNCProxyHandler` 逻辑几乎一致，唯一区别是**权限校验**：从 context 取出 `uid`，验证该 host 确实属于该用户。可以抽取公共的 VNC 代理逻辑到 `vncProxyCore`，管理员和用户 handler 各自做权限校验后委托。
-
-**Nginx 变更（`nginx.conf`）：**
-
-```nginx
-# 现有 /v1/ 规则已能覆盖 /v1/me/hosts/{id}/vnc/ 路径
-# 但需要添加 WebSocket 升级支持
-location /v1/ {
-    proxy_pass http://control-plane:8080;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-
-    # WebSocket 支持（KasmVNC）
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $connection_upgrade;
-    proxy_read_timeout 1800s;
-    proxy_buffering off;
-}
-```
-
-需要在 `http` 块或 `server` 块顶部加：
-
-```nginx
-map $http_upgrade $connection_upgrade {
-    default upgrade;
-    '' close;
-}
-```
-
-**前端 VNC 页面（`_user/vnc/$hostId.tsx`）：**
-
-嵌入 iframe 指向 `/v1/me/hosts/{hostId}/vnc/?token=<jwt>`，KasmVNC 的 web 客户端由容器内的 `:6080` 服务。现有 `AdminVNCProxyHandler` 已通过 query param `token` 设置 cookie 来支持子资源加载。
-
-### 置信度：HIGH
-
-现有代码已验证此模式可行。
-
----
-
-## 4. Claude 账号数据模型
-
-### 方案
-
-新建 `claude_accounts` 表，建立 `用户 -> Claude 账号 -> 主机` 的一对多对一关系。
-
-### 数据模型
-
-```sql
--- Migration: 0006_claude_accounts.sql
-
-CREATE TABLE claude_accounts (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    host_id UUID REFERENCES hosts (id) ON DELETE SET NULL,
-    label TEXT NOT NULL DEFAULT '',           -- 显示名称，如 "工作号"、"个人号"
-    email TEXT NOT NULL,                      -- Claude 账号邮箱
-    account_type TEXT NOT NULL DEFAULT 'pro', -- pro / team / max 等
-    status TEXT NOT NULL DEFAULT 'active',    -- active / suspended / expired
-    notes TEXT NOT NULL DEFAULT '',           -- 管理员备注
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- 每个 Claude 账号最多绑定一台主机
-CREATE UNIQUE INDEX idx_claude_accounts_host_id ON claude_accounts (host_id) WHERE host_id IS NOT NULL;
-
--- 按用户快速查询
-CREATE INDEX idx_claude_accounts_user_id ON claude_accounts (user_id);
-```
-
-### 关系图
-
-```
-users (1) ---< claude_accounts (N) >--- hosts (0..1)
-  |                                        |
-  +---- short_id, entry_password           +---- 容器、出口 IP 绑定
-  |                                        |
-  +---- password_hash (for web login)      +---- VNC, SSH 接入
-```
-
-**关键设计决策：**
-
-- **一个用户可以有多个 Claude 账号**（需求明确：一个用户拥有多个 Claude 账号，每个账号对应一台独立主机）
-- **一个 Claude 账号最多绑定一台主机**（UNIQUE INDEX on host_id WHERE NOT NULL）
-- **host_id 可为 NULL**（账号创建后，主机可以稍后绑定或被管理员回收）
-- **删除用户级联删除其所有 Claude 账号**
-- **删除主机时 host_id 置 NULL**（账号保留，可重新绑定）
-
-### API 端点
-
-**管理员（`/v1/admin/claude-accounts`）：**
-
-| 方法 | 路径 | 说明 |
+| 方案 | 优点 | 缺点 |
 |------|------|------|
-| GET | `/v1/admin/claude-accounts` | 列表（支持 ?user_id= 过滤） |
-| POST | `/v1/admin/claude-accounts` | 创建 |
-| GET | `/v1/admin/claude-accounts/{id}` | 详情 |
-| PUT | `/v1/admin/claude-accounts/{id}` | 更新 |
-| DELETE | `/v1/admin/claude-accounts/{id}` | 删除 |
-| POST | `/v1/admin/claude-accounts/{id}/bind-host` | 绑定主机 |
-| POST | `/v1/admin/claude-accounts/{id}/unbind-host` | 解绑主机 |
+| **`--network=none` + 宿主机注入 veth** | 与生产 **同构**，安全叙事一致 | **仅 Linux 且需等价于 SingBoxProvider 的 netlink 能力**；macOS 上 CLI **无法**像 agent 一样操作真实宿主机 netns（ workload 在 Docker Desktop VM 内） |
+| **自定义 bridge + 容器内 sing-box tun + 路由分流** | **一条 `docker run` 跨 macOS/Linux**；实现快 | 启动瞬间若 sing-box 未就绪，存在 **极短窗口**（需 entrypoint 先拉起 sing-box + nft 再 exec 主进程，与现网「先隧道后业务」一致） |
+| **bridge + `host.docker.internal:host-gateway`** | 访问宿主机上服务（LLM、本地 API）路径清晰 | **Linux** 需显式 `--add-host host.docker.internal:host-gateway`（Docker 20.10+）；Desktop 常自带解析 |
 
-**用户（`/v1/me/claude-accounts`）：**
+**推荐（观点）：**
 
-| 方法 | 路径 | 说明 |
+- **默认 / 跨平台 MVP：** **用户态 bridge（默认 bridge 或具名 network）** + 容器内 **sing-box tun** + **sing-box 路由** 将 RFC1918 / 本机回环指向 **direct（走 eth0 出容器）**，将公网指向 **proxy outbound**；宿主机访问用 **`host.docker.internal`**（Linux 加 `host-gateway`）。
+- **Linux 可选「硬隔离」模式：** 与生产对齐的 **`--network=none` + 注入 mgmt** — 可复用 `InjectManagementVeth` 等（仅 `GOOS=linux` 编译），作为 **进阶/CI 对齐** 配置，而非 macOS 默认。
+
+**置信度：** MEDIUM（可移植性结论可靠；具体以你们镜像 entrypoint 顺序的实测为准）。
+
+---
+
+## 4. sing-box tun、配置与分流（私网直连、其余走代理）
+
+### 4.1 与现网配置的关系
+
+现网 `buildSingBoxConfig`（`internal/network/singbox_config.go`）已包含：
+
+- **tun inbound**：`auto_route`、`strict_route`、`interface_name: tun0`
+- **双 outbound**：`proxy-out` + `direct`（`bind_interface: mgmt0`）
+- **DNS**：经代理 `detour: proxy-out`
+- **route.rules**：`sniff`、`dns` hijack
+
+claude-shell 需在 **route.rules** 中 **显式提前** 插入分流规则（官方 Route Rule 文档，sing-box 支持 `ip_is_private`、`ip_cidr`、`action`/`outbound` 等，见 [Route Rule](https://sing-box.sagernet.org/configuration/route/rule/)）：
+
+1. **`ip_is_private: true` → `direct`**（或指向绑定在 **eth0** 的 direct outbound，见下条）。
+2. **可选：** 为 `127.0.0.0/8`、`host.docker.internal` 解析结果再补 **ip_cidr** 规则，避免环回误走代理。
+3. **默认：** 其余流量仍走 **proxy-out**（与现网一致）。
+
+### 4.2 `direct` 的 `bind_interface` 名称
+
+- 生产用 **`mgmt0`**（注入 veth）。
+- 本地 bridge 模式用 **`eth0`**（或 `route.default_interface` 与实际一致）。需在镜像或启动脚本里 **固定接口名**，或在 sing-box **1.13+** 利用文档中的 **interface / default_interface** 类字段做对齐。
+
+### 4.3 nftables
+
+- 与 **PROJECT.md** 要求一致：容器内 **默认拒绝 + 仅放行经 tun 的路径**，与现网 SingBoxProvider 哲学一致；**ContainerProxyProvider** 使用 **tproxy + iptables** 是 **另一套 sidecar 模型**，claude-shell 若不跑 sidecar，则 **nftables 规则应直接贴近 SingBoxProvider 的 tun 方案**，而非照搬 gateway 镜像。
+
+**置信度：** HIGH（分流字段来自 sing-box 官方文档；具体 JSON 需与镜像接口名联调）。
+
+---
+
+## 5. `/proc/cpuinfo`、`/proc/meminfo` 伪装
+
+### 5.1 bind mount 文件
+
+- **做法：** 在宿主机或镜像构建阶段生成 **静态文本文件**，`docker run -v /path/to/fake-cpuinfo:/proc/cpuinfo:ro`（meminfo 同理）。
+- **注意：** `/proc` 下部分条目在部分内核/运行时上对 **bind mount 覆盖** 行为敏感；**常见实践是可行**，但须在 **Docker Desktop（LinuxKit VM）与原生 Linux** 各测一轮。
+
+### 5.2 能力（capabilities）
+
+- 普通 bind mount **通常不需要** `CAP_SYS_ADMIN`；若改用 **overlay 或自定义 tmpfs 叠 /proc**，权限与兼容性风险上升，**不推荐**作为默认路径。
+
+### 5.3 Docker Desktop
+
+- 容器内看见的是 **VM 内内核** 的 proc；bind mount 仍作用于容器文件系统视图，**一般可用**，但 **CPU/内存型号与宿主机 Mac 不一致** 本身也是「像云主机」的期望行为。
+
+### 5.4 与 `tools/spoof-fingerprint.js` 的关系
+
+- 现网脚本在 **Node 用户态** patch `os` 模块；v1.3 要求 **不依赖 spoof.js**，则 **proc 级伪装 + machine-id** 更贴近 **通用 Linux 工具链**（Go/Java 读 `/proc`）。**两者可同时存在**：JS 层 patch 管 npm 生态，proc 管读文件的生态。
+
+**置信度：** MEDIUM–LOW（bind mount 需实机验证；无官方「保证覆盖 /proc/cpuinfo」的一刀切声明）。
+
+---
+
+## 6. 反容器检测：标记清单与处理策略
+
+以下为 **常见启发式标记**（非完全可枚举；对抗检测不是密码学保证）。
+
+| 类别 | 典型标记 | 处理思路 |
+|------|----------|----------|
+| 文件 | **`/.dockerenv`** | 启动时 **删除或 bind 空文件**（需可写层或 tmpfs overlay） |
+| cgroup | **`/proc/1/cgroup`** 含 `docker`、`kubepods` | 使用 **伪造 cgroup 模板文件** 再通过 **bind mount** 覆盖（与 cpuinfo 同风险级别） |
+| mount | **`/proc/mounts` 含 `overlay`** | 难完美隐藏；可降低特征：减少敏感 read-only 传播路径的暴露 |
+| 进程树 | **pid 1 为 `docker-init` / `containerd-shim`** | 部分场景可换 **init 包装**；成本高 |
+| 网络 | **网卡 MAC OUI、接口名 `eth0@if...`** | 自定义网络 + 固定 `--mac-address`（需注意冲突） |
+| 环境变量 | **`container=podman`/`docker`** | 清理 env |
+| 能力集 | **`/proc/self/status` CapEff** | 降 cap / 与真机对齐的镜像基线 |
+
+**观点：** 做 **分层交付**——先做 **/.dockerenv + machine-id + cpu/mem**，再迭代 cgroup；并在 `verify` 子命令中 **可重复检测**。
+
+**置信度：** MEDIUM（清单来自社区共识；具体工具检测逻辑持续变化）。
+
+---
+
+## 7. 进程生命周期
+
+```
+用户 shell
+  → claude 二进制（父）
+      → docker run --rm ...（docker 客户端子进程，可选长期 attach）
+          → containerd → 容器内 PID1（entrypoint）
+              → sing-box / init → claude-code / bun
+```
+
+- **父进程职责：** 信号转发、**保证容器停止**（`docker stop` 超时策略）、临时文件与卷清理。
+- **异常：** `docker daemon` 不可用 → CLI 明确错误码；**镜像拉取失败** → 重试策略与离线提示。
+
+---
+
+## 8. macOS Docker Desktop vs Linux Docker Engine（网络）
+
+| 点 | Docker Desktop（Mac） | Linux Engine |
+|----|----------------------|--------------|
+| 数据面位置 | 容器在 **Linux VM** 内 | 容器在 **本机内核** |
+| `host.docker.internal` | 一般 **内置** | 常需 **`--add-host host.docker.internal:host-gateway`** |
+| 与宿主机服务通信 | 走 **Desktop 注入的主机路由**，不是 Mac 本机 `127.0.0.1` | 走 **bridge 网关**；宿主机 `127.0.0.1` 仍不可直达，除非 **host 网络**或其它转发 |
+| netns/veth 手工操作 | **CLI 在 Mac 侧无法等价于生产 agent 的 netlink 编排** | 可与 SingBoxProvider **同构** |
+| nftables 在容器内 | VM 内核需支持 **nft**（Desktop 近年镜像已逐步补齐；以实测为准） | 通常可行 |
+
+**置信度：** HIGH（Desktop 与 Engine 差异为官方文档与长期社区共识）。
+
+---
+
+## 9. 配置传递：环境变量 vs 挂载文件 vs label
+
+| 方式 | 适用 | 说明 |
 |------|------|------|
-| GET | `/v1/me/claude-accounts` | 我的 Claude 账号列表 |
+| **环境变量** | 代理 URL、非敏感开关、`HTTP(S)_PROXY` 类 | 易暴露于 `docker inspect`；**密钥不宜仅放 env** |
+| **挂载配置文件** | **完整 sing-box JSON**、分流白名单、伪造 proc 文件 | 与现网 **写入 `/etc/sing-box/config.json`** 一致；**推荐为主配置载体** |
+| **Docker labels** | 版本、镜像 digest、**非机密元数据** | 便于 `docker ps` / 运维过滤；**不应用来存密钥** |
 
-### 新增 Go 文件
-
-- `internal/controlplane/http/admin_claude_accounts.go` — 管理员 CRUD handler
-- `internal/controlplane/http/user_me.go` — 用户自助面板 handler（含 Claude 账号、主机列表等）
-- `internal/store/repository/` 中新增 Claude 账号相关查询方法
-
-### 置信度：HIGH
-
-标准关系模型，无技术风险。
+**推荐组合（观点）：** **配置文件挂载（主） + 少量 env（覆盖路径与日志级别）**；与 `container_proxy_provider.go` 中 `-v .../config.json:ro` 一致。
 
 ---
 
-## 5. Bootstrap URL 重设计
+## 10. 集成点、新增/修改与建议构建顺序
 
-### 当前路径
+### 10.1 集成点（与仓库现状）
 
-- `GET /entry/{shortId}` — 返回 shell 脚本
-- `POST /v1/entry/{shortId}/auth` — 认证
+- **复用/抽取：** `singbox_config.go` 的配置生成 → **共享包**（供 `SingBoxProvider` 与 claude-shell）。
+- **不直接耦合：** `host-agent`、**Unix socket API**、**PostgreSQL** —— claude-shell **零依赖**。
+- **镜像：** 可与 **`deploy/docker/managed-user`** 同源或 **slim 变体**（无 SSH/Kasm 若不需要）；sing-box 版本与现网 **1.13.x** 对齐，避免行为漂移。
 
-### 目标路径
+### 10.2 新增组件（建议）
 
-- `GET /{short_id}` — 返回 shell 脚本（短 URL，如 `curl domain/abc123 | bash`）
+1. **`claude` CLI 模块**：`docker run`、信号、TTY、配置渲染。
+2. **`internal/claudeshell/config`**：合并 env + 文件，输出 sing-box JSON。
+3. **（可选）`internal/claudeshell/net_linux.go`**：`network=none` 强模式仅 Linux。
 
-### 方案
+### 10.3 数据流变化
 
-**在 Nginx 层用 try_files + 正则拦截短 ID，转发到控制面。** 不在 Go router 中注册 `/{short_id}`，避免和其他顶级路由冲突。
+- **无控制面数据流**；仅 **本地 stdin/stdout ↔ 容器 ↔ 代理出口**。
+- **verify 子命令：** 可在容器内执行与 **管理后台代理测试** 类似的 **HTTP/DNS 探测**（逻辑可参考 `admin_egress_ip_probe`），但 **不经过 API**。
 
-### 具体变更
+### 10.4 建议构建顺序（依赖优先）
 
-**Nginx（`nginx.conf`）：**
-
-```nginx
-# 短 ID 格式：6-10 位字母数字
-location ~ "^/([a-zA-Z0-9]{6,10})$" {
-    proxy_pass http://control-plane:8080/entry/$1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-}
-
-# API
-location /v1/ {
-    proxy_pass http://control-plane:8080;
-    # ... WebSocket 等配置
-}
-
-# SPA — 放最后
-location / {
-    try_files $uri $uri/ /index.html;
-}
-```
-
-**Go router（保持不变）：**
-
-`GET /entry/{shortId}` 端点保持原样，Nginx 负责 URL 重写。这样 Go 侧不需要处理顶级路由歧义。
-
-**认证 API 路径调整：**
-
-shell 脚本中的 auth URL 从 `/v1/entry/{shortId}/auth` 改为 `/v1/entry/{shortId}/auth`（不变），因为 shell 脚本内部直接调用完整路径。
-
-### 置信度：HIGH
-
-纯 Nginx 重写，零代码风险。
+1. **镜像 entrypoint**：`sing-box` 就绪 + **nft** + 启动 **Claude Code**（失败快速回滚提示）。
+2. **sing-box 配置模板** + 分流规则（私网直连）。
+3. **最简 `docker run` 包装**（非 TTY 也可跑通）。
+4. **TTY + 信号 + SIGWINCH**。
+5. **machine-id / proc 伪装 / 反检测**（逐项加）。
+6. **garble 构建与发布流水线**。
 
 ---
 
-## 6. Bootstrap 实时状态：SSE
+## 11. 研究缺口与需实机验证项
 
-### 方案
-
-**使用 Server-Sent Events (SSE)** 替代当前的轮询（`GET /v1/bootstrap/tasks/{taskID}`）。
-
-SSE 优于 WebSocket 的理由：
-- Bootstrap 是纯服务器到客户端的单向推送
-- 在 shell 脚本中用 `curl` 即可消费 SSE（`curl -N`），无需 WebSocket 客户端库
-- Go `net/http` 原生支持 SSE（Flusher 接口）
-- 自动重连是协议内置的
-
-### 具体变更
-
-**新增 `internal/controlplane/http/bootstrap_sse.go`：**
-
-```go
-func (h *bootstrapSSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-    taskID := r.PathValue("taskID")
-
-    w.Header().Set("Content-Type", "text/event-stream")
-    w.Header().Set("Cache-Control", "no-cache")
-    w.Header().Set("Connection", "keep-alive")
-    w.Header().Set("X-Accel-Buffering", "no") // 告诉 Nginx 不要缓冲
-
-    flusher, ok := w.(http.Flusher)
-    if !ok {
-        http.Error(w, "streaming not supported", http.StatusInternalServerError)
-        return
-    }
-
-    ticker := time.NewTicker(1 * time.Second)
-    defer ticker.Stop()
-
-    for {
-        select {
-        case <-r.Context().Done():
-            return
-        case <-ticker.C:
-            stage := resolveCurrentStage(r.Context(), taskID)
-            fmt.Fprintf(w, "event: stage\ndata: %s\n\n", stageJSON)
-            flusher.Flush()
-
-            if stage.IsTerminal() {
-                return
-            }
-        }
-    }
-}
-```
-
-**路由：**
-
-```go
-mux.Handle("GET /v1/bootstrap/tasks/{taskID}/stream", bootstrapSSEHandler)
-```
-
-**Nginx SSE 配置（已被上面 WebSocket 配置覆盖）：**
-
-`proxy_buffering off` 和 `X-Accel-Buffering: no` 确保 Nginx 不缓冲 SSE。
-
-**Shell 脚本消费 SSE：**
-
-```bash
-# 使用 curl -N（不缓冲）消费 SSE
-curl -sN "$BASE_URL/v1/bootstrap/tasks/$TASK_ID/stream" | while IFS= read -r line; do
-    case "$line" in
-        data:*)
-            json="${line#data: }"
-            stage_text=$(echo "$json" | grep -o '"stage_text":"[^"]*"' | cut -d'"' -f4)
-            printf "\r\033[K%s" "$stage_text"
-            ;;
-    esac
-done
-```
-
-**保留现有轮询端点：** `GET /v1/bootstrap/tasks/{taskID}` 保持原样作为回退。SSE 端点是增量新增，不破坏任何现有功能。
-
-### Nginx 对 SSE 的额外注意
-
-在 `/v1/` location 中已经配置了 `proxy_buffering off`，这对 SSE 至关重要。如果 Nginx 缓冲了响应，SSE 事件将不会实时到达客户端。
-
-### 置信度：HIGH
-
-Go `net/http` + `http.Flusher` 是标准 SSE 实现方式，无需第三方库。
+- `/proc/cpuinfo` **bind mount** 在 **Docker Desktop 当前版本** 上的稳定性（**LOW→MEDIUM** 需测）。
+- 容器内 **nftables** 与 **sing-box tun** 启动顺序在 **arm64/amd64** 双架构表现。
+- **Apple Silicon** 上 **Bun / Claude Code** 二进制兼容与性能。
 
 ---
 
-## 组件边界总览
+## 12. 来源
 
-### 新增组件
-
-| 组件 | 文件 | 依赖 |
-|------|------|------|
-| `AppClaims` + 统一登录 | `user_auth.go` | `golang-jwt/jwt/v5`（已有） |
-| `AuthMiddleware` + `RequireRole` | `auth_middleware.go` | 替换 `admin_auth.go` |
-| 用户自助 API | `user_me.go` | Repository |
-| Claude 账号管理 API | `admin_claude_accounts.go` | Repository |
-| 用户 VNC 代理 | `user_vnc_proxy.go` | 复用 VNC 代理核心 |
-| Bootstrap SSE | `bootstrap_sse.go` | Go 标准库 |
-| DB Migration | `0006_claude_accounts.sql` | — |
-
-### 修改组件
-
-| 组件 | 变更 | 影响 |
-|------|------|------|
-| `router.go` | 新增路由组、中间件链 | 中等 |
-| `nginx.conf` | WebSocket 升级 + 短 URL 重写 + SSE 不缓冲 | 低 |
-| `lib/auth.ts` | 解析 role、存储 AuthState | 低 |
-| `_dashboard.tsx` | 注入 auth context | 低 |
-| 路由文件结构 | 拆分 `_admin/` 和 `_user/` 布局 | 中等 |
-| `lib/api.ts` | 新增 `userApiFetch` | 低 |
-
-### 不变组件
-
-| 组件 | 原因 |
-|------|------|
-| Host Agent / Unix Socket | 不涉及用户面 |
-| Network Provider (WireGuard/sing-box) | 不涉及 |
-| SSH Proxy | 不涉及（继续用 short_id + entry_password） |
-| Expiry Scanner / Reconciler | 不涉及 |
-| 现有管理员 API 全部端点 | 仅中间件链调整，handler 逻辑不变 |
-
----
-
-## 数据流变更
-
-### 用户登录流
-
-```
-Browser -> POST /v1/auth/login { username, password }
-        -> Go: 尝试 admin 凭证 -> 不匹配 -> 查 users 表 -> bcrypt 验证
-        -> 签发 JWT { role: "user", uid: "<uuid>", sub: "<username>" }
-        -> Browser 存储 token + role
-        -> TanStack Router beforeLoad 按 role 路由
-```
-
-### 用户查看 VNC
-
-```
-Browser -> GET /v1/me/hosts/{hostId}/vnc/?token=<jwt>
-        -> AuthMiddleware: 验证 JWT
-        -> RequireRole("user"): 检查 role=user
-        -> UserVNCProxyHandler: 检查 host 属于 uid
-        -> WebSocket Upgrade / HTTP 反向代理 -> 容器 :6080
-```
-
-### Bootstrap SSE 流
-
-```
-Terminal -> curl domain/abc123 | bash
-         -> Shell 脚本执行
-         -> read -sp password
-         -> POST /v1/entry/abc123/auth -> { task_id, ... }
-         -> curl -sN /v1/bootstrap/tasks/{taskID}/stream
-         -> SSE: event:stage, data:{stage_text:"主机启动中"}
-         -> SSE: event:stage, data:{stage_text:"网络配置中"}
-         -> SSE: event:stage, data:{stage_text:"SSH 就绪"}
-         -> SSE: event:complete, data:{ssh_host,ssh_port,ssh_user}
-         -> exec ssh ...
-```
-
----
-
-## 建议构建顺序
-
-依赖分析决定的最优顺序：
-
-### Phase 1: 认证基础设施
-
-1. DB Migration `0006_claude_accounts.sql`
-2. `AppClaims` 类型 + 统一登录端点 `POST /v1/auth/login`
-3. `AuthMiddleware` + `RequireRole` 中间件
-4. 将现有 `/v1/admin/*` 路由切换到新中间件链（行为等价，管理员照常工作）
-
-**理由：** 所有后续功能都依赖角色认证。先做这一步，可以立即在现有管理后台验证新中间件不破坏任何东西。
-
-### Phase 2: 用户自助 API + 前端路由
-
-1. 用户自助 API（`/v1/me/hosts`、`/v1/me/claude-accounts`）
-2. 前端 `lib/auth.ts` 改造 + 统一登录页
-3. TanStack Router 路由拆分（`_admin/` + `_user/`）
-4. 用户仪表盘页面
-
-**理由：** 有了认证基础设施后，用户面 API 和路由可以平行推进。
-
-### Phase 3: Claude 账号管理
-
-1. 管理员 Claude 账号 CRUD API
-2. 管理后台 Claude 账号管理页面
-3. 用户面展示 Claude 账号信息
-
-**理由：** 独立的 CRUD 功能，不阻塞其他功能。
-
-### Phase 4: KasmVNC 用户面
-
-1. VNC 代理核心抽取 + 用户 VNC handler
-2. Nginx WebSocket 配置
-3. 用户面 VNC 页面
-
-**理由：** 依赖 Phase 2 的用户路由和权限。
-
-### Phase 5: Bootstrap 重设计
-
-1. Nginx 短 URL 重写
-2. Bootstrap SSE 端点
-3. 新 shell 脚本（欢迎艺术字 + 密码输入 + SSE 消费 + 自动 SSH）
-
-**理由：** 相对独立，但排在最后是因为改动用户入口体验，需要前面的功能稳定后再动。
-
----
-
-## Sources
-
-- [Role-based Access Control in Golang with jwt-go](https://dev.to/bensonmacharia/role-based-access-control-in-golang-with-jwt-go-ijn)
-- [golang-jwt/jwt/v5 官方文档](https://pkg.go.dev/github.com/golang-jwt/jwt/v5)
-- [TanStack Router RBAC 指南](https://tanstack.com/router/v1/docs/framework/react/how-to/setup-rbac)
-- [TanStack Router 认证路由](https://tanstack.com/router/v1/docs/framework/react/guide/authenticated-routes)
-- [Proxying noVNC with nginx](https://github.com/novnc/noVNC/wiki/Proxying-with-nginx)
-- [KasmVNC 反向代理文档](https://kasmweb.com/kasmvnc/docs/master/how_to/reverse_proxy.html)
-- [Kasm Workspaces 反向代理配置](https://docs.kasm.com/docs/how-to/reverse_proxy/index.html)
-- 项目现有代码：`admin_auth.go`、`admin_vnc_proxy.go`、`entry.go`、`router.go`、`bootstrap_status.go`
+- 仓库：`internal/network/singbox_config.go`、`internal/network/singbox_provider_linux.go`、`internal/network/container_proxy_provider.go`
+- `.planning/PROJECT.md`（v1.3 需求与关键决策）
+- sing-box：[Route Rule](https://sing-box.sagernet.org/configuration/route/rule/)
+- Docker：`host.docker.internal` / `host-gateway` 社区与文档共识（Engine 20.10+）
