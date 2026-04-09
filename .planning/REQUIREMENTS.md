@@ -68,32 +68,32 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | — | Pending |
-| INFRA-02 | — | Pending |
-| INFRA-03 | — | Pending |
-| NET-01 | — | Pending |
-| NET-02 | — | Pending |
-| NET-03 | — | Pending |
-| NET-04 | — | Pending |
-| NET-05 | — | Pending |
-| SPOOF-01 | — | Pending |
-| SPOOF-02 | — | Pending |
-| SPOOF-03 | — | Pending |
-| SPOOF-04 | — | Pending |
-| CLI-01 | — | Pending |
-| CLI-02 | — | Pending |
-| CLI-03 | — | Pending |
-| CLI-04 | — | Pending |
-| CLI-05 | — | Pending |
-| CLI-06 | — | Pending |
-| BUILD-01 | — | Pending |
-| BUILD-02 | — | Pending |
+| INFRA-01 | Phase 17 | Pending |
+| INFRA-02 | Phase 17 | Pending |
+| INFRA-03 | Phase 17 | Pending |
+| NET-01 | Phase 18 | Pending |
+| NET-02 | Phase 18 | Pending |
+| NET-03 | Phase 18 | Pending |
+| NET-04 | Phase 18 | Pending |
+| NET-05 | Phase 18 | Pending |
+| CLI-01 | Phase 19 | Pending |
+| CLI-02 | Phase 20 | Pending |
+| CLI-03 | Phase 19 | Pending |
+| CLI-04 | Phase 22 | Pending |
+| CLI-05 | Phase 19 | Pending |
+| CLI-06 | Phase 19 | Pending |
+| SPOOF-01 | Phase 21 | Pending |
+| SPOOF-02 | Phase 21 | Pending |
+| SPOOF-03 | Phase 21 | Pending |
+| SPOOF-04 | Phase 21 | Pending |
+| BUILD-01 | Phase 23 | Pending |
+| BUILD-02 | Phase 19 | Pending |
 
 **Coverage:**
 - v1.3 requirements: 20 total
-- Mapped to phases: 0
-- Unmapped: 20 ⚠️
+- Mapped to phases: 20 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-09*
-*Last updated: 2026-04-09 after initial definition*
+*Last updated: 2026-04-09 — roadmap phase mapping complete*
