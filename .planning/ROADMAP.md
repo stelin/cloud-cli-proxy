@@ -145,7 +145,9 @@ Plans:
   2. Claude Code 通过官方 curl 安装脚本（Bun standalone）安装，容器内 `claude` 命令可执行
   3. entrypoint 按"网络配置 → 指纹伪造 → 反检测 → Claude Code"顺序编排，各步骤失败时输出明确错误
   4. DISABLE_AUTOUPDATER=1 生效，Claude Code 不会在运行时触发自动更新
-**Plans**: TBD
+**Plans**: 1 plan
+Plans:
+- [ ] 17-01-PLAN.md — claude-shell Dockerfile + entrypoint 编排脚本
 
 ### Phase 18: 网络隔离与分流
 **Goal**: 容器内所有出站流量强制走代理出口，DNS 不泄漏，本地流量正确回连宿主机
