@@ -1,7 +1,9 @@
 package http
 
 import (
+	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
@@ -93,7 +95,7 @@ func (h *SSHKeyHandler) List() nethttp.Handler {
 				UserID:      k.UserID,
 				Purpose:     k.Purpose,
 				Label:       k.Label,
-				PublicKey:    k.PublicKey,
+				PublicKey:   k.PublicKey,
 				KeyType:     k.KeyType,
 				Fingerprint: k.Fingerprint,
 				CreatedAt:   k.CreatedAt,
@@ -118,7 +120,7 @@ func (h *SSHKeyHandler) List() nethttp.Handler {
 			result = append(result, sshKeyResponse{
 				Purpose:     "inbound",
 				Label:       "手动添加",
-				PublicKey:    ck.PublicKey,
+				PublicKey:   ck.PublicKey,
 				Fingerprint: ck.Fingerprint,
 				Source:      "container",
 				Synced:      true,
@@ -185,6 +187,17 @@ func (h *SSHKeyHandler) Create() nethttp.Handler {
 			}
 			req.PublicKey = pubKeyStr
 			req.PrivateKey = privKeyStr
+		}
+
+		if computeFingerprint(req.PublicKey) == "" {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "public_key 格式错误"})
+			return
+		}
+		if req.Purpose == "outbound" && req.PrivateKey != "" {
+			if err := validateSSHKeyPair(req.PublicKey, req.PrivateKey); err != nil {
+				writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "private_key 无效或与 public_key 不匹配"})
+				return
+			}
 		}
 
 		fingerprint := computeFingerprint(req.PublicKey)
@@ -470,14 +483,11 @@ func generateEd25519KeyPair(comment string) (string, string, error) {
 		pubKeyStr += " " + comment
 	}
 
-	privKeyBytes, err := x509.MarshalPKCS8PrivateKey(privKey)
+	privKeyBlock, err := ssh.MarshalPrivateKey(privKey, comment)
 	if err != nil {
 		return "", "", fmt.Errorf("marshal ed25519 private key: %w", err)
 	}
-	privKeyPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "PRIVATE KEY",
-		Bytes: privKeyBytes,
-	})
+	privKeyPEM := pem.EncodeToMemory(privKeyBlock)
 
 	return pubKeyStr, string(privKeyPEM), nil
 }
@@ -503,4 +513,39 @@ func generateRSAKeyPair(comment string) (string, string, error) {
 	})
 
 	return pubKeyStr, string(privKeyPEM), nil
+}
+
+func validateSSHKeyPair(publicKeyStr, privateKeyStr string) error {
+	pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(publicKeyStr)))
+	if err != nil {
+		return fmt.Errorf("parse public key: %w", err)
+	}
+
+	privateKey, err := ssh.ParseRawPrivateKey([]byte(privateKeyStr))
+	if err != nil {
+		return fmt.Errorf("parse private key: %w", err)
+	}
+
+	var rawPublicKey any
+	switch k := privateKey.(type) {
+	case ed25519.PrivateKey:
+		rawPublicKey = k.Public()
+	case *ed25519.PrivateKey:
+		rawPublicKey = k.Public()
+	case *rsa.PrivateKey:
+		rawPublicKey = &k.PublicKey
+	case *ecdsa.PrivateKey:
+		rawPublicKey = &k.PublicKey
+	default:
+		return fmt.Errorf("unsupported private key type: %T", privateKey)
+	}
+
+	derivedPublicKey, err := ssh.NewPublicKey(rawPublicKey)
+	if err != nil {
+		return fmt.Errorf("derive public key from private key: %w", err)
+	}
+	if !bytes.Equal(pubKey.Marshal(), derivedPublicKey.Marshal()) {
+		return errors.New("private key does not match public key")
+	}
+	return nil
 }
