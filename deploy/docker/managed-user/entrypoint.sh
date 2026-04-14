@@ -92,6 +92,10 @@ echo "${RUN_USER}:${CONTAINER_PASSWORD}" | chpasswd
 sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null 2>&1 || true
 sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1 || true
 
+if [ -c /dev/fuse ]; then
+  chmod 666 /dev/fuse
+fi
+
 # KasmVNC 配置（无密码认证——由控制面反代保护）
 mkdir -p /workspace/.vnc
 cat > /workspace/.vnc/kasmvnc.yaml <<'YAML'

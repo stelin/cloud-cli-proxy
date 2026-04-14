@@ -36,7 +36,12 @@ RUN apt-get update \
         x11-utils \
         x11-xserver-utils \
         xterm \
+        sshfs \
+        fuse3 \
     && rm -rf /var/lib/apt/lists/*
+
+RUN sed -i 's/^#user_allow_other/user_allow_other/' /etc/fuse.conf \
+    && chmod a+r /etc/fuse.conf
 
 # KasmVNC：替代 x11vnc + noVNC + websockify + Xvfb，自带剪贴板同步和 Web 客户端。
 ARG KASMVNC_VERSION=1.4.0
