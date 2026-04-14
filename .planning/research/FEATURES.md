@@ -1,205 +1,149 @@
-# Feature Landscape：claude-shell 本地透明代理
+# Feature Research
 
-**Domain：** 单机 Go 二进制，用 Docker 透明包裹 Claude Code，全流量经 sing-box tun + nftables，宿主机指纹与容器可观测性可控。  
-**Researched：** 2026-04-09  
-**Confidence：** **MEDIUM-HIGH**（透明代理与容器检测面：多源一致 + 部分官方文档；Claude Code「源码级」细节：**以 Anthropic 官方文档为准**，社区/媒体二次解读标为 LOW）
+**Domain:** 透明替代 `claude` 的远程 CLI（cloud-claude / v2.0 里程碑）  
+**Researched:** 2026-04-15  
+**Confidence:** MEDIUM（竞品行为以官方文档与公开手册为主；与 Claude Code 具体集成的细节需在实现阶段用集成测试验证）
 
----
+## Feature Landscape
 
-## 与已有能力的关系（依赖边界）
+### Table Stakes (Users Expect These)
 
-| 已有（云主机平台） | claude-shell 复用 / 不复用 |
-|-------------------|---------------------------|
-| 受管镜像、WireGuard/sing-box、nftables、三重网络校验思路 | **复用设计理念**；本地为**另一交付形态**，镜像与编排由 `claude` 二进制驱动，不依赖控制面 API |
-| `tools/spoof-fingerprint.js`（Node 层 patch `os`） | v1.3 目标为**容器内系统级**指纹（`/etc/machine-id`、`/proc/*` 等），**不依赖**该脚本；可作对照：Node 仅能覆盖运行时 API，挡不住直接读 `/proc` 的本机工具 |
-| 管理后台 / JWT | **非表功能**；本地 CLI 可独立发布 |
+对「把本地 `claude` 调用透明转发到远端容器」这一类工具，用户会**默认**具备以下预期；缺失则产品会显得不完整或不可信。
 
----
+| Feature | Why Expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| **参数原样透传** | 用户脚本、`npm`/`pnpm` 包装、`CI` 里写的 `claude ...` 不应因中间层而变形 | MEDIUM | 需处理 `--`、引号、环境变量展开边界；与 shell 包装行为对齐 |
+| **TTY / 窗口尺寸 / 信号 / 退出码透传** | 交互式 CLI 的体验与可脚本化行为（Ctrl+C、SIGPIPE、`stty`）必须与本地一致 | HIGH | 远程执行 + 伪终端转发是硬要求；与 SSH 会话模型一致 |
+| **可重复的配置与凭据** | 网关地址、租户/用户身份、认证方式需可保存、可迁移、可自动化 | MEDIUM | `init` + 配置文件路径约定（如 `~/.cloud-claude/`）属于行业惯例 |
+| **当前工作目录与远端工作区的稳定映射** | 用户期望「在我本机这个 repo 里跑 claude」等价于「在远端同一棵树里跑」 | HIGH | 实时同步或挂载任一方案都有运维与一致性成本；见依赖图 |
+| **连接与会话失败时的可读错误** | 认证失败、主机未就绪、出口未绑定、网络中断时需可行动提示 | LOW–MEDIUM | 与平台已有错误码/中文提示能力应对齐 |
+| **与既有接入方式共存（SSH / 管理后台）** | 用户可能混用「纯 SSH」与「cloud-claude」；不应要求推翻现有心智 | MEDIUM | 文档与行为上明确：cloud-claude 是叠加路径，而非唯一入口 |
+| **私有部署可配置** | 企业/自托管需要改网关/base URL | LOW | PROJECT.md 已列为目标 |
 
-## Table Stakes（不做则不像「可替换的 claude」）
+**竞品对照（模式层面）：**
 
-| Feature | Why Expected | Complexity | Dependencies | Notes |
-|--------|--------------|------------|--------------|-------|
-| 单一 `claude` 入口，用户可放在 `PATH` 前替代官方 CLI | 产品承诺即「透明替换」 | Med | Docker（或兼容运行时）、镜像拉取/缓存策略 | 与 PROJECT.md「单一 Go 二进制」一致 |
-| 首次/冷启动：拉镜像、建容器、健康检查可感知 | 长耗时不可接受为「卡死」 | Med | 镜像仓库、本地磁盘 | 需明确日志与退出码 |
-| 容器内安装/运行 Claude Code（如 Bun standalone） | 与「不依赖 npm/spoof.js」一致 | Med | 官方/既定安装路径、网络仅走隧道 | 安装脚本需在全隧道下可复现 |
-| 全流量出站经代理（tun）+ 默认拒绝旁路 | 与云侧产品同一安全承诺 | High | sing-box、tun、nftables | 与现有 RoutingProvider 哲学一致，实现场所在本地 |
-| 本地回环与私网访问宿主机（`localhost`、RFC1918 等） | IDE、浏览器、本地 API 常见 | Med | **host-gateway / 等价路由** | PROJECT.md 已列 host-gateway |
-| `verify`：出口 IP、DNS、指纹/容器标记自检 | 运维与用户信任 | Med | 与隧道同构的探测命令 | 对齐云侧「代理测试」心智 |
-| 反容器粗检测（如 `/.dockerenv`、`/proc/1/cgroup` 可读性） | 降低「一眼容器」信号 | Low-Med | 镜像 entrypoint + bind mount | 无法保证对抗专业沙箱指纹 |
+- **GitHub Codespaces CLI（`gh codespace`）**：围绕「列出/创建/停止/SSH/端口/日志/拷贝」提供完整生命周期与辅助命令；强调与 `gh auth` 体系一致的非交互/可脚本体验。[Using GitHub Codespaces with GitHub CLI](https://docs.github.com/en/codespaces/developing-in-a-codespace/using-github-codespaces-with-github-cli)、[gh codespace 手册](https://cli.github.com/manual/gh_codespace)。
+- **VS Code Remote - SSH**：打开远程文件夹、远程终端、**端口转发**（含 `LocalForward` 持久化）是桌面端远程开发的事实标准。[Remote Development using SSH](https://code.visualstudio.com/docs/remote/ssh)。
+- **Gitpod `gp` CLI**：典型是**工作区内**命令（端口 URL、任务、超时、资源 `top` 等）；与「桌面侧透明替换全局命令」路径不同，但「端口/预览/环境信息」对云开发 CLI 仍是常见表功能。[Gitpod Workspace CLI](https://www.gitpod.io/docs/configure/workspaces/gitpod-cli)。
+- **Cursor Remote SSH**：实现层面与 VS Code Remote SSH 同族（远程扩展主机、SSH 传输）；可参考 VS Code 文档中的终端与隧道模型，不宜假设与 Codespaces 完全相同的 CLI 子命令集。
 
----
+### Differentiators (Competitive Advantage)
 
-## Differentiators（差异化，非人人会做）
+与通用远程开发 CLI 相比，本产品的差异化应绑定 **PROJECT.md 的核心价值**：受控出口 IP + 全隧道出网 + 单宿主机可控交付。
 
-| Feature | Value Proposition | Complexity | Dependencies | Notes |
-|--------|-------------------|------------|--------------|-------|
-| 与云主机**同一套**网络哲学（tun 全量 + nft 默认拒绝） | 品牌与技术叙事一致 | High | 本地内核能力、Capabilities | 本地权限模型与云端不同，需单独验证 |
-| 系统级指纹：`machine-id`、`cpuinfo`/`meminfo` 等 | 对齐安全研究中的常见采集面，优于仅 Node patch | Med | 只读 bind、稳定种子策略 | 见下文「指纹面」 |
-| `garble` 等混淆发布单一二进制 | 降低 casual reverse；非安全银弹 | Low-Med | Go 构建链 | PROJECT.md 已列 |
-| 可选：最小化 Claude Code 非必要外连（见官方 env） | 与「出口可控」叙事一致 | Low | 文档化默认 env | 见下文官方遥测 |
+| Feature | Value Proposition | Complexity | Notes |
+|---------|-------------------|------------|-------|
+| **透明命令替换（`alias claude=cloud-claude`）** | 零迁移成本，脚本与肌肉记忆不改 | MEDIUM | 比「先 ssh 再手动执行」少一步认知负担 |
+| **出口 IP 与泄漏约束可证明** | 「代码与请求走哪条出口」是合规与风控刚需；与平台代理测试能力形成闭环 | HIGH | 可与现有一键测试、nftables/tun 模型联动宣传 |
+| **单一 Go 二进制、可私有部署** | 企业侧偏好可审计、可内网分发；与「一条 curl 入门」叙事一致 | MEDIUM | 与 `gh` 插件式生态不同，更像专用 shim |
+| **与受管容器生命周期深度集成** | 启动/到期/重建策略由平台统一治理，而非用户自管 VM | MEDIUM | 对标 Codespaces 的「组织级策略」但部署形态更小 |
+| **目录实时映射方案可演进** | sshfs / Mutagen / 自定义同步可在不影响 `claude`  argv 契约下替换 | HIGH | 差异化在「网络与运维可承受」而非单一技术名词 |
 
----
+### Anti-Features (Commonly Requested, Often Problematic)
 
-## Anti-Features（明确不做或慎做）
+看起来「很爽」但容易把 v2.0 拖进泥潭或损害安全/可支持性的需求：
 
-| Anti-Feature | Why Avoid | What to Do Instead |
-|--------------|-----------|-------------------|
-| 完整「反沙箱」/ 反取证（对抗商业风控、恶意用途） | 法律、伦理与维护成本 | 仅服务**合规的出口 IP + 开发隔离**叙事 |
-| 100% 无法被检测的容器 | 技术上不承诺；cgroup/mountinfo 等面持续演化 | 明确边界：降低脚本级检测，不宣称隐身 |
-| 与 Distrobox/Toolbx 同款「深度主机融合」 | 目标相反：需网络隔离与指纹控制，非 HOME/X11 全家桶 | 最小挂载、显式 host 访问 |
-| 依赖 Docker `host` 网络作主路径 | 破坏隔离与路由可控性 | `network=none` + tun + 显式 host 路由（与现有架构一致） |
-| 把未证实的「源码泄露」细节写进产品规格 | 来源混杂 | 以 Anthropic 官方 data-usage 为准；第三方仓库标为待验证 |
+| Feature | Why Requested | Why Problematic | Alternative |
+|---------|---------------|-----------------|-------------|
+| **默认双向实时同步整个 `$HOME` 或超大 monorepo** | 「像网盘一样什么都同步」 | 延迟、冲突、CPU/IO、排除规则爆炸；难以解释「为什么慢」 | 默认仅映射当前 repo；文档化 `.cloud-claudeignore`；大仓用显式子目录或阶段性同步 |
+| **在 CLI 内嵌「迷你 IDE」或重图形能力** | 一站式 | 与产品「SSH + CLI」边界冲突；维护面陡增 | 继续 SSH；端口转发可选、薄封装 |
+| **自动绕过企业代理 / 忽略 TLS 校验** | 临时打通 | 安全与合规雷区；难审计 | 显式配置信任链、系统代理、文档化 CONNECT |
+| **静默降级为「本地 claude」** | 离线也能用 | 用户以为走了出口 IP，实际没有 | 失败即失败；可选 `--local-fallback` 且**强提示** |
+| **多宿主自动调度对用户可见** | 弹性 | v1 明确单宿主；引入调度与状态同步 | 延后；当前仅单宿主 |
+| **用户自选任意远端镜像** | 灵活 | 就绪性、供应链、支持成本 | 管理员受管镜像（与现架构一致） |
 
----
+## Feature Dependencies
 
-## 专题研究（对应需求 1–7）
+```text
+[认证与配置持久化]
+    └──requires──> [与网关/API 的安全通信]
+                       └──requires──> [主机就绪 / 容器生命周期状态]
 
-### 1. 透明包裹 CLI 的既有工具（Docker / Toolbx / Distrobox）
+[透明执行 claude]
+    └──requires──> [远端可执行环境与 Claude Code 可用]
+    └──requires──> [argv/TTY/信号/退出码透传]
 
-**典型模式**
+[本地目录 ↔ 远端 /workspace]
+    └──requires──> [会话内稳定路径约定]
+    └──requires──> [同步或挂载栈：FUSE/sshfs 或 Mutagen 等]
+    └──conflicts──> [「零延迟本地 FS」预期]（需设定合理 SLA 与说明）
 
-- **Toolbx（原 Toolbox）**：Podman/OCI 上叠 `toolbox create | enter | run`，面向**开发/排障**，默认把用户 HOME、X11/Wayland、D-Bus、`/run/host` 等与主机**深度绑定**；目标是「不在宿主机装包」，不是强隔离。
-- **Distrobox**：POSIX shell 包装 Docker/Podman/lilipod，`distrobox enter` 执行容器内 shell，支持 `distrobox-export` 把应用导出到宿主机菜单；README 明确 **隔离不是目标**，与主机**紧耦合**。
-- **与 claude-shell 的对比**：上述工具普遍追求**透明融入主机**；claude-shell 追求 **出网可控 + 指纹与容器信号收敛**，产品目标相反，可借鉴的是：**OCI 生命周期**（create/start/exec）、**非交互脚本化**、**dry-run 打印实际 docker 参数**（Distrobox 的 `-d` 模式）便于排障。
+[出口合规叙事]
+    └──enhances──> [透传执行路径]
+    └──requires──> [现有隧道 + 校验 + 测试 API]（平台已具备）
 
-**可借鉴表功能**：一键进入/执行、命名容器复用、日志与退出码。
-
----
-
-### 2. 设备指纹：容器里常见要「对齐」的面
-
-以下为安全与运维工具常读的**系统面**（语言运行时 patch 往往盖不住）：
-
-| 表面 | 说明 |
-|------|------|
-| `/etc/machine-id`、`/var/lib/dbus/machine-id` | 稳定设备标识 |
-| `/proc/cpuinfo`、`/proc/meminfo` | CPU 型号、核数、内存叙事 |
-| `uname -a` / `uname(2)` | 内核 release、架构 |
-| `hostname` / `/etc/hostname` | 与证书、遥测主机名常见关联 |
-| 网络：`ip`/`ss`、路由表、默认网关、DNS `resolv.conf` | 与「像不像真机」强相关 |
-| **MAC / 网卡列表** | Node 的 `os.networkInterfaces` 已在本仓库 spoof 脚本覆盖；容器内需对齐虚拟网卡叙事 |
-| **容器特有**：`/.dockerenv`、`/proc/1/cgroup`、`/proc/self/mountinfo` 中的 overlay 路径等 | 见第 3 节 |
-
-**建议**：在 FEATURES 层把「指纹」定义为 **对用户可见工具一致」+ `verify` 可断言，而非对抗所有采集器。
-
----
-
-### 3. 容器「反检测」：安全研究常见检查（防御方视角）
-
-常见**启发式**（多源一致，含社区与 systemd 讨论）：
-
-- 根文件系统 inode、`/.dockerenv` 存在性（Docker 非正式惯例；维护者曾提示勿依赖其长期存在）。
-- `/proc/1/cgroup`：v1 时代含 `docker` 路径较多；**cgroup v2** 下常简化为 `0::/`，需结合其他信号。
-- **`/proc/self/mountinfo`**：overlay、`docker/containers/<id>` 等路径可暴露运行环境。
-- **`container=` 环境变量**（systemd [容器接口](https://systemd.io/CONTAINER_INTERFACE/) 建议）：若在进程环境中存在可辅助判定。
-- **PID 1 进程名**、init 是否为 systemd 等。
-
-**对产品含义**：PROJECT.md 中的「删 `.dockerenv`、伪造 cgroup」属于**降低脚本级信号**；在 cgroup v2 + 新内核上需持续实测。**不应**在路线图写「无法被检测」。
-
----
-
-### 4. 透明代理模式：proxychains / tsocks / tun2socks / sing-box tun
-
-| 机制 | 工作层次 | 典型优点 | 典型限制 |
-|------|----------|----------|----------|
-| **proxychains / tsocks** | `LD_PRELOAD` 钩 `connect()` 等 | 无需 root、按进程启用 | 多针对 **TCP**；**静态链接**、Go 默认 net、部分 DNS 路径易**泄漏**；与「全流量强制出网」不完全同构 |
-| **tun2socks** | TUN 三层 + 用户态栈转 SOCKS 等 | 应用无感、覆盖面大 | 需 TUN/CAP_NET_ADMIN 等；需与路由、DNS 策略一起设计 |
-| **sing-box / Clash 等 tun 模式** | 虚拟网卡 + 规则路由 | 与项目现有 **sing-box tun + nftables 默认拒绝** 一致 | 本地二进制需处理与 Docker 网络命名空间关系 |
-
-**结论**：claude-shell 的「透明」对用户是 **一条 claude 命令**；对网络栈应是 **tun 级全局策略**，而非仅 `LD_PRELOAD`。与 proxychains 同类工具**互补而非替代**（后者更适合无 root 的单次命令实验）。
-
----
-
-### 5. PATH / alias / shim 透明替换系统命令
-
-**常见模式**
-
-- **Shim 二进制**：同名可执行文件放在 **`PATH` 更前**；内核 `execve` 解析路径顺序。稳定、可版本共存。
-- **Shell alias**：仅当前交互 shell，子进程/脚本常不继承，**不适合**作为唯一机制。
-- **Wrapper 脚本**：易注入 env（如 `NODE_OPTIONS`），但 shebang 与可移植性需测。
-- **distro 级**：`update-alternatives` 等，偏系统包管理，不适合单文件 CLI 分发。
-
-**表功能**：文档说明「把目录放在 PATH 前」；可选安装器写入 `~/.local/bin` 等。
-
-**差异化**：若 Go 二进制同时充当 **docker 编排器 + shim**，单一分发物更易叙事实；需注意与系统包管理器安装的 `claude` **冲突提示**。
-
----
-
-### 6. Claude Code：遥测与数据流（官方 vs 未验证来源）
-
-**HIGH confidence — [Anthropic Claude Code Data usage](https://docs.anthropic.com/en/docs/claude-code/data-usage)**
-
-- **Statsig**：运营指标（延迟、可靠性、使用模式等）；文档写明 **不包含代码或文件路径**。TLS + 静态表述中的存储加密。退出：`DISABLE_TELEMETRY=1`。
-- **Sentry**：错误日志。退出：`DISABLE_ERROR_REPORTING=1`。
-- **`/feedback`**：会发送含代码的对话历史；退出：`DISABLE_FEEDBACK_COMMAND=1`。
-- **会话满意度问卷**：仅数字评分；`CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1` 或 broader：`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`。
-- **Bedrock/Vertex 等**：文档表格写明默认关闭部分遥测；以官方表格为准。
-
-**LOW confidence — 第三方「源码解析」仓库、媒体报道**
-
-- 可能存在与版本强绑定的实现细节；**不作为需求或合规依据**。若需深度列清单，应针对**具体版本**做静态或运行观测，并单独开 phase。
-
-**对产品含义**：FEATURES 层应区分：**(A)** API 交互内容（必然经 Anthropic 政策约束）与 **(B)** Statsig/Sentry 等可关通道；容器内可通过 **环境变量 + 网络策略** 组合呈现「默认最省非必要外连」，并在文档中引用官方变量名。
-
----
-
-### 7. Docker Desktop / Engine：访问宿主机（`host.docker.internal`、`host-gateway`）
-
-**Docker Desktop（Mac/Win）**：[官方 Networking how-tos](https://docs.docker.com/desktop/networking/) 说明使用 **`host.docker.internal`** 解析到主机侧地址；另有 `gateway.docker.internal` 指向 Docker VM 网关。
-
-**Linux Engine**：`host.docker.internal` **并非**在所有环境默认存在；常见做法为  
-`--add-host=host.docker.internal:host-gateway`（Docker **20.10+** 引入特殊值 `host-gateway`，映射到宿主机网关 IP，常为 `docker0` 网段）。Compose 中为 `extra_hosts: ["host.docker.internal:host-gateway"]`。注意：**build 阶段**对 `host-gateway` 的支持与运行时不同，构建期若需访问主机常需静态 IP 或拆分阶段（见 [compose 讨论](https://github.com/docker/compose/issues/9768)）。
-
-**与 PROJECT 对齐**：「本地流量经 host-gateway 回连宿主机」应写清：**目标 IP 段 + DNS 不走泄漏路径 + 与 tun 默认路由的优先级**，并在 `verify` 中可检查。
-
----
-
-## Feature Dependencies（简图）
-
-```
-单一 claude 二进制 (PATH shim)
-    → Docker 生命周期 (pull/create/start/exec)
-        → 镜像内 Claude Code 安装与运行
-            → sing-box tun + nftables（全出站）
-                → 例外路由：RFC1918 / localhost → host-gateway
-    → entrypoint：machine-id、proc 绑定、反粗检测
-    → verify 子命令
+[可选：端口转发 / 本地访问远端 HTTP]
+    └──requires──> [长期 SSH 会话或等价隧道]
+    └──enhances──> [与 VS Code 用户习惯对齐]
 ```
 
----
+### Dependency Notes
 
-## MVP Recommendation（仅 claude-shell）
+- **透传执行 依赖 远端环境就绪：** 仅有 SSH 不够，还需容器内 `claude`/runtime 与 cwd 一致。
+- **目录映射 依赖 稳定会话：** 多数同步/挂载方案需要长连接或重连语义，与「一次性 SSH 命令」模型不同。
+- **合规/出口故事 增强 透传路径：** 若执行不在绑定出口的主机上，产品承诺不成立；属于强依赖而非附加文案。
 
-**优先**
+## MVP Definition
 
-1. 可复现的容器内 Claude Code 启动路径（与隧道共存）。  
-2. sing-box tun + nftables 默认拒绝 + 明确 DNS 策略。  
-3. host-gateway / 私网路由验证（`verify`）。  
-4. 系统级指纹最小集（与 PROJECT 一致）+ 文档化局限。
+以下与 **`.planning/PROJECT.md` v2.0** 对齐，作为「最小可验证透明远程 CLI」范围。
 
-**可延后**
+### Launch With（v2.0 MVP）
 
-- garble 与 UI 级「艺术化」输出。  
-- 对抗级反检测（超出粗粒度）。
+- [ ] **单一二进制 `cloud-claude` + `init` 配置** — 可安装、可指向私有网关；凭据落盘路径清晰。
+- [ ] **`claude` 参数透传 + TTY/信号/窗口/退出码** — 无此则「透明替代」不成立。
+- [ ] **当前目录到远端工作区映射（一种可交付方案即可）** — 先求可用与可解释，再求极致性能。
+- [ ] **容器侧 FUSE/sshfs 或等价前置条件** — 与镜像、`--device /dev/fuse` 等约束一致。
+- [ ] **失败路径清晰** — 与平台错误语义对齐，避免 silent hang。
 
----
+### Add After Validation（v2.x）
+
+- [ ] **端口转发或本地↔远端文件单路径拷贝** — 当用户需要「辅助 HTTP 预览」时再加；触发信号：高频工单/竞品 parity 压力。
+- [ ] **多映射后端可切换（Mutagen / 其他）** — 触发信号：大仓延迟或冲突问题显著。
+- [ ] **会话复用、连接池** — 触发信号：冷启动时延成为主投诉。
+
+### Future Consideration（v3+ / 其他里程碑）
+
+- [ ] **与 paused `claude-shell` 本地 Docker 模式统一 UX** — 明确不同里程碑边界后再做。
+- [ ] **组织级策略 CLI（配额、允许的映射根目录）** — 多租户成熟后。
+
+## Feature Prioritization Matrix
+
+| Feature | User Value | Implementation Cost | Priority |
+|---------|------------|---------------------|----------|
+| argv + TTY/信号/退出码透传 | HIGH | HIGH | P1 |
+| 配置与认证 | HIGH | MEDIUM | P1 |
+| 目录映射（可用方案） | HIGH | HIGH | P1 |
+| 清晰错误与可观测日志 | MEDIUM | LOW | P1 |
+| 出口/合规叙事与测试联动 | HIGH | MEDIUM（平台已有能力） | P1 |
+| 端口转发 | MEDIUM | MEDIUM | P2 |
+| 映射后端多种可选 | MEDIUM | HIGH | P2 |
+| 静默离线降级 | LOW | MEDIUM | P3（默认不做） |
+
+**Priority key:**
+
+- P1: v2.0 必须交付，否则里程碑不成立  
+- P2: 验证后增强  
+- P3: 明确不做或极后置  
+
+## Competitor Feature Analysis
+
+| Feature | VS Code Remote SSH | GitHub Codespaces CLI | Gitpod `gp` | Our Approach（cloud-claude） |
+|---------|-------------------|------------------------|-------------|------------------------------|
+| 远程工作区 / 文件夹 | 打开远程文件夹；核心 IDE 能力在远端 | 云侧 devcontainer + `ssh`/`code` 等入口 | 浏览器/桌面打开 workspace；`gp` 偏工作区内 | 非 IDE：**单一命令**转发到容器内 cwd |
+| 终端语义 | 远程集成终端 | `gh codespace ssh` | 工作区内 shell | **必须**对齐本地 `claude` 的 TTY/信号 |
+| 端口转发 | 内建 Ports / `LocalForward` | `gh codespace ports forward` 等 | `gp url` / `gp ports` | 可选 P2；非 MVP 核心 |
+| 生命周期管理 | 无（假设你已有机子） | `create/stop/delete/rebuild` 一等公民 | `gp stop`/timeout 等 | 复用平台主机生命周期；CLI 薄封装即可 |
+| 身份与配置 | SSH config、`known_hosts` | `gh auth`、GitHub 身份 | Gitpod 账户体系 | **自有网关 + 本地配置目录** |
+| 差异化卖点 | 编辑器体验 | GitHub 生态与 Codespaces SLA | 云工作区 + prebuild | **强制出口路径 + 私有单宿主部署** |
 
 ## Sources
 
-| 主题 | 来源 | Confidence |
-|------|------|------------|
-| Distrobox / Toolbx 目标与集成方式 | [Distrobox GitHub 文档](https://github.com/89luca89/distrobox)、[containers/toolbox README](https://github.com/containers/toolbox/) | HIGH |
-| 容器检测启发式 | [Skyper 博客](https://blog.skyplabs.net/posts/container-detection/)、[Docker run metrics / cgroup](https://docs.docker.com/config/containers/runmetrics/)、社区 cgroup v2 讨论 | MEDIUM（启发式非标准） |
-| proxychains / tun2socks 差异 | [ProxyChains-NG](https://github.com/rofl0r/proxychains)、[xjasonlyu/tun2socks](https://github.com/xjasonlyu/tun2socks)、社区对比文 | MEDIUM |
-| Claude Code 遥测与退出 | [Anthropic Data usage](https://docs.anthropic.com/en/docs/claude-code/data-usage) | HIGH |
-| host.docker.internal / host-gateway | [Docker Desktop networking](https://docs.docker.com/desktop/networking/)、[Moby host-gateway](https://github.com/moby/moby/pull/40007) 引入背景、Compose issue | HIGH-MEDIUM |
-| systemd 容器接口 | [systemd.io CONTAINER_INTERFACE](https://systemd.io/CONTAINER_INTERFACE/) | HIGH |
+- GitHub Docs: [Using GitHub Codespaces with GitHub CLI](https://docs.github.com/en/codespaces/developing-in-a-codespace/using-github-codespaces-with-github-cli)（HIGH：官方）  
+- GitHub CLI Manual: [gh codespace](https://cli.github.com/manual/gh_codespace)（HIGH：官方手册）  
+- Visual Studio Code Docs: [Remote Development using SSH](https://code.visualstudio.com/docs/remote/ssh)（HIGH：官方）  
+- Gitpod Docs: [Gitpod Workspace CLI (`gp`)](https://www.gitpod.io/docs/configure/workspaces/gitpod-cli)（HIGH：官方）  
+- 项目内上下文：`.planning/PROJECT.md`（v2.0 目标与约束）  
 
 ---
-
-## Gaps / 后续 Phase 专项
-
-- 指定 **Claude Code + Bun** 版本矩阵下的实际外连列表（需运行抓包或查阅发行说明，随版本变）。  
-- **Docker Desktop for Linux** 与纯 **Linux Engine** 行为差异的 CI 矩阵。  
-- Apple Silicon / rootless Docker 下 **tun/nft** 能力边界。
+*Feature research for: cloud-claude 透明远程 CLI（v2.0）*  
+*Researched: 2026-04-15*

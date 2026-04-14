@@ -1,338 +1,261 @@
-# Domain Pitfalls：claude-shell 透明 Docker CLI 包装器（追加到既有 Docker 体系）
+# Pitfalls Research
 
-**Domain:** 在已有「控制面 + host-agent + `--network=none` + WireGuard/sing-box」模型上，增加独立 Go 二进制：透明拉起容器、TTY 透传、指纹与 `/proc` 伪装、sing-box tun、garble 交付与跨平台镜像。
-**Researched:** 2026-04-09
-**Overall confidence:** MEDIUM–HIGH（Docker/sing-box/官方文档为主；Anthropic 行为以公开文档与 issue 为准，属 MEDIUM）
+**Domain:** cloud-claude 透明远程 CLI + 本地目录到远端容器实时映射（在现有 SSH Proxy、sing-box tun + nftables、`--network=none` 受管容器上叠加）
+**Researched:** 2026-04-15
+**Confidence:** MEDIUM（核心约束来自本项目 `PROJECT.md` 与公开文档/社区报告；部分为场景归纳，需在集成验证中落地）
 
----
+## Critical Pitfalls
 
-## 总览：与「从零造容器」不同的集成风险
+### Pitfall 1: 在 `--network=none` 的容器里假设「能连上用户本机」或「能随意开第二条 TCP」
 
-在**已有**系统上追加本地透明包装器时，典型错误不是「会不会用 Docker」，而是：**信号与 TTY 语义、宿主机与容器身份映射、Docker Desktop 与 Linux 生产路径差异、为 tun/nft 追加的 capability 与最小权限的平衡、以及把「反检测」当成可承诺的产品特性**。下列条目按主题编号，每条包含：会出什么问题、征兆、预防、建议由哪类工作项承接（对应 v1.3 里程碑内的子域）。
+**What goes wrong:**
+目录映射若在**容器内**发起 `sshfs`/额外 SSH/Mutagen agent，却未显式设计**控制面注入的可达路径**（例如宿主机侧 Unix socket、已打通的 `host-gateway`、或经 Proxy 的单一信令通道），会出现挂载超时、间歇性断连，或误把同步流量绕到错误接口。项目已采用 `--network=none` 从根上砍掉 Docker 默认网卡旁路；若再叠一层「容器内自连外网」的假设，会与该约束直接冲突。
 
----
+**Why it happens:**
+开发者在笔记本上调试时习惯「容器能访问宿主机 `host.docker.internal`」；在 Linux 裸机 Docker 与本项目「无默认网络栈」模型下不成立。文件同步方案文档常按「有 IP 可达」写，未区分**信令/数据平面**。
 
-## 1. TTY：raw 模式、信号转发、终端缩放
+**How to avoid:**
+- 在设计阶段固定「映射数据走哪条 pipe」：仅 SSH 子系统、反向转发、`cloud-claude`↔Proxy 已有连接复用，或宿主机 host-agent 显式开的 socket；禁止依赖容器内自发现路由。
+- 若采用 Mutagen 等需在远端跑 agent 的方案，明确 agent 的启动方式与网络可达性由**谁**保证（宿主机注入 vs 用户态转发），并写清与 sing-box/nftables 的边界。
 
-### 会出什么问题
+**Warning signs:**
+挂载命令长时间卡在握手；仅在「有默认 bridge」的环境能复现成功；抓包发现同步尝试走非预期接口。
 
-- **PID 1 与信号：** Linux 下容器内 PID 1 对默认动作为「忽略」的信号（如 `SIGINT`）行为特殊；若包装命令未正确处理 `SIGTERM`/`SIGINT`，表现为 Ctrl+C 无效或容器僵死（Docker 文档明确提示 PID 1 特性）。可用 `--init` 或确保主进程非 PID 1 且正确转发。
-- **SIGWINCH：** 分配伪 TTY（`-t`）时，终端窗口变化会向容器内进程转发 `SIGWINCH`。部分守护进程（历史上如 Apache）将 `SIGWINCH` 用作**优雅退出**而非「窗口尺寸变化」，导致一resize 就退出——这是应用语义问题，不是 Docker bug。
-- **信号代理：** 默认 `--sig-proxy=true`（foreground attach 场景）会把宿主收到的一些信号传给容器进程；若需要 resize 但不希望某些信号到达子进程，需理解 `--sig-proxy` 与「是否 `-t`」的组合效果。
-- **Raw 模式：** 全屏 TUI（含部分 CLI 编辑器）依赖宿主 stty raw；若包装层额外包了一层 shell 或未使用 `-it`，可能出现按键错乱、Ctrl+C 传到错误进程。
-
-### 征兆
-
-- 拉终端窗口后服务无故退出、日志出现 `caught SIGWINCH, shutting down`。
-- Ctrl+C 无法结束、需 `docker kill`。
-- 交互式 CLI 方向键/补全异常。
-
-### 预防策略
-
-- 对「类 REPL」的 Claude Code：**明确使用 `-i` + `-t`**，并在 Go 侧若用 `exec`/`attach`，保证与 `docker run` 行为一致；评估 **`docker run --init`** 或 entrypoint 用 **`tini`/`dumb-init`** 改善信号与僵尸进程。
-- 文档与集成测试覆盖：**resize、SIGINT、EOF**。
-- 若子进程对 SIGWINCH 过敏：查阅该进程文档，或避免以 PID 1 直接跑该进程、或调整信号处理（产品层决策，慎用 `--sig-proxy=false` 以免误伤 Ctrl+C）。
-
-### 建议负责范围
-
-**Go 包装器与容器入口（v1.3：本地 `claude` 二进制 + `docker run` 参数契约）**；与既有 SSH 路径解耦，需单独 UAT。
-
-**Sources (HIGH/MEDIUM):** [Docker run — interactive / tty / stop-signal / init](https://docs.docker.com/engine/reference/commandline/run/)，[Docker attach — sig-proxy](https://docs.docker.com/engine/reference/commandline/attach/)；SIGWINCH 与 Apache 等行为见 [docker-library 讨论](https://github.com/docker-library/php/issues/64)（MEDIUM：应用特定）。
+**Phase to address:**
+**目录映射方案选型与设计评审**（在写任何挂载代码之前）
 
 ---
 
-## 2. Bind mount 与 UID/GID 错位
+### Pitfall 2: Docker 内 FUSE/sshfs 权限与发行版安全模块「看起来加了 `--device /dev/fuse` 仍失败」
 
-### 会出什么问题
+**What goes wrong:**
+镜像里装了 `sshfs`，运行时仍出现 `Permission denied`、`fusermount` 失败、或仅在部分宿主机（常见为启用 AppArmor 的 Ubuntu）上失败。团队误以为「`--cap-add SYS_ADMIN` + `/dev/fuse`」永远足够。
 
-- 容器内用户 UID 与宿主机目录所有者不一致时：**写权限拒绝、创建文件归属为 root/意外 UID**，导致 Claude Code 写 `~/.claude`、项目目录或 socket 失败。
-- 使用 user namespace / `--user` 时，映射规则与 **volume 上已有文件** ACL 交互复杂，易出现「宿主可读、容器不可写」。
+**Why it happens:**
+除 `CAP_SYS_ADMIN` 与 `/dev/fuse` 外，默认 Docker 的 **AppArmor/seccomp** 可能拦截 mount 相关行为；不同内核与 moby 版本对 FUSE 的宽松策略不一致（社区长期讨论见 docker/for-linux、moby issue）。生产宿主机与开发机策略不一致时问题延后暴露。
 
-### 征兆
+**How to avoid:**
+- 在**目标发行版**上用最小复现容器验证 FUSE（记录是否需 `security-opt`、是否仅限特定内核版本）。
+- 将「允许的挂载选项、是否 `allow_other`、是否依赖 `/etc/fuse.conf` 的 `user_allow_other`」写进镜像与运行契约，并在 CI 用同款内核/安全模块矩阵做一次。
 
-- `Permission denied` 仅在挂载卷上出现；容器内 `id` 与宿主 `ls -n` 不一致。
-- 日志或 IDE 报无法写配置目录。
+**Warning signs:**
+本地 macOS Docker Desktop 正常，Linux 裸机失败；`dmesg`/audit 中出现 mount 被拒；仅升级 Docker 后行为变化。
 
-### 预防策略
-
-- 在镜像或 entrypoint 中 **固定非 root 运行**并文档化 UID；或在启动前用 **`--user "$(id -u):$(id -g)"`** 与宿主对齐（需镜像支持该 UID 家目录）。
-- 对配置与缓存目录：**命名卷**或启动时 `chown`（谨慎：扩大入口脚本复杂度）。
-- 将 **「可写路径契约」** 写入 `verify` 子命令与集成测试。
-
-### 建议负责范围
-
-**镜像用户模型 + 包装器默认挂载表（v1.3）**；与「宿主机项目目录 bind mount」强相关。
-
-**Sources:** 通用 Linux 文件权限行为；**LOW** 若无具体镜像设计需在产品阶段实测。
+**Phase to address:**
+**受管镜像与容器创建参数硬化**（与 host-agent 创建逻辑同一阶段）
 
 ---
 
-## 3. Docker Desktop：与 Linux 生产环境的差异
+### Pitfall 3: sshfs 的 UID/GID、`allow_other` 与现有 `/workspace` bind 模型混用导致「能跑 claude 但写坏权限」
 
-### 会出什么问题
+**What goes wrong:**
+已有设计将宿主机 `homeDir` bind 到容器 `/workspace`。若再叠 sshfs 到同一路径或子路径，可能出现**双源写入**、权限位不一致、或容器内进程 UID 与 FUSE `user_id`/`default_permissions` 不一致，表现为偶发 `Permission denied`、可执行位丢失、或 `claude`/git 在远端创建的文件回到本机后属主错乱。
 
-- **`--network host`：** 在 macOS/Windows 上 historically **不等同于 Linux host 网卡**（守护进程在 VM 内）；文档与社区长期建议用 **端口映射** 或 **host-gateway**。产品若依赖「host 网络 = 宿主 Linux」，在 Desktop 上会失真。
-- **Host 网络模式可用性：** Docker Desktop 设置里 **「Enable host networking」** 等选项影响 `--net=host` 与 localhost 互通行为；团队内若未统一版本/开关，会出现「我机器可复现你机器不行」。
-- **`--network none`：** 一般仍可用来去掉默认 bridge，但 **后续再注入 veth/tun** 的路径依赖 **Linux 内核能力**；Desktop 的 VM 内核版本、模块与 nft 行为与生产裸金属可能不同。
-- **性能与启动：** 文件系统走 osxfs/virtiofs，**大量小文件或 node_modules bind** 会放大与 Linux 的差异。
+**Why it happens:**
+sshfs 对权限的语义依赖挂载选项与 OpenSSH 服务端配置；FUSE 与 bind mount 的叠加顺序容易被忽略；「实时映射」需求压力下容易选「先挂载能用再调权限」。
 
-### 征兆
+**How to avoid:**
+- 明确**单一写路径**：要么以 bind 为主、同步为辅，要么以同步工具为权威，避免两处同时作为「真相」。
+- 为 sshfs 固定一组挂载选项（如 `default_permissions`、`uidfile`、`gid` 等）并与镜像内运行用户对齐；在文档中列出**禁止**的选项组合。
+- 用自动化用例验证：创建文件、chmod、git clone、可执行脚本、符号链接。
 
-- 仅 Mac 上 `host-gateway`、localhost 回连、或 sing-box 路由异常。
-- CI（Linux）通过，开发者 Desktop 失败。
+**Warning signs:**
+仅部分文件权限错误；本地 `ls -l` 与容器内不一致；CI 与用户机器行为不一致。
 
-### 预防策略
-
-- 在 PROJECT 约束中明确：**生产仍为单台 Linux**；Desktop 仅作开发级 **Tier-2** 支持，文档写明差异与推荐（Linux VM 或远端 dev）。
-- 对 `host.docker.internal` / **`--add-host=host.docker.internal:host-gateway`** 建立单一事实来源（compose/run 参数表）。
-- 网络正确性门禁以 **Linux 裸机/等同 VM** 为准绳，Desktop 上不重复承诺「三重校验」同级保证。
-
-### 建议负责范围
-
-**文档与验证矩阵 + 可选的 dev override（v1.3）**；核心仍落在 **Linux host-agent 路径**。
-
-**Sources (MEDIUM):** [Docker Desktop Settings — Network / host networking](https://docs.docker.com/desktop/settings-and-maintenance/settings/)；[Docker 网络模式概述（社区/博客类作辅证）](https://oneuptime.com/blog/post/2026-01-25-docker-container-networking-modes/view)。
+**Phase to address:**
+**目录映射与权限集成测试**（与 E2E 同一阶段，早于「体验打磨」）
 
 ---
 
-## 4. `/proc` bind mount、`--privileged` 与 `CAP_SYS_ADMIN`
+### Pitfall 4: SSH 多路复用（ControlMaster）与「僵死 master」——文件通道与交互会话抢同一条命
 
-### 会出什么问题
+**What goes wrong:**
+为加速连接启用 `ControlMaster`/`ControlPersist` 后，网络闪断或宿主机休眠后出现 **mux 客户端挂死**、`Broken pipe`、`mux_client_request_session` 超时；或 **MaxSessions** 达到上限导致新会话（含 sftp/子通道）被拒。若 `cloud-claude` 与 sshfs/Mutagen 复用连接，单点故障会同时拖垮 TTY 与目录同步。
 
-- **在容器内执行 `mount --bind`（含绑定 `/proc` 下某些路径）需要 `CAP_SYS_ADMIN`**；默认 Docker 丢弃 capability，**即使 UID 0 也会 `permission denied`**（mount(2) 语义）。
-- **`--privileged`** 会授予**全部 capabilities** 并放宽 device 访问，攻击面远大于「只为 mount」；合规与客户环境可能直接否决。
-- **runc 对 /proc 挂载有安全检查**（`checkProcMount`）：部分 `/proc/...` 绑定会被拒绝，错误信息为「cannot be mounted because it is inside /proc」——与「只加 SYS_ADMIN」仍不够的情况并存。
-- **绑定伪造的 `cpuinfo`/`meminfo`：** 若用宿主文件覆盖容器内 `/proc/cpuinfo`，需通过 **Docker `-v` 在创建时挂载**，而非依赖容器内再 mount；容器内二次 mount 受 capability 与安全配置约束更大。
+**Why it happens:**
+多路复用把多条逻辑会话绑在同一 TCP 上；master 进程异常退出后控制套接字残留；OpenSSH 服务端默认 `MaxSessions` 较小；部分环境上控制套接字放在 **overlayfs** 上会与 Unix domain socket 行为不睦（社区常用改 `ControlPath` 到 `shm` 等路径缓解）。
 
-### 征兆
+**How to avoid:**
+- 为「交互 TTY」与「大流量/长驻同步」设计**连接策略**：共享 master 或独立 TCP，二选一写清；若共享，必须配置 **ServerAliveInterval/CountMax**、控制 `ControlPersist`、并实现**陈旧 socket 检测与强制重建**（如超时后 `ssh -O exit` 等价逻辑）。
+- 若自建 Proxy（非本机 OpenSSH 客户端）：在 Go 侧实现等价策略，避免假设 OpenSSH 已替你处理所有 mux 边界。
+- 服务端按需调高 `MaxSessions` 并理解**仅新连接**生效，旧 master 仍可能占满旧限制（参见常见 mux 文章与 OpenSSH 行为）。
 
-- entrypoint 脚本中 `mount --bind` 失败；或仅在加了 `--privileged` 才成功。
-- 安全扫描报告 capability 过多。
+**Warning signs:**
+偶发「第二次打开必卡」；断网恢复后必须删 socket 才能恢复；并发 `git`/同步时突增会话失败。
 
-### 预防策略
-
-- **优先在 `docker run` 层用 `-v` 注入伪造文件**，避免在容器内执行 mount。
-- 若必须在容器内 mount：**最小化**为 `--cap-add=SYS_ADMIN` + 必要 `--security-opt`、并审计是否还需 `/dev` 访问；**避免习惯性 `--privileged`**。
-- 对 **gVisor、rootless、Podman** 等替代运行时提前声明不支持或需单独测试（嵌套与 mount 行为差异大）。
-
-### 建议负责范围
-
-**容器安全基线评审（v1.3 网络/指纹阶段）**；与「反容器检测」条目联动——伪造 proc 的**工程实现**应偏向 **OCI 挂载** 而非容器内特权 mount。
-
-**Sources (HIGH):** [Docker — runtime privilege and Linux capabilities](https://docs.docker.com/engine/reference/run/#runtime-privilege-and-linux-capabilities)；[mount(2) 需要 CAP_SYS_ADMIN 的通用说明](https://stackoverflow.com/questions/36553617/how-do-i-mount-bind-inside-a-docker-container)（MEDIUM）；[runc checkProcMount 讨论](https://github.com/opencontainers/runc/issues/2826)（MEDIUM）。
+**Phase to address:**
+**连接与会话管理设计**（`cloud-claude` 核心实现阶段）
 
 ---
 
-## 5. sing-box TUN 在容器内：能力与设备、常见误配
+### Pitfall 5: 实时双向同步的「一致性幻觉」——git 切换、容器重建与冲突队列爆炸
 
-### 会出什么问题
+**What goes wrong:**
+用户 `git checkout`、本地批量格式化或容器侧构建产物写入后，出现**反向覆盖**、幽灵冲突、或「列表里全是 unresolved conflict」。产品看起来像实时，实则**合并语义**与**会话生命周期**未与容器生命周期对齐。
 
-- TUN 创建与路由改写通常需要：**`NET_ADMIN`**；访问 `/dev/net/tun` 需将设备暴露进容器（`--device /dev/net/tun` 或等价）。
-- sing-box 文档说明：**非特权模式**下 TUN 的地址/MTU **不会自动配置**，需自行保证配置正确（易配错导致「进程起来但无流量」）。
-- **`auto_route` + `auto_redirect`（Linux）：** 文档推荐用于与 **Docker bridge** 共存及性能；若与 **nftables 默认拒绝**、mark、策略路由叠加，可能出现 **规则顺序冲突、环路或本机流量未进 tun**。
-- **MPTCP：** 1.13+ 对 MPTCP 有特殊处理；未正确 `exclude_mptcp` 时可能出现 **直连泄漏或连接异常**（与 Apple 客户端相关流量文档一致）。
-- **UID 分流：** `include_uid` / `exclude_uid` 仅在 Linux 且 `auto_route` 下生效——与容器内跑 claude 的用户 UID 设定强相关，配错则 **部分进程绕开 tun**。
+**Why it happens:**
+双向同步类工具（如 Mutagen）用三向合并；若会话 ancestor 与真实文件树脱节（容器重建、volume 清空、会话未重置），两侧会同时表现为「新建」，冲突激增。社区 issue 中常见「git checkout 后从 beta 拉回」类报告，根因常是**会话与目标生命周期不匹配**。
 
-### 征兆
+**How to avoid:**
+- 为「容器重建 / 用户主机重启 / 会话 reset」定义明确状态机：何时 `flush`、何时重建同步会话、是否默认忽略 `.git`/`node_modules` 等。
+- 选定默认同步模式（如以本地为权威 vs 真正双向）并在 CLI 暴露**可理解的冲突诊断**（路径、建议操作），避免 silent data loss。
 
-- sing-box 日志显示 tun 已 up，但 `curl` 出口 IP 仍非预期；或仅部分 TCP 走代理。
-- DNS 仍走宿主 resolver（泄漏）。
+**Warning signs:**
+小团队单机难复现；用户切换分支后目录「回滚」；`sync list` 中长期堆积冲突。
 
-### 预防策略
-
-- 能力/device 清单写死：**`NET_ADMIN` + `/dev/net/tun` + nft 权限模型**（是否与现有 host-agent 统一由实现决定）。
-- 使用与生产 **相同版本 sing-box**（PROJECT 已锁 v1.13.3），升级前对照 [Tun 文档](https://sing-box.sagernet.org/configuration/inbound/tun/) 变更日志。
-- 将 **strict_route、route_exclude、loopback_address、exclude_mptcp** 纳入 `verify` 与自动化网络测试。
-
-### 建议负责范围
-
-**sing-box + nftables 集成（v1.3 核心）**；与 v1.1 已有代理路径复用时要防 **两套防火墙规则互相踩**。
-
-**Sources (HIGH):** [sing-box Tun inbound 文档](https://sing-box.sagernet.org/configuration/inbound/tun/)。
+**Phase to address:**
+**同步语义与运维可观测性**（与 `cloud-claude` 配置模型同一阶段）
 
 ---
 
-## 6. 容器启动延迟：如何压到可接受
+### Pitfall 6: TTY/信号/退出码「像 ssh」与「像本地 claude」之间的缺口
 
-### 会出什么问题
+**What goes wrong:**
+未分配 PTY 时 **Signal 转发行为与 OpenSSH 服务端策略不一致**；未处理 **SIGWINCH** 导致全屏 TUI、进度条、表格错位；raw mode 未在异常路径恢复，终端留在乱码状态。用户感知为「偶尔 Ctrl+C 停不下来」「resize 后界面坏掉」「退出后 shell 坏了」。
 
-- **冷启动 pull**：首次拉镜像耗时可掩盖「二进制慢」 perception，引发支持成本。
-- **层过多 / 未合并 RUN**：每次构建变更导致缓存失效。
-- **入口脚本串行**：等 tun 就绪再等 claude，未做并行或 readiness 拆分。
-- **Desktop 上文件系统**：bind mount 巨大目录会拖慢启动。
+**Why it happens:**
+`golang.org/x/crypto/ssh` 提供 `RequestPty`、`WindowChange` 等，但**调用方**必须接本地 `SIGWINCH`、在退出路径 `term.Restore`；信号与 PTY、stderr 合流等行为需与远端 `sshd` 配置对齐。部分 issue 讨论无 PTY 时 signal 语义受限。
 
-### 征兆
+**How to avoid:**
+- 明确 **Claude Code 是否必须 PTY**；若必须，接受 stderr 合流等限制或设计替代 IPC。
+- 实现：监听 `SIGWINCH` → `session.WindowChange`；统一 defer 恢复终端；对退出码从 `Session.Wait()` 取远端状态并映射到本地 `os.Exit`。
+- **跨平台：** Windows 上无 `SIGWINCH`，需降级策略（固定尺寸或控制台 API），避免 Linux 专用逻辑静默失败。
 
-- 用户抱怨「第一次极慢」；后续仍慢则查镜像体积与 entrypoint。
+**Warning signs:**
+仅交互场景失败、脚本模式正常；resize 必现；特定 `sshd` 版本上 signal 异常。
 
-### 预防策略
-
-- **多阶段构建**、删除包管理器缓存、**稳定 base digest**；文档提供 **预拉取** `docker pull`。
-- 将 **健康检查** 拆为：网络栈就绪 / Claude Code 进程就绪 / 认证可用。
-- 对包装器：**复用已存在容器**（若产品设计允许）比每次 `run --rm` 更快——需权衡隔离与状态。
-
-### 建议负责范围
-
-**镜像流水线 + 包装器默认策略（v1.3）**。
-
-**Sources:** Docker 最佳实践（镜像层）为通用知识；**MEDIUM**。
+**Phase to address:**
+**TTY 与信号透传专项**（`cloud-claude` 与 Proxy 联调阶段）
 
 ---
 
-## 7. Claude Code 在容器内：自动更新、登录状态、是否会「弄坏」容器
+### Pitfall 7: 网络隔离策略与「文件通道」竞争——误把同步当一般出网流量
 
-### 会出什么问题
+**What goes wrong:**
+团队尝试让容器内工具经 **sing-box tun** 访问「用户笔记本」或任意公网 endpoint 做同步，与产品「受控出口 IP」叙事混淆；或 nftables 规则误伤 **宿主机注入通道**（例如到 host-agent 的 unix socket 或已允许的转发），表现为间歇性同步失败而 SSH 交互仍存活。
 
-- **原生安装通道**文档写明：会**后台检查更新**并在下次启动生效；需 **显式关闭** 时应用官方推荐方式。
-- 官方推荐在 `settings.json` 的 `env` 中设置 **`DISABLE_AUTOUPDATER=1`**（`autoUpdates` 等旧键曾被弃用或引发混淆，GitHub 有多起 issue）。
-- 若仍尝试自更新：可能因 **权限、只读层、网络策略** 导致 **半升级**、二进制消失或路径错乱（issue 社区有「self-update 卸载/找不到命令」类报告）。
-- **认证状态**：通常落在用户目录下配置与密钥文件；容器无持久卷时 **每次重建需重新登录**；有卷时需明确 **与宿主隔离** 以防串账号。
+**Why it happens:**
+出网门禁与「到控制面的可信路径」是两条故事线；若未在架构图上标出**文件数据平面**，容易在加规则时一刀切。
 
-### 征兆
+**How to avoid:**
+- 在架构文档中单独画 **文件/同步平面**：与 tun 出口的关系（正交 / 复用 / 显式例外）。
+- 变更 nftables/sing-box 规则时增加回归：**仅验证**「代理出口 IP」不够，须加「映射通道可用」探测。
 
-- 容器内 `claude` 版本漂移与镜像 tag 不一致；更新失败横幅。
-- 无卷时每次启动要求登录。
+**Warning signs:**
+升级网络模块后映射才坏；与出口测试 API 结果无相关性却仍失败。
 
-### 预防策略
-
-- 镜像内交付路径下 **默认设置 `DISABLE_AUTOUPDATER=1`**，由产品节奏统一升级镜像；或在文档中允许更新但 **声明不支持矩阵**。
-- **命名卷**挂载 `~/.claude`（或等价路径）并文档化；CI 测「重启容器仍登录」可选。
-- 将 **`claude doctor`** 纳入 `verify` 或故障排查手册。
-
-### 建议负责范围
-
-**Claude Code 安装与配置阶段（v1.3）**；与 **镜像版本发布流程** 绑定。
-
-**Sources (MEDIUM):** [Claude Code Advanced setup — Auto-updates](https://code.claude.com/docs/en/setup)；[anthropics/claude-code issues — autoupdate / DISABLE_AUTOUPDATER](https://github.com/anthropics/claude-code/issues/3479)（行为以官方最新文档为准）。
+**Phase to address:**
+**网络与映射集成回归**（任何 RoutingProvider/防火墙变更的 gate）
 
 ---
 
-## 8. 反检测：Anthropic 侧容器检测与「从内检测难度」
+### Pitfall 8: 跨平台（macOS vs Linux）——Docker、文件系统语义与监视能力差异
 
-### 会出什么问题
+**What goes wrong:**
+- **Docker Desktop（macOS）** 与 **Linux 裸机**：路径、VM 边界、性能与 inotify 行为不同；同一同步工具在 mac 上「能跑」在 Linux CI 暴露事件丢失或超高延迟。
+- **大小写 / 符号链接 / xattr**：Linux 与 macOS 默认文件系统语义不同，双向同步时易出现「一端改名、另一端删建」类冲突。
+- **FUSE：** macOS 用户空间与 Linux 容器内 FUSE 不是同一套运维故事；在 Mac 上验证通过不能替代 Linux 宿主上的受管容器验证。
 
-- **删除 `/.dockerenv`、改 cgroup** 等可被用户态篡改的路径，**无法对抗**具备宿主机协作或 hypervisor 视图的检测；对方若在 **客户端二进制或服务器侧启发式** 增加规则，属于持续 arms race。
-- **从内检测容器：** 低权限下仍可观察 **cgroup、mountinfo、init 进程、DMI、时钟与 CPU 特征、驱动缺失** 等；难度随检测深度变化，不应在对外承诺中写死「不可检测」。
-- **合规风险：** 「规避平台技术措施」可能触及服务条款与法律风险——产品应聚焦 **透明代理与安全隔离的工程诚实表述**，而非对抗性营销。
+**Why it happens:**
+远程开发工具链普遍以「先在 Mac 上好用」为优先级；本项目部署基线是 **Linux 单宿主机**，若验证矩阵缺 Linux，问题会在客户环境爆发。
 
-### 征兆
+**How to avoid:**
+- 将 **Linux 宿主 + 受管镜像** 作为权威测试平台；macOS 仅作为开发者 CLI 体验测试。
+- 增加「大仓库 + 分支切换 + 构建产物目录忽略」类场景；对 ignore 规则与 case-sensitivity 做专项用例。
 
-- 服务端行为突变（额外验证、风控）；内部 `verify` 全绿仍被策略拒绝。
+**Warning signs:**
+仅 Mac 复现的 bug；用户报告「Linux 上慢 10 倍」；`.git` 相关诡异冲突。
 
-### 预防策略
-
-- 将「反检测」降级为 **最佳努力指纹统一**（与 `/etc/machine-id`、proc 注入目标一致），并在路线图标注 **依赖外部政策**。
-- **服务端契约**以官方 API 文档与 ToS 为准；预留 **非欺骗性** 的企业部署叙事（受控出口、审计）。
-
-### 建议负责范围
-
-**产品/合规评审 + 技术实现分离**；工程上归 **v1.3 指纹与 verify**，商业与法律归 **项目决策**。
-
-**Sources:** 无权威第三方「检测难度」指标；本段 **LOW–MEDIUM**（推理与行业常识）。
+**Phase to address:**
+**跨平台 CI 与发布前 checklist**（Beta 前必须完成）
 
 ---
 
-## 9. garble 混淆：已知问题、不能保护的面、运行时开销
+## Technical Debt Patterns
 
-### 会出什么问题
+| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
+|----------|-------------------|----------------|-----------------|
+| 容器内 sshfs 为赶进度临时 `--privileged` | 最快打通演示 | 安全基线崩塌，与「最小权限」运维承诺冲突 | **永不**；仅允许在隔离开发机上的单次 PoC |
+| 复用 OpenSSH mux 但不实现陈旧 socket 清理 | 代码少 | 现场「随机卡死」，排障成本极高 | MVP 可短期存在，但必须配监控与文档化 workaround |
+| 双向同步默认不忽略构建产物 | 配置简单 | 冲突与 IO 放大，体验差评 | 可在内测期接受，发布前必须有合理默认 ignore |
+| Linux 上不测仅在 Docker Desktop 上测 | 迭代快 | 生产 Linux 翻车 | 内测可，**对外发布前不可** |
 
-- **反射与跨包类型：** historically 为 garble 主要破坏源；近年有 **反射处理 rework**（如 PR/Issue #884、#889 方向），但仍可能在与 **重度反射、Wails、某些 RPC** 组合时出问题。
-- **官方自述：** `-literals` 可逆、可能拖慢；`-tiny` 去掉 panic 信息**加大排障难度**；**导出方法**等仍有不混淆策略边界。
-- **`runtime/debug.ReadBuildInfo`、`runtime.GOROOT`** 等与构建信息相关的 API 在混淆二进制中可能异常（官方 caveats）。
-- **安全预期：** 混淆 **不** 等于加密或防逆向；仅提高成本。
+## Integration Gotchas
 
-### 征兆
+| Integration | Common Mistake | Correct Approach |
+|-------------|----------------|------------------|
+| sshfs in Docker | 只加 `/dev/fuse` 不加能力/安全模块 | 按目标宿主机验证 `SYS_ADMIN` + 设备 + 必要时安全 profile；记录矩阵 |
+| Mutagen / 类同步 | 会话不随容器生命周期重置 | 容器重建时结束/重建会话或显式 `reset`，避免 ancestor 错乱 |
+| golang.org/x/crypto/ssh | 未转发 WINCH / 未恢复 raw 终端 | `RequestPty` + `WindowChange` + defer `Restore`；非 POSIX 平台降级 |
+| 现有 SSH Proxy | 假设与 OpenSSH 客户端 mux 行为 1:1 | 明确自建客户端的 keepalive、重连、会话上限策略 |
+| sing-box + nftables | 把「同步流量」误当泄漏去封 | 区分控制面/同步平面与 tun 出口；规则变更走联合回归 |
 
-- 仅 garble 构建崩溃或间歇故障；堆栈无符号难以诊断。
+## Performance Traps
 
-### 预防策略
+| Trap | Symptoms | Prevention | When It Breaks |
+|------|----------|------------|----------------|
+| sshfs + 大量小文件（node_modules） | IO 延迟极高、claude 卡顿 | 忽略目录、改用打包同步、或单向同步构建依赖 | 中型前端仓库即暴露 |
+| 多路复用单 TCP 扛大文件与交互 | 互相阻塞、延迟尖刺 | 分离数据连接或限流/排队 | 同步与 TTY 同时高负载 |
+| macOS 宿主文件轮询 | CPU 与延迟差 | Linux 为主验证路径；Mac 上降低预期 | 开发者本机「感觉慢」 |
 
-- **CI 双轨：** `go build` 与 `garble build` 全量测试；发布前对 **Docker 驱动路径** 做冒烟。
-- 谨慎开启 **`-literals`**；为生产崩溃保留 **可开关** 的诊断构建（内部渠道）。
-- 阅读 [garble README caveats](https://github.com/burrowers/garble) 与当前 Go 版本要求。
+## Security Mistakes
 
-### 建议负责范围
+| Mistake | Risk | Prevention |
+|---------|------|------------|
+| 为 FUSE 长期放宽 `privileged` 或过大 seccomp | 容器逃逸面增大 | 最小权限迭代；特权范围可审计 |
+| 同步通道未鉴权或误绑公网 | 用户目录暴露 | 仅走已认证 SSH/控制面；二次校验路径与身份 |
+| 在日志中打印同步路径与密钥材料 | 凭据与隐私泄漏 | 结构化日志脱敏 |
 
-**发布工程与 CI（v1.3 收尾）**；非功能开发前置条件。
+## UX Pitfalls
 
-**Sources (HIGH):** [garble 文档与 caveats（pkg.go.dev / 仓库 README）](https://pkg.go.dev/mvdan.cc/garble)；[burrowers/garble issues — reflection](https://github.com/burrowers/garble/issues/884)。
+| Pitfall | User Impact | Better Approach |
+|---------|-------------|-----------------|
+| 冲突时 silent 丢一边 | 用户不信任「透明」 | 明确提示与可重试操作 |
+| 断线后终端未恢复 | 认为「坏了」 | 保证 defer 恢复 tty；提示重连命令 |
+| 「实时」实际延迟数秒 | 与本地 claude 预期不符 | 产品文案诚实；大仓库提示 |
 
----
+## "Looks Done But Isn't" Checklist
 
-## 10. 跨平台：macOS arm64 / amd64 镜像与 Rosetta
+- [ ] **目录映射：** 是否在「Linux 裸机 Docker + `--network=none` + 当前 nftables/sing-box」下测过，而非仅在 Docker Desktop？
+- [ ] **FUSE：** 是否在**启用 AppArmor 的 Ubuntu 类宿主**上测过挂载与卸载（含异常退出后 `fusermount -u`）？
+- [ ] **权限：** 容器内 `claude` 创建的文件回到本机后，属主/权限是否与预期一致（含可执行位、符号链接）？
+- [ ] **SSH：** 断网、休眠、服务端 `sshd` 重启后，**无需用户手动删 socket** 能否恢复？若不能，是否有明确报错与一键恢复？
+- [ ] **同步：** `git checkout`/大规模删除后是否出现反向覆盖或冲突积压？`git status` 在两侧是否一致？
+- [ ] **TTY：** resize、Ctrl+C、管道/非交互模式是否与官方 `claude` 行为一致？
+- [ ] **网络：** 变更防火墙或 sing-box 出站规则后，映射与出口 IP 测试是否**同时**绿？
+- [ ] **跨平台：** macOS 上开发的 `cloud-claude` 是否在 Linux 上做过集成测试？
 
-### 会出什么问题
+## Recovery Strategies
 
-- **多架构 manifest：** 若只构建 `linux/amd64`，在 Apple Silicon 上常通过 **qemu/binfmt** 仿真运行，**慢且偶发兼容问题**；应发布 **arm64** 或明确仅支持 Rosetta/x86_64 Docker。
-- **Rosetta：** 在 Mac 上运行 amd64 容器依赖 **Rosetta 2 + Docker 设置**；团队需统一，否则「同样 Dockerfile 不同机器」。
-- **基础镜像选择：** `FROM` 应使用 **manifest list** 或显式 `--platform` 构建矩阵，避免 CI 与开发者本地架构漂移。
+| Pitfall | Recovery Cost | Recovery Steps |
+|---------|---------------|----------------|
+| 僵死 mux socket | LOW | 提供等价 `ssh -O exit` 或删已知路径 socket；文档化 |
+| FUSE 挂载泄漏（异常退出） | MEDIUM | 容器内 watchdog 清理；重启容器 |
+| 同步祖先错乱 | MEDIUM–HIGH | 重置同步会话 + 可选全量对齐；用户确认冲突策略 |
+| 终端 raw 未恢复 | LOW | 用户 `reset`；客户端修复 defer |
 
-### 征兆
+## Pitfall-to-Phase Mapping
 
-- `exec format error`、极慢、或仅 Intel Mac 可运行。
+| Pitfall | Prevention Phase | Verification |
+|---------|------------------|--------------|
+| `--network=none` 与映射路径 | 目录映射方案设计 | 架构图 + 无默认网卡下的连通性证明 |
+| FUSE/安全模块 | 镜像与容器参数硬化 | 多宿主矩阵挂载测试 |
+| UID/权限与 bind 混用 | 权限与集成测试 | 自动化权限与 git 用例 |
+| SSH mux 稳定性 | 连接与会话管理实现 | 断网/休眠/并发会话压测 |
+| 同步一致性 | 同步语义与可观测性 | git/分支/重建容器场景 |
+| TTY/信号 | TTY 专项与联调 | 交互脚本、resize、信号对比 |
+| 网络策略与文件通道 | 网络变更联合回归 | 规则变更前后映射+出口双测 |
+| 跨平台 | CI 与发布 checklist | Linux-first 流水线 |
 
-### 预防策略
+## Sources
 
-- Release 提供 **`linux/arm64` + `linux/amd64`** 或文档写明仅一种；`docker buildx build --platform` 入 CI。
-- 在 PROJECT 的「本地 claude-shell」中写清：**推荐 Linux x86_64 生产同源**，Mac 为辅助。
-
-### 建议负责范围
-
-**镜像发布与安装文档（v1.3）**。
-
-**Sources:** Docker buildx/multi-platform 官方文档；**MEDIUM**。
-
----
-
-## Phase-Specific Warnings（v1.3 映射）
-
-| 子域 | 高风险点 | 缓解 |
-|------|----------|------|
-| Go 包装器 | TTY/信号/SIGWINCH | §1；集成测试；必要时 `--init` |
-| 卷与权限 | UID、`.claude` 持久化 | §2、§7 |
-| Desktop 与生产差异 | host 网络、none+tun | §3 |
-| 安全挂载 | proc 伪造、privileged 蔓延 | §4 |
-| sing-box + nft | 能力、规则顺序、MPTCP/UID | §5 |
-| 体验 | 冷启动、镜像体积 | §6 |
-| Claude Code | 自动更新、登录 | §7 |
-| 交付 | garble、符号、CI | §9 |
-| 发布物 | 多架构 | §10 |
-
----
-
-## 「看起来像做完但其实没有」检查清单
-
-- [ ] Resize 终端后 Claude Code 仍可用，且不会因 SIGWINCH 误杀主进程
-- [ ] Ctrl+C / SIGTERM 能在预期时间内结束容器
-- [ ] 绑定卷上可写配置与项目目录，UID 行为有文档
-- [ ] Linux 与 Docker Desktop 验证矩阵至少覆盖：localhost 回连、DNS、`verify` 出口 IP
-- [ ] 未使用 `--privileged` 除非书面论证；`-v` 注入 proc 伪装优先于容器内 mount
-- [ ] sing-box：`NET_ADMIN` + `/dev/net/tun` + 路由/nft 与 v1.1 路径无重复冲突
-- [ ] `DISABLE_AUTOUPDATER` 策略与镜像版本策略一致
-- [ ] garble 构建通过全套测试；发布流水线可复现
-- [ ] 镜像 arm64/amd64 声明与 CI 一致
-
----
-
-## Gaps（需阶段内实测）
-
-- 指定宿主机发行版 + Docker 版本 + Desktop 版本下的 **nft + sing-box auto_redirect** 最小权限集合。
-- Claude Code **Bun standalone** 在只读根文件系统 + 可写卷组合下的确切路径与权限。
-- garble 与 **Docker API / x/crypto / 插件** 依赖的交互（以项目依赖为准）。
+- 项目上下文：`.planning/PROJECT.md`（`--network=none`、sing-box tun、cloud-claude 目标）
+- Docker/FUSE：`https://github.com/docker/for-linux/issues/321`、moby 社区关于 `SYS_ADMIN` + `/dev/fuse` 的讨论
+- SSH 多路复用：ServerFault「Detecting stuck SSH control master sockets」、`mux_client_request_session` 社区讨论；Thomas Broadley「SSH multiplexing gotchas」（MaxSessions 等）
+- 同步语义：Mutagen 官方 synchronization 文档（模式与冲突处理）；Mutagen GitHub issue 中关于会话生命周期与容器重建的讨论
+- Go SSH：`golang.org/x/crypto/ssh` `Session.RequestPty` / `WindowChange`；Go issue 中关于无 PTY 时 signal 的讨论
+- OpenSSH：版本发行说明（排查特定版本 mux 相关修复时需对照）`https://www.openssh.com/releasenotes.html`
 
 ---
-
-## Sources（权威优先）
-
-- Docker：`docker run`（`--tty`、`--interactive`、`--sig-proxy`、`--init`、`--privileged`、`--cap-add`）— https://docs.docker.com/engine/reference/commandline/run/
-- Docker：`docker attach`（`--sig-proxy`）— https://docs.docker.com/engine/reference/commandline/attach/
-- Docker：runtime privilege and capabilities — https://docs.docker.com/engine/reference/run/#runtime-privilege-and-linux-capabilities
-- Docker Desktop：Settings（含网络与 host networking 说明）— https://docs.docker.com/desktop/settings-and-maintenance/settings/
-- sing-box：Tun inbound — https://sing-box.sagernet.org/configuration/inbound/tun/
-- Claude Code：Setup / Auto-updates、`DISABLE_AUTOUPDATER` — https://code.claude.com/docs/en/setup
-- garble：README / caveats — https://github.com/burrowers/garble
-- runc：`checkProcMount` 讨论 — https://github.com/opencontainers/runc/issues/2826
-
----
-*专项研究：v1.3 claude-shell 本地透明代理 — 集成陷阱*
-*Researched: 2026-04-09*
+*Pitfalls research for: cloud-claude 透明远程 CLI + 目录映射*
+*Researched: 2026-04-15*

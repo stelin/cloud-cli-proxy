@@ -1,226 +1,248 @@
-# 架构研究：claude-shell 本地透明代理
+# Architecture Research
 
-**范围：** v1.3「单一 Go 二进制透明包装 Claude Code」与既有 **Go 控制面 + Unix socket host-agent + Docker + SingBoxProvider / ContainerProxyProvider + nftables** 的关系与差异。  
-**调研日期：** 2026-04-09  
-**总体置信度：** 中高（平台内代码与 sing-box 官方路由文档为 HIGH；Docker Desktop 行为以官方/社区共识为 MEDIUM；/proc 伪装以工程经验为主、需实机验证处标 LOW）
+**Domain:** cloud-claude 透明远程 CLI（客户端二进制 + 本地目录 ↔ 远端容器实时映射）  
+**Researched:** 2026-04-15  
+**Confidence:** HIGH（与现有 `internal/sshproxy`、`internal/runtime/tasks/worker.go`、`tools/cloud-dev/main.go` 对照）/ MEDIUM（Mutagen 具体拓扑以选型验证为准）
 
----
+## Standard Architecture
 
-## 1. 与既有架构的对照
+### System Overview
 
-| 维度 | 既有云主机路径（生产） | claude-shell（本地 CLI） |
-|------|------------------------|---------------------------|
-| 编排者 | 控制面 → host-agent（特权在 agent） | 用户本机上的 **单一 `claude` 二进制** 直接调 `docker` |
-| 容器创建 | agent 已有一套生命周期与 DB 状态 | `docker run` 由 CLI 发起，**无 PostgreSQL / 无 JWT** |
-| 网络强约束 | 受管容器 **`--network=none`**，由 **SingBoxProvider** 注入 **mgmt veth**、`nsenter` 启动 sing-box，配合 **nftables**（见 `internal/network/singbox_provider_linux.go`） | 目标仍是 **tun 全量接管 + 默认拒绝**，但 **不能再假设 host-agent 能在宿主机 netns 里打 veth**（尤其 **macOS + Docker Desktop**） |
-| 侧车 | **ContainerProxyProvider** 为 worker + **独立 gateway 容器**（bridge 子网 + sing-box tproxy），与 SingBoxProvider（进程进用户 netns）是 **两条不同产品线** | claude-shell 更可能 **单容器内 sing-box tun**（与 SingBoxProvider 的 **tun + mgmt0** 模式同源），一般不引入第二个 gateway 容器，除非要复用 `container_proxy_provider.go` 的 sidecar 模型 |
-| 配置来源 | DB `proxy_config` JSONB + 管理后台 | **本地**：环境变量、挂载的 `config.json`、或嵌入默认模板 |
-
-**结论（观点）：** claude-shell 应 **复用 sing-box 配置与路由思想**（`buildSingBoxConfig` 中的 tun、`bind_interface`、`route.rules`），但 **网络外围编排** 与生产 **SingBoxProvider（Linux-only netlink）** 分叉：本地工具优先 **可移植启动路径**，Linux 上可选「加强版」与现有 agent 能力对齐。
-
----
-
-## 2. Go 二进制结构：`docker run` + TTY + 信号
-
-### 2.1 推荐形态
-
-- **主路径：** `os/exec.CommandContext` 调用 **`docker run`**（而非初期就接入 Docker Engine HTTP API），参数包含 `-i`、`-t`（当 `stdin` 是 TTY 时）、`--rm`、资源限制、环境变量、卷挂载。
-- **TTY：** 使用 `github.com/moby/go-dockerclient` 或标准库时，若走 API，需 `Attach` 流式对接；**子进程方式**则与手工 `docker run -it` 一致：将 **`cmd.Stdin = os.Stdin`、`cmd.Stdout = os.Stdout`、`cmd.Stderr = os.Stderr`**，并在启动前 **`term.SetRawTerminal`**（如 `golang.org/x/term`）在 **Unix 上**恢复 Ctrl+C、窗口大小。
-- **窗口尺寸：** 监听 `SIGWINCH`，向容器内 `docker exec` 发 `resize` 或使用 API `ContainerResize`；CLI 包装常用 **一个 goroutine 轮询 `syscall.SIGWINCH`**。
-
-### 2.2 信号转发
-
-- 订阅 **`os.Signal`：`SIGINT`、`SIGTERM`、`SIGQUIT`**（可选 `SIGHUP` 策略）。
-- **转发目标：** `docker kill -s` 到容器 ID，或 `docker stop`（优雅停止超时后再强杀）。**不要**只杀本地 `docker` 客户端进程而不给守护进程留清理时间，否则 `--rm` 可能滞后。
-- **父进程退出：** 使用 `context.WithCancel`，在信号处理中 cancel，等待 `cmd.Wait()`；若用户 `Ctrl+C`，通常期望 **子容器同停**。
-
-### 2.3 与既有代码的关系
-
-- **新代码模块**（建议）：`cmd/claude-shell` 或 `internal/claudeshell`，**不**经过 `internal/controlplane`。
-- **可复用：** `internal/network` 中的 **sing-box JSON 构造**（`buildSingBoxConfig` / `buildOutbound`）宜抽成 **与 Provider 无关的纯函数包**，供 CLI 与 Linux agent **共用**，避免两份配置漂移。
-
-**置信度：** HIGH（Go 侧为常见模式；具体 resize 细节以目标 Docker 版本测准为准）。
-
----
-
-## 3. 容器网络：`--network=none` + veth 注入 vs 桥接 + `host-gateway`
-
-### 3.1 生产平台为何用 `network=none` + veth
-
-- 决策见 `PROJECT.md`：**彻底关闭 Docker 默认 bridge 出网**，由平台注入 **mgmt veth**，代理走 **bind_interface**，避免旁路（与 `singbox_config.go` 中 `bind_interface: mgmt0` 一致）。
-
-### 3.2 claude-shell「本地开发工具」哪条更简单
-
-| 方案 | 优点 | 缺点 |
-|------|------|------|
-| **`--network=none` + 宿主机注入 veth** | 与生产 **同构**，安全叙事一致 | **仅 Linux 且需等价于 SingBoxProvider 的 netlink 能力**；macOS 上 CLI **无法**像 agent 一样操作真实宿主机 netns（ workload 在 Docker Desktop VM 内） |
-| **自定义 bridge + 容器内 sing-box tun + 路由分流** | **一条 `docker run` 跨 macOS/Linux**；实现快 | 启动瞬间若 sing-box 未就绪，存在 **极短窗口**（需 entrypoint 先拉起 sing-box + nft 再 exec 主进程，与现网「先隧道后业务」一致） |
-| **bridge + `host.docker.internal:host-gateway`** | 访问宿主机上服务（LLM、本地 API）路径清晰 | **Linux** 需显式 `--add-host host.docker.internal:host-gateway`（Docker 20.10+）；Desktop 常自带解析 |
-
-**推荐（观点）：**
-
-- **默认 / 跨平台 MVP：** **用户态 bridge（默认 bridge 或具名 network）** + 容器内 **sing-box tun** + **sing-box 路由** 将 RFC1918 / 本机回环指向 **direct（走 eth0 出容器）**，将公网指向 **proxy outbound**；宿主机访问用 **`host.docker.internal`**（Linux 加 `host-gateway`）。
-- **Linux 可选「硬隔离」模式：** 与生产对齐的 **`--network=none` + 注入 mgmt** — 可复用 `InjectManagementVeth` 等（仅 `GOOS=linux` 编译），作为 **进阶/CI 对齐** 配置，而非 macOS 默认。
-
-**置信度：** MEDIUM（可移植性结论可靠；具体以你们镜像 entrypoint 顺序的实测为准）。
-
----
-
-## 4. sing-box tun、配置与分流（私网直连、其余走代理）
-
-### 4.1 与现网配置的关系
-
-现网 `buildSingBoxConfig`（`internal/network/singbox_config.go`）已包含：
-
-- **tun inbound**：`auto_route`、`strict_route`、`interface_name: tun0`
-- **双 outbound**：`proxy-out` + `direct`（`bind_interface: mgmt0`）
-- **DNS**：经代理 `detour: proxy-out`
-- **route.rules**：`sniff`、`dns` hijack
-
-claude-shell 需在 **route.rules** 中 **显式提前** 插入分流规则（官方 Route Rule 文档，sing-box 支持 `ip_is_private`、`ip_cidr`、`action`/`outbound` 等，见 [Route Rule](https://sing-box.sagernet.org/configuration/route/rule/)）：
-
-1. **`ip_is_private: true` → `direct`**（或指向绑定在 **eth0** 的 direct outbound，见下条）。
-2. **可选：** 为 `127.0.0.0/8`、`host.docker.internal` 解析结果再补 **ip_cidr** 规则，避免环回误走代理。
-3. **默认：** 其余流量仍走 **proxy-out**（与现网一致）。
-
-### 4.2 `direct` 的 `bind_interface` 名称
-
-- 生产用 **`mgmt0`**（注入 veth）。
-- 本地 bridge 模式用 **`eth0`**（或 `route.default_interface` 与实际一致）。需在镜像或启动脚本里 **固定接口名**，或在 sing-box **1.13+** 利用文档中的 **interface / default_interface** 类字段做对齐。
-
-### 4.3 nftables
-
-- 与 **PROJECT.md** 要求一致：容器内 **默认拒绝 + 仅放行经 tun 的路径**，与现网 SingBoxProvider 哲学一致；**ContainerProxyProvider** 使用 **tproxy + iptables** 是 **另一套 sidecar 模型**，claude-shell 若不跑 sidecar，则 **nftables 规则应直接贴近 SingBoxProvider 的 tun 方案**，而非照搬 gateway 镜像。
-
-**置信度：** HIGH（分流字段来自 sing-box 官方文档；具体 JSON 需与镜像接口名联调）。
-
----
-
-## 5. `/proc/cpuinfo`、`/proc/meminfo` 伪装
-
-### 5.1 bind mount 文件
-
-- **做法：** 在宿主机或镜像构建阶段生成 **静态文本文件**，`docker run -v /path/to/fake-cpuinfo:/proc/cpuinfo:ro`（meminfo 同理）。
-- **注意：** `/proc` 下部分条目在部分内核/运行时上对 **bind mount 覆盖** 行为敏感；**常见实践是可行**，但须在 **Docker Desktop（LinuxKit VM）与原生 Linux** 各测一轮。
-
-### 5.2 能力（capabilities）
-
-- 普通 bind mount **通常不需要** `CAP_SYS_ADMIN`；若改用 **overlay 或自定义 tmpfs 叠 /proc**，权限与兼容性风险上升，**不推荐**作为默认路径。
-
-### 5.3 Docker Desktop
-
-- 容器内看见的是 **VM 内内核** 的 proc；bind mount 仍作用于容器文件系统视图，**一般可用**，但 **CPU/内存型号与宿主机 Mac 不一致** 本身也是「像云主机」的期望行为。
-
-### 5.4 与 `tools/spoof-fingerprint.js` 的关系
-
-- 现网脚本在 **Node 用户态** patch `os` 模块；v1.3 要求 **不依赖 spoof.js**，则 **proc 级伪装 + machine-id** 更贴近 **通用 Linux 工具链**（Go/Java 读 `/proc`）。**两者可同时存在**：JS 层 patch 管 npm 生态，proc 管读文件的生态。
-
-**置信度：** MEDIUM–LOW（bind mount 需实机验证；无官方「保证覆盖 /proc/cpuinfo」的一刀切声明）。
-
----
-
-## 6. 反容器检测：标记清单与处理策略
-
-以下为 **常见启发式标记**（非完全可枚举；对抗检测不是密码学保证）。
-
-| 类别 | 典型标记 | 处理思路 |
-|------|----------|----------|
-| 文件 | **`/.dockerenv`** | 启动时 **删除或 bind 空文件**（需可写层或 tmpfs overlay） |
-| cgroup | **`/proc/1/cgroup`** 含 `docker`、`kubepods` | 使用 **伪造 cgroup 模板文件** 再通过 **bind mount** 覆盖（与 cpuinfo 同风险级别） |
-| mount | **`/proc/mounts` 含 `overlay`** | 难完美隐藏；可降低特征：减少敏感 read-only 传播路径的暴露 |
-| 进程树 | **pid 1 为 `docker-init` / `containerd-shim`** | 部分场景可换 **init 包装**；成本高 |
-| 网络 | **网卡 MAC OUI、接口名 `eth0@if...`** | 自定义网络 + 固定 `--mac-address`（需注意冲突） |
-| 环境变量 | **`container=podman`/`docker`** | 清理 env |
-| 能力集 | **`/proc/self/status` CapEff** | 降 cap / 与真机对齐的镜像基线 |
-
-**观点：** 做 **分层交付**——先做 **/.dockerenv + machine-id + cpu/mem**，再迭代 cgroup；并在 `verify` 子命令中 **可重复检测**。
-
-**置信度：** MEDIUM（清单来自社区共识；具体工具检测逻辑持续变化）。
-
----
-
-## 7. 进程生命周期
+在 **v1.x 已交付** 的分层上，v2.0 仅增加 **用户侧 `cloud-claude` 二进制** 与 **目录同步/挂载策略**；控制面、host-agent、Docker 创建、网络 Provider、React 后台 **保持不变**，除非单独列出「可选修改」。
 
 ```
-用户 shell
-  → claude 二进制（父）
-      → docker run --rm ...（docker 客户端子进程，可选长期 attach）
-          → containerd → 容器内 PID1（entrypoint）
-              → sing-box / init → claude-code / bun
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 用户工作站（开发者笔记本）                                                    │
+├────────────────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────┐     ┌──────────────────────────────────────────────┐ │
+│  │ cloud-claude     │     │ 目录映射层（二选一或组合）                         │ │
+│  │ (Go 单二进制)    │     │  A) sshfs slave + 本机 SFTP（与 tools/cloud-dev   │ │
+│  │ init / 透传 claude│     │     同模式）                                       │ │
+│  └────────┬─────────┘     │  B) Mutagen 同步进程（见下文分层说明）              │ │
+│           │               └──────────────────────────────────────────────┘ │
+│           │ SSH :22 (password 或 pubkey)                                    │
+└───────────┼────────────────────────────────────────────────────────────────┘
+            ▼
+┌───────────────────────────────────────────────────────────────────────────┐
+│ 宿主机：SSH Proxy (internal/sshproxy)                                      │
+│  PasswordCallback / PublicKeyCallback → RepoResolver → 容器 IP:22           │
+│  每收到一个客户端 session 通道 → 独立 ssh.Dial(容器) + OpenChannel(session)   │
+│  pty-req / shell / exec / window-change / exit-status 双向原样转发            │
+└───────────┬───────────────────────────────────────────────────────────────┘
+            ▼
+┌───────────────────────────────────────────────────────────────────────────┐
+│ 容器：OpenSSH + 受管镜像                                                    │
+│  - 已有：-v 宿主机 homeDir → /workspace（持久化「云盘」）                     │
+│  - v2 增量：FUSE + sshfs（create 已带 --device /dev/fuse）                    │
+│  - 用户态：在 /workspace 或单独 mountpoint 上跑 claude / Claude Code          │
+└───────────────────────────────────────────────────────────────────────────┘
+            ▲
+┌───────────┴───────────────────────────────────────────────────────────────┐
+│ 网络：ContainerProxyProvider（bridge + sing-box 侧车）等 — 与 v1.1 一致      │
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **父进程职责：** 信号转发、**保证容器停止**（`docker stop` 超时策略）、临时文件与卷清理。
-- **异常：** `docker daemon` 不可用 → CLI 明确错误码；**镜像拉取失败** → 重试策略与离线提示。
+### Component Responsibilities
 
----
+| Component | Responsibility | Typical Implementation |
+|-----------|------------------|-------------------------|
+| **cloud-claude** | 读 `~/.cloud-claude/config`；建立到网关 `SSH Proxy` 的连接；编排「挂载 → exec claude」；TTY/信号/退出码 | Go，`golang.org/x/crypto/ssh`，可参考 `tools/cloud-dev/main.go` |
+| **SSH Proxy** | 认证后把每个 session 通道桥到容器 SSH；不解析 exec 内容 | 现有 `internal/sshproxy/proxy.go` |
+| **RepoResolver** | `short_id` + 凭证 → 容器 IP、容器用户、入口密码 | 现有 `internal/sshproxy/resolver.go` |
+| **host-agent Worker** | `docker create/start`、`-v` 持久 home、`--device /dev/fuse`、网络 PrepareHost | 现有 `internal/runtime/tasks/worker.go` |
+| **目录映射（sshfs 路径）** | 在**客户端**跑 SFTP 服务端；在**容器**内 `sshfs -o slave` 挂到选定 mountpoint | 与 SSH 会话正交，仅占用额外 `session` 通道 |
+| **目录映射（Mutagen 路径）** | 独立同步守护进程；不经过 SSH Proxy 解析 | 通常落在「宿主机持久目录」或「容器 SSH」一侧，见下节 |
 
-## 8. macOS Docker Desktop vs Linux Docker Engine（网络）
+## Recommended Project Structure（与仓库对齐）
 
-| 点 | Docker Desktop（Mac） | Linux Engine |
-|----|----------------------|--------------|
-| 数据面位置 | 容器在 **Linux VM** 内 | 容器在 **本机内核** |
-| `host.docker.internal` | 一般 **内置** | 常需 **`--add-host host.docker.internal:host-gateway`** |
-| 与宿主机服务通信 | 走 **Desktop 注入的主机路由**，不是 Mac 本机 `127.0.0.1` | 走 **bridge 网关**；宿主机 `127.0.0.1` 仍不可直达，除非 **host 网络**或其它转发 |
-| netns/veth 手工操作 | **CLI 在 Mac 侧无法等价于生产 agent 的 netlink 编排** | 可与 SingBoxProvider **同构** |
-| nftables 在容器内 | VM 内核需支持 **nft**（Desktop 近年镜像已逐步补齐；以实测为准） | 通常可行 |
+```
+cmd/cloud-claude/          # 正式交付的单一二进制入口（待建或从 tools 提升）
+tools/cloud-dev/           # 已存在的 PoC：sshfs slave + shell（研发/对照用）
+internal/sshproxy/         # 服务端：保持「透明转发」契约
+internal/runtime/tasks/    # 容器创建与挂载宿主机目录
+```
 
-**置信度：** HIGH（Desktop 与 Engine 差异为官方文档与长期社区共识）。
+### Structure Rationale
 
----
+- **`cloud-claude` 放在 `cmd/`：** 与「可安装 CLI」定位一致，便于版本发布与 `go install`。  
+- **保留 `tools/cloud-dev`：** 已验证多 `session` 与 sshfs/slave 数据路径，可作为集成测试夹具。  
+- **不强行把映射逻辑塞进 `internal/sshproxy`：** 映射是客户端 + 容器内命令的组合，代理层保持协议无关。
 
-## 9. 配置传递：环境变量 vs 挂载文件 vs label
+## Architectural Patterns
 
-| 方式 | 适用 | 说明 |
+### Pattern 1: SSH Session 作为唯一数据平面（推荐主路径）
+
+**What:** 用户只打开到 `SSH Proxy` 的 SSH 连接；`cloud-claude` 在其上创建多个 `session`——其一跑容器内 `sshfs -o slave`，本地对接 SFTP；其二请求 `pty` + `exec`/`shell` 运行 `claude` 及子进程。  
+**When to use:** 与产品目标「透明替代 `claude`」、PROJECT 中「SSH Proxy 零改造」一致。  
+**Trade-offs:** 延迟与吞吐受 SSH 加密与单流复用影响；实现复杂度集中在客户端。
+
+**Evidence（仓库内）：**
+
+```97:120:tools/cloud-dev/main.go
+// startSSHFSMount opens an SSH exec channel running `sshfs -o slave` in the
+// container, then starts a local SFTP server that feeds file data back through
+// the same channel.  Returns a cleanup function.
+func startSSHFSMount(client *ssh.Client, localDir, mountPoint string) (func(), error) {
+	// ...
+	cmd := fmt.Sprintf(
+		"mkdir -p %s && exec sshfs -o slave -o allow_other -o reconnect -o cache=yes -o kernel_cache :%s %s",
+		mountPoint, localDir, mountPoint,
+	)
+```
+
+### Pattern 2: 宿主机 bind mount + Mutagen（可选）
+
+**What:** 持久数据仍在 `worker` 创建的宿主机 `homeDir` ↔ 容器 `/workspace`；Mutagen 在**用户机**与**宿主机目录**或**经 SSH 的远端路径**之间做双向同步。  
+**When to use:** 需要更强离线/冲突处理、或 sshfs 性能不足时。  
+**Trade-offs:** 组件多、需明确同步根与权限；不一定与「当前 shell 目录」天然一致，需在 `cloud-claude` 内做路径约定或一次性配置。
+
+### Pattern 3: 每通道独立 Dial 容器（当前 Proxy 实现）
+
+**What:** 每个客户端 `session` 通道对应一次新的 `ssh.Dial` 到容器（见 `handleChannel`）。  
+**When to use:** 现状即如此；多会话（sshfs + exec）**无需**改 Proxy 即可工作。  
+**Trade-offs:** 容器侧 SSH 连接数 = 客户端并发 session 数；高并发时可再优化为「单连接多通道复用」（**非 v2 必选**）。
+
+## Data Flow
+
+### 端到端：`claude`（实为 cloud-claude）→ 容器内 Claude Code
+
+以下覆盖 **非交互一次执行** 与 **交互 TTY** 两种场景；差别仅在第二个 session 请求 `exec` 还是 `pty-req`+`shell`。
+
+```
+用户终端输入: cloud-claude [与原生 claude 相同参数]
+    ↓
+cloud-claude 解析参数、读取 ~/.cloud-claude/config（网关地址、short_id、凭证）
+    ↓
+TCP 连接 gateway:SSH_PROXY_PORT，SSH 握手
+    ↓
+认证：用户名 = host short_id，密码或 inbound 公钥（与现有 Resolver 一致）
+    ↓
+┌─ Session A（目录映射，若采用 sshfs 方案）───────────────────────────────┐
+│ cloud-claude: NewSession → Start("sshfs -o slave ... <mount>")            │
+│ SSH Proxy: 新 channel → 新 ssh.Dial(容器) → OpenChannel(session)         │
+│ 容器: sshfs 进程；用户机: SFTP server 绑定 session 的 stdin/stdout          │
+│ 结果: <mount> 上可见用户机当前工程目录内容                                   │
+└──────────────────────────────────────────────────────────────────────────┘
+    ↓
+┌─ Session B（Claude Code）─────────────────────────────────────────────────┐
+│ cloud-claude: NewSession → RequestPty（若交互）或 exec                    │
+│              → 远端命令如: cd <mount> && claude <args>  （具体与镜像 PATH 一致）│
+│ SSH Proxy: 同上透明转发 pty-req / window-change / exec / env              │
+│ 容器: node/claude 子进程；stdio 经 SSH 回到用户终端                          │
+│ 退出: exit-status / exit-signal 经 Proxy 回到客户端 → 进程退出码            │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### 与「仅 SSH 登录云主机」路径的关系
+
+| 路径 | 是否经过 cloud-claude | 目录来源 |
+|------|----------------------|----------|
+| `curl` bootstrap 后 `ssh short_id@gateway` | 否 | 主要为宿主机持久化的 `/workspace` |
+| `cloud-claude` | 是 | 用户机当前目录经 sshfs/Mutagen 映射到约定 mountpoint |
+
+两条路径可并存；**不要求**合并为同一挂载实现。
+
+### Key Data Flows
+
+1. **凭证与路由：** 仍由控制面 DB + `RepoResolver` 解析，**无新协议**。  
+2. **文件字节：** sshfs 方案走 **Session A** 的 stdin/stdout（SFTP）；与 **Session B** 上 claude 的终端流 **相互独立**。  
+3. **出网流量：** 仍由现有 `network.Provider` + 容器内 tun/代理链保证，**不**因 cloud-claude 改变。
+
+## 目录映射层应放在哪一层？
+
+| 方案 | 位置 | 与 SSH Proxy 关系 | 说明 |
+|------|------|-------------------|------|
+| **sshfs slave + 本机 SFTP** | **客户端二进制内部** + **容器内 sshfs** | **仅占用额外 SSH session**，Proxy 不感知 | 与 `tools/cloud-dev` 一致，最贴合「零改造 Proxy」 |
+| **Mutagen → 宿主机 homeDir** | **用户机 Mutagen** ↔ **宿主机** `/var/lib/.../hosts/<id>/` | Proxy **不参与**；Worker 已有 `-v` | 「实时」由 Mutagen 保证；需处理与 sshfs 方案二选一或不同 mountpoint |
+| **Mutagen → 容器 SSH** | Mutagen 插件连容器文件系统 | 经 SSH，但 **不是** Proxy 特殊逻辑 | 运维与权限模型需单独设计 |
+
+**结论：** 目录映射 **不属于** `internal/sshproxy` 的一层服务；应落在 **cloud-claude（客户端）** 与 **镜像/容器内工具（sshfs/fuse）** 的组合；Mutagen 若采用，属于 **同步侧车进程**，架构上平行于 SSH 会话转发。
+
+## 是否需要新增服务端 API 或修改 SSH Proxy？
+
+| 项 | 建议 | 理由 |
+|----|------|------|
+| **SSH Proxy** | **默认无需改** | 已支持多 `session`、exec/pty/window-change/exit 转发；`tools/cloud-dev` 已验证双 session。 |
+| **RepoResolver / 认证** | **默认无需改** | short_id + 密码/公钥 已满足 `cloud-claude` 非交互登录。 |
+| **控制面 HTTP API** | **按需** | 「启动主机后再执行」可复用现有任务/主机状态接口；若仅依赖用户先 bootstrap 使主机 `running`，可无新 API。 |
+| **镜像** | **已有 FUSE 设备** | `docker create` 已含 `--device /dev/fuse`；需保证镜像内 **sshfs** 与用户空间工具齐全（属镜像/打包，非 Proxy 代码）。 |
+
+**可选增强（非阻塞）：**
+
+- 为 `cloud-claude` 提供 **轻量健康检查**（例如公开 `GET /healthz` 或已有入口）仅用于预检网关可达性。  
+- 若产品要求「一条命令从停机的 host 拉到 running」，则在客户端调用 **现有** 主机启动 API，**不**必为映射单独造 API。
+
+## Integration Points（集成点清单）
+
+### 与现有组件
+
+| 集成点 | 方向 | 契约 |
+|--------|------|------|
+| **SSH Proxy :22** | cloud-claude → Proxy → 容器 | SSH 协议；用户名为 host short_id |
+| **RepoResolver** | Proxy → Postgres | `GetHostByShortID`、主机 `running`、容器 IP |
+| **容器 OpenSSH** | Proxy → 容器 | 多 session、exec、PTY |
+| **镜像** | Worker 已 create | `fuse` + sshfs、Claude Code 在 PATH |
+| **出站网络** | 容器内 | 现有 sing-box / WireGuard Provider，与 v1.1 一致 |
+
+### Internal Boundaries
+
+| Boundary | Communication | Notes |
+|----------|---------------|-------|
+| cloud-claude ↔ SSH Proxy | TCP + SSH | 映射与 claude 执行均为普通 session |
+| SSH Proxy ↔ 容器 | 每 session 一次 `ssh.Dial` | 见 Pattern 3 |
+| cloud-claude ↔ 控制面 | 可选 HTTPS | 仅主机启动/状态，非映射数据面 |
+
+## 新增 vs 修改组件
+
+| 类型 | 组件 | 说明 |
 |------|------|------|
-| **环境变量** | 代理 URL、非敏感开关、`HTTP(S)_PROXY` 类 | 易暴露于 `docker inspect`；**密钥不宜仅放 env** |
-| **挂载配置文件** | **完整 sing-box JSON**、分流白名单、伪造 proc 文件 | 与现网 **写入 `/etc/sing-box/config.json`** 一致；**推荐为主配置载体** |
-| **Docker labels** | 版本、镜像 digest、**非机密元数据** | 便于 `docker ps` / 运维过滤；**不应用来存密钥** |
+| **新增** | `cloud-claude` 二进制（`cmd/cloud-claude` 或等价） | init、SSH 客户端、sshfs 编排、TTY/信号、参数透传 |
+| **新增（可选）** | 安装/打包脚本、shell 补全 | 产品化 |
+| **修改（小）** | 受管 Dockerfile / 镜像 lock | 确保 `sshfs`、fuse 依赖完整 |
+| **修改（可选）** | SSH Proxy 连接复用 | 性能优化，非功能必需 |
+| **不改** | `handleConnection` 转发语义、Resolver 规则、Worker 创建主流程 | 除非后续实测需收紧 |
 
-**推荐组合（观点）：** **配置文件挂载（主） + 少量 env（覆盖路径与日志级别）**；与 `container_proxy_provider.go` 中 `-v .../config.json:ro` 一致。
+## 建议构建顺序（依赖优先）
+
+1. **镜像与容器：** 确认 `sshfs` + FUSE 在受管镜像内可用（与现有 `--device /dev/fuse` 对齐）。  
+2. **cloud-claude MVP：** 仅 SSH + **单 session** `exec` 跑 `claude`（映射到容器已有 `/workspace` 用于冒烟）— 验证透传。  
+3. **双 session：** 接入 `tools/cloud-dev` 同类 sshfs slave + SFTP，再 `cd` 到 mountpoint 执行 `claude`。  
+4. **体验对齐：** TTY、SIGWINCH、`exit code`、非交互/交互分支。  
+5. **Mutagen（若选型）：** 与 sshfs 方案对比基准测试后再并行支持。  
+6. **（可选）** Proxy 侧连接池/复用 — 在监控到连接数或延迟问题后做。
+
+## Anti-Patterns
+
+### Anti-Pattern 1: 在 SSH Proxy 内解析 `exec` 注入挂载
+
+**Why it's wrong:** 破坏协议透明性，且与「多会话独立 Dial」模型纠缠。  
+**Do this instead:** 挂载全部由 `cloud-claude` 发普通 exec/session。
+
+### Anti-Pattern 2: 假设 Mutagen 与 sshfs 同时写同一目录
+
+**Why it's wrong:** 冲突与缓存不一致。  
+**Do this instead:** 产品只支持一种主映射方案，或明确互斥 mountpoint。
+
+### Anti-Pattern 3: 为映射引入第二条非 SSH 数据面（未经评审）
+
+**Why it's wrong:** 防火墙、审计与「全隧道出网」叙事变复杂。  
+**Do this instead:** 优先 SSH 承载；若加 WebSocket/FTP 需单独安全评审。
+
+## Scaling Considerations
+
+| Scale | 要点 |
+|-------|------|
+| 单用户单机 | 当前每 session 独立 Dial 足够 |
+| 多会话自动化 | 关注容器 `sshd` 的 `MaxSessions` 与文件句柄 |
+|  many hosts | 控制面与 Resolver 已是 DB 驱动；客户端仅增配置项 |
+
+## Sources
+
+- 仓库：`internal/sshproxy/proxy.go`（会话转发与每通道 Dial）  
+- 仓库：`internal/runtime/tasks/worker.go`（`docker create`、`/dev/fuse`、`-v` homeDir）  
+- 仓库：`tools/cloud-dev/main.go`（sshfs slave + SFTP + PTY shell PoC）  
+- 产品：`.planning/PROJECT.md`（v2.0 cloud-claude 目标与「SSH Proxy 零改造」）
 
 ---
-
-## 10. 集成点、新增/修改与建议构建顺序
-
-### 10.1 集成点（与仓库现状）
-
-- **复用/抽取：** `singbox_config.go` 的配置生成 → **共享包**（供 `SingBoxProvider` 与 claude-shell）。
-- **不直接耦合：** `host-agent`、**Unix socket API**、**PostgreSQL** —— claude-shell **零依赖**。
-- **镜像：** 可与 **`deploy/docker/managed-user`** 同源或 **slim 变体**（无 SSH/Kasm 若不需要）；sing-box 版本与现网 **1.13.x** 对齐，避免行为漂移。
-
-### 10.2 新增组件（建议）
-
-1. **`claude` CLI 模块**：`docker run`、信号、TTY、配置渲染。
-2. **`internal/claudeshell/config`**：合并 env + 文件，输出 sing-box JSON。
-3. **（可选）`internal/claudeshell/net_linux.go`**：`network=none` 强模式仅 Linux。
-
-### 10.3 数据流变化
-
-- **无控制面数据流**；仅 **本地 stdin/stdout ↔ 容器 ↔ 代理出口**。
-- **verify 子命令：** 可在容器内执行与 **管理后台代理测试** 类似的 **HTTP/DNS 探测**（逻辑可参考 `admin_egress_ip_probe`），但 **不经过 API**。
-
-### 10.4 建议构建顺序（依赖优先）
-
-1. **镜像 entrypoint**：`sing-box` 就绪 + **nft** + 启动 **Claude Code**（失败快速回滚提示）。
-2. **sing-box 配置模板** + 分流规则（私网直连）。
-3. **最简 `docker run` 包装**（非 TTY 也可跑通）。
-4. **TTY + 信号 + SIGWINCH**。
-5. **machine-id / proc 伪装 / 反检测**（逐项加）。
-6. **garble 构建与发布流水线**。
-
----
-
-## 11. 研究缺口与需实机验证项
-
-- `/proc/cpuinfo` **bind mount** 在 **Docker Desktop 当前版本** 上的稳定性（**LOW→MEDIUM** 需测）。
-- 容器内 **nftables** 与 **sing-box tun** 启动顺序在 **arm64/amd64** 双架构表现。
-- **Apple Silicon** 上 **Bun / Claude Code** 二进制兼容与性能。
-
----
-
-## 12. 来源
-
-- 仓库：`internal/network/singbox_config.go`、`internal/network/singbox_provider_linux.go`、`internal/network/container_proxy_provider.go`
-- `.planning/PROJECT.md`（v1.3 需求与关键决策）
-- sing-box：[Route Rule](https://sing-box.sagernet.org/configuration/route/rule/)
-- Docker：`host.docker.internal` / `host-gateway` 社区与文档共识（Engine 20.10+）
+*Architecture research for: cloud-claude 透明远程 CLI 与现有 SSH Proxy 集成*  
+*Researched: 2026-04-15*

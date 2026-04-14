@@ -1,167 +1,149 @@
-# Technology Stack — claude-shell 子项目增量
+# Stack Research
 
-**项目：** Cloud CLI Proxy — `claude-shell`（独立 Go 二进制，透明包装容器内 Claude Code + 全隧道代理 + 指纹隔离）  
-**调研日期：** 2026-04-09  
-**范围：** 仅 v1.3 新增能力；**不重复论证**已交付的控制面（Go 控制面、PostgreSQL、Docker 生命周期、WireGuard、sing-box、nftables、React 管理端）。
+**Domain:** v2.0 `cloud-claude` 透明远程 CLI（Go 客户端 + 目录映射 + TTY/信号 + 本地配置）  
+**Researched:** 2026-04-15  
+**Confidence:** HIGH（Go 模块版本以 pkg.go.dev 默认 tag 为准）；MEDIUM（sshfs/Mutagen 与具体发行版组合需在集成阶段实测）
 
-**与主线对齐：** 受管镜像已预装 **sing-box v1.13.3**；里程碑要求 **garble 混淆**、容器内 **tun + nftables**、**`/proc` 级指纹伪造**、官方 **Claude Code 安装路径**。
+## Recommended Stack
 
----
+### Core Technologies
 
-## 推荐栈（仅新增/变更）
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-----------------|
+| Go toolchain | 与仓库 `go` directive 对齐（建议 ≥ 1.25，与 `golang.org/x/crypto` v0.50.x 声明一致） | 单一 `cloud-claude` 二进制 | 与现有控制面/host-agent 同一语言栈，复用模块与发布流程。 |
+| `golang.org/x/crypto` | **v0.50.0**（pkg.go.dev 默认） | SSH 客户端、`ssh.Session`、PTY、`Subsystem`（SFTP） | 仓库已在 `internal/sshproxy` 使用；客户端应与之**同大版本线**升级，避免两套 `ssh` 行为分叉。 |
+| `golang.org/x/term` | **v0.42.0**（`crypto` v0.50.0 依赖链一致） | 本地 TTY 尺寸读取、必要时 raw 模式、`ReadPassword` | 与 `crypto/ssh` 的 WindowChange/PTY 模型配套，生态标准选择。 |
+| OpenSSH 语义（无独立版本号） | 由远端容器镜像与宿主 `ssh` 决定 | 会话/exec、SFTP 子系统、端口转发 | 目录映射若走 **SSH 隧道 + SFTP/sshfs**，协议层保持 IETF/OpenSSH 事实标准，避免自造帧格式。 |
 
-### 核心：CLI 包装二进制
+### Supporting Libraries
 
-| 组件 | 建议版本 / 选型 | 用途 | 选型理由 |
-|------|-----------------|------|----------|
-| Go | **1.26.1**（与仓库/里程碑一致） | `claude-shell` 单二进制 | 与现有模块、garble 主线 README 要求一致（见下文 garble）。若 `go.mod` 仍为 1.25.x，应在合入 claude-shell 前统一到 1.26.x。 |
-| CLI 框架 | **`github.com/spf13/cobra` ≥ v1.10.0**（例如 **v1.10.2**，2025-12 前后） | 根命令、`verify` 子命令、持久化 flag、bash/zsh 补全 | **生态默认**：kubectl、Helm、Docker CLI、GitHub CLI 等均基于 Cobra；子命令树、`RunE` 错误传播、与 `pflag` 集成成熟。适合「替换本机 `claude` + 多子命令」的长期演进。 |
-| CLI（备选） | **`github.com/urfave/cli/v3`** 或 **stdlib `flag`/`os.Args`** | 极简包装或内部工具 | **urfave**：声明式、依赖面小于 Cobra，适合命令面极少且不需要深度子命令树时。**stdlib**：零依赖、二进制最小；但子命令与帮助文案需自管，里程碑若含 `verify`、多 flag，维护成本高。 |
-| Docker 引擎 API | **`github.com/docker/docker/client`**（随上游 **Docker Engine API** 协商版本；`client.FromEnv` + `WithAPIVersionNegotiation()`） | 创建/启动/执行/日志、镜像拉取、bind mount 与 `extra_hosts` | **与 `docker` CLI 同源客户端**：类型化、无每调用 fork `docker` 的开销；便于流式 attach/exec。官方文档明确 CLI 亦基于此包。 |
-| YAML | **`go.yaml.in/yaml/v3` v3.0.4+**（或新项目直接 **v4** 稳定版发布后采用） | 若需用户侧 sing-box/代理片段 YAML；或本地配置 | **gopkg.in/yaml.v3 已标记无人维护**（2025-04 起）；YAML 组织接管后的 **`go.yaml.in`** 为 Cobra 等上游迁移目标，安全修复持续。v4 为活跃开发线（若接受 RC/新 API，再评估）。 |
-| 加密与资源嵌入 | **`embed` + `crypto/aes`（推荐 AES-GCM，`crypto/cipher`）** | 嵌入默认配置模板、证书或脚本；运行时解密 | 标准库即可满足「嵌入密文 + 运行时解密」；密钥应来自环境变量/外部文件，**避免**把长期密钥硬编码进仓库。 |
-| 可选：第三方嵌入加密 | **`github.com/abakum/embed-encrypt`** 等 | 构建期生成 `//encrypted:embed` | 减少明文静态段；需评估与 **garble**、CI 生成步骤的交互；维护面大于手写解密。 |
+| Library | Version | Purpose | When to Use |
+|---------|---------|---------|-------------|
+| `github.com/spf13/cobra` | **v1.10.2** | 子命令（`init`、默认转发 `claude`）、POSIX 风格 flag、与 `kubectl`/`gh` 一致的体验 | 需要丰富帮助、completion、`PersistentPreRun` 统一前置逻辑时（推荐默认）。 |
+| `github.com/urfave/cli/v3` | **v3.8.0** | 轻量声明式 CLI、依赖极少 | 希望**最小依赖**、且子命令结构简单时；与 Cobra 二选一即可。 |
+| `github.com/spf13/viper` | **v1.21.0** | 合并配置文件 + 环境变量 + flag，支持 `~/.cloud-claude/config` | 需要 `CLOUD_CLAUDE_*` 覆盖文件、多配置文件路径时。 |
+| `gopkg.in/yaml.v3` | **v3.0.1** | 解析/写出 `config.yaml` | 采用**手写配置加载**、或 Viper 的 YAML 后端时（二者取一，避免重复抽象）。 |
+| `github.com/pkg/sftp` | **v1.13.10** | SFTP 客户端/服务端（与 `golang.org/x/crypto/ssh` 配套） | **容器内 sshfs 挂载**或 **本机暴露 SFTP 供远端挂载** 时；勿选 **v2.0.0-alpha** 上生产。 |
+| `github.com/coder/websocket` | **v1.8.14** | WebSocket 上承载字节流（`NetConn`） | 仅当产品要求 **HTTP/WebSocket 侧车隧道**（例如经网关 Upgrade）时再引入；非默认路径。 |
 
-### 构建与交付
+### Development Tools
 
-| 组件 | 建议版本 / 选型 | 用途 | 选型理由 |
-|------|-----------------|------|----------|
-| 二进制混淆 | **`mvdan.cc/garble`**（安装：`go install mvdan.cc/garble@latest`；发布标签见 [GitHub Releases](https://github.com/burrowers/garble/releases)） | 发布构建：`garble build -literals …` | **官方 README（master）写明：Requires Go 1.26 or later。** 与项目 Go 版本对齐后可用。v0.15.0 发布说明曾写「支持 Go 1.25」等与当前 README 不完全一致，**以构建时 `garble -h` + README 为准**。 |
-| 交叉编译 | `GOOS`/`GOARCH` + 与主线一致静态链接策略 | 分发单文件给用户机 | 与现有发布流程一致即可。 |
+| Tool | Purpose | Notes |
+|------|---------|-------|
+| `staticcheck` / `golangci-lint` | 客户端与共享 `ssh` 代码的静态检查 | 升级 `x/crypto` 后跑一遍，避免弃用 API。 |
+| 交叉编译矩阵 | `GOOS`/`GOARCH` 与 macOS/Linux 用户 | `cloud-claude` 若在用户本机运行，需与目标 OS 对齐信号与 TTY 行为。 |
 
-### 容器内网络（与已有 sing-box 能力对齐）
+## Installation
 
-| 组件 | 版本 | 用途 | 备注 |
-|------|------|------|------|
-| sing-box | **1.13.3**（与受管镜像一致；升级需回归 tun） | 容器内 **tun inbound** + outbound 代理链 | 官方 [Tun 配置](https://sing-box.sagernet.org/configuration/inbound/tun/)：Linux 上 **`auto_route` + `auto_redirect`（nftables）** 为推荐组合，且文档说明可缓解 **TUN 与 Docker bridge 冲突**。容器内需 **`CAP_NET_ADMIN`** 及 tun 设备权限。 |
-| 路由/例外 | 配置字段 `route_exclude_address` / `route_address` 等 | 仅外网走代理；RFC1918、`host-gateway` 回宿主机 | 与里程碑「本地流量回连宿主机」一致；具体 CIDR 与 `extra_hosts` 由 claude-shell 生成配置时注入。 |
+```bash
+# 客户端模块（示例：在独立 module 或主模块中）
+go get golang.org/x/crypto@v0.50.0
+go get golang.org/x/term@v0.42.0
+go get github.com/spf13/cobra@v1.10.2
+go get github.com/spf13/viper@v1.21.0
+go get gopkg.in/yaml.v3@v3.0.1
+# 若实现 SFTP 目录同步：
+go get github.com/pkg/sftp@v1.13.10
+# 可选：WebSocket 隧道
+go get github.com/coder/websocket@v1.8.14
+```
 
-### 指纹与 `/proc`（Linux）
+## Alternatives Considered
 
-| 技术 | 用途 | 说明 |
+| Recommended | Alternative | When to Use Alternative |
+|-------------|-------------|---------------------------|
+| `cobra` +（可选）`viper` | `urfave/cli/v3` + 手写 YAML | 更强依赖控制、CLI 面积极简时。 |
+| **SSH 原生能力**（`Session` + PTY + `SIGWINCH` + `Forward*`） | 完全自建 WebSocket 应用协议 | 只有当你**不能**走 SSH（企业只允许 443/WSS）时；成本显著更高。 |
+| **容器内 sshfs + FUSE**（镜像装 `fuse`/`sshfs`，`--device /dev/fuse`） | **Mutagen**（独立同步守护进程） | 需要**近似实时的双向同步**、可接受额外二进制与会话管理时；Mutagen 对「开发机 ↔ 远端」场景成熟。 |
+| `github.com/pkg/sftp` **v1.13.x** | `github.com/pkg/sftp/v2`（**v2.0.0-alpha**） | API 稳定、需可预测行为时用 v1；v2 仅适合愿意跟 alpha 的实验分支。 |
+| `github.com/coder/websocket` | `github.com/gorilla/websocket` | 需要更广社区示例与 `PreparedMessage` 等特性时；新项目更推荐 Coder fork 的上下文模型。 |
+
+## What NOT to Use
+
+| Avoid | Why | Use Instead |
+|-------|-----|-------------|
+| `golang.org/x/net/websocket` | 官方已标记弃用（见 `coder/websocket` README 引用） | `github.com/coder/websocket` 或 Gorilla（按上表）。 |
+| `nhooyr.io/websocket` 默认路径 | pkg.go.dev 标明 **deprecated**，指向 Coder 维护仓库 | `github.com/coder/websocket`。 |
+| 第二套未对齐的 `golang.org/x/crypto` 版本 | 与现有 `sshproxy` 行为不一致，PTY/SFTP 边界难排障 | 全仓统一升级到同一 `x/crypto` minor。 |
+| 在 v2.0 同时引入 **完整** 同步栈（例如 Syncthing） | 运维与网络面爆炸，偏离「透明 CLI」 | 先用 sshfs **或** Mutagen **或** SFTP 一条路径验证。 |
+
+## Stack Patterns by Variant
+
+**若产品主线是「SSH 已可达网关/容器」：**
+
+- 客户端使用 **`golang.org/x/crypto/ssh` 连接**（或沿用你们已有 bootstrap 信息），目录映射优先 **反向 SFTP + 容器内 sshfs** 或 **Mutagen over SSH**。
+- TTY：`Session.RequestPty` + `ssh.WindowChange` + `signal.Notify` 转发 `SIGWINCH`；`SIGINT`/`SIGTERM` 按 OpenSSH 语义映射到会话（注意远端进程组与 `-t` 行为）。
+
+**若必须经 HTTP 网关（仅 WSS）：**
+
+- 用 **`github.com/coder/websocket` 的 `NetConn`** 把 WebSocket 变成 `net.Conn`，再在其上跑 **TLS/自定义 framing + SFTP** 或你们自定义块同步协议；集成难度 **高**，仅在有明确合规/网络约束时采用。
+
+**若强调「零 FUSE、弱侵入」：**
+
+- 考虑 **Mutagen** 同步到容器内固定路径，再 `exec` `claude`；不装 sshfs，但需管理 Mutagen 生命周期与冲突解决。
+
+## v2.0 专项：目录映射方案对比
+
+| 方案 | 技术要素 | 集成难度（1–5） | 优点 | 代价 / 风险 |
+|------|-----------|-----------------|------|-------------|
+| **容器内 sshfs（FUSE）** | 镜像：`fuse3`、`sshfs`；Docker：`--device /dev/fuse`，常需 `CAP_SYS_ADMIN` 等；隧道指向「本机 SFTP 或反向端口」 | **4** | 远端呈现 POSIX 路径（如 `/workspace`），对 `claude` 透明 | FUSE 权限、延迟与缓存语义、排障需内核/容器知识。 |
+| **Mutagen** | 发行版二进制 **v0.18.1**（GitHub Release，2026-02 验证） | **3–4** | 双向同步与冲突策略成熟，适合开发目录 | 额外进程与版本捆绑；需定义与容器生命周期对齐。 |
+| **纯 SFTP（`pkg/sftp` + SSH 子系统）** | 不挂载，仅同步或按需读写 | **3** | Go 侧可控、无 FUSE | 「实时映射」需自建轮询/inotify 策略，否则是准实时。 |
+| **WebSocket + SFTP/自定义** | `coder/websocket` + 应用层 | **5** | 穿透仅 443 的环境 | 协议与网关开发量大，**默认不推荐**。 |
+
+**建议：** 优先在里程碑内定一条「主路径」——若 `PROJECT.md` 已承诺 FUSE + sshfs，则以 **sshfs 主路径 + Mutagen 作备选** 写进实现计划；WebSocket 方案保留为私有部署受限网络的可选阶段。
+
+## TTY / 信号：库与职责划分
+
+| 能力 | 推荐实现 | 说明 |
+|------|-----------|------|
+| PTY 申请 | `ssh.Session.RequestPty` | 与远端 `claude` TUI 兼容。 |
+| 窗口变化 | `golang.org/x/term.GetSize` + `ssh.WindowChange` | 注册 `SIGWINCH`。 |
+| 退出码 | `Session.Wait` / `ExitError` | 透传给用户 shell 的 `$?` 期望。 |
+| 本地 raw 模式 | `term.MakeRaw`（仅当 stdin 是 TTY） | 避免双重 raw；与 `ssh` 会话复制循环搭配。 |
+
+**一般不需要**单独引入 `github.com/creack/pty`，除非客户端还要在**本机**再起一个带 PTY 的子进程（与「远端执行 claude」主路径不同）。
+
+## 配置：`~/.cloud-claude/`
+
+| 组件 | 版本 | 用途 |
 |------|------|------|
-| **bind mount 静态文件** | 覆盖 `/proc/cpuinfo`、`/proc/meminfo` 等 | 里程碑已列「bind mount」路径；实现简单、无额外守护进程；内容需与预设 CPU/RAM 故事一致。 |
-| **lxcfs**（宿主机运行） | 提供 cgroup 一致的 `/proc/cpuinfo`、`meminfo`、`stat` 等 | 典型做法：宿主机运行 `lxcfs`，将 `/var/lib/lxcfs/proc/...` **逐个 bind** 进容器；**不要**盲目把整个 `/var/lib/lxcfs/proc` 盖在容器 `/proc` 上（易破坏 `/proc/self` 等）。见社区文章与实践（如 Podman + lxcfs 绑定单文件）。 |
-| **自研 FUSE** | 完全自定义 `/proc` 视图 | 成本高，仅在有强定制且无法接受静态文件时使用。 |
+| `gopkg.in/yaml.v3` v3.0.1 | 序列化 `config.yaml` | 与 `PROJECT.md` 中 `~/.cloud-claude/config.yaml` 一致。 |
+| `github.com/spf13/viper` v1.21.0 | 可选 | 需要 env 覆盖、多路径搜索时再引入；否则仅 YAML + `os.UserHomeDir` 即可降低依赖。 |
 
-### Claude Code 安装与运行（官方行为摘要）
+敏感信息（token、SSH 私钥）：优先 **文件权限 0600** + 可选 **`filippo.io/age`** 等工具加密；是否加密留待实现阶段再选，本研究不强制版本。
 
-| 项目 | 内容 |
+## 明确不需要为 v2.0 新增的栈
+
+| 领域 | 说明 |
 |------|------|
-| 推荐安装 | 官方文档：**Native Install** — `curl -fsSL https://claude.ai/install.sh \| bash`（macOS/Linux/WSL）；PowerShell 为 `irm https://claude.ai/install.ps1 \| iex`。见 [Anthropic 安装文档](https://docs.anthropic.com/en/docs/claude-code/setup)。 |
-| 已弃用 | **`npm install -g @anthropic-ai/claude-code`** 标记为 deprecated；里程碑要求不依赖 npm，与之一致。 |
-| 容器注意 | 官方文档写明：**Alpine / musl** 等环境需 **`libgcc`、`libstdc++`、`ripgrep`** 等；无头环境可用 **`ANTHROPIC_API_KEY`**。安装后验证：`claude --version`、`claude doctor`（名称以文档为准）。 |
-| 与「透明包装」关系 | `claude-shell` 宿主机二进制应 **exec 进容器内** 已安装的 `claude`，或通过 `docker exec` 转发 stdin/stdout；需统一 **工作目录与 TTY** 行为。 |
+| 控制面 HTTP API、PostgreSQL、JWT 管理后台 | v1.x 已具备；客户端只消费已有能力或通过 SSH。 |
+| Docker / WireGuard / sing-box / nftables | 宿主机网络栈不变；客户端不直接操控。 |
+| React / Vite | 本里程碑无新前端需求。 |
+| 新 SSH 服务端协议 | 继续 `golang.org/x/crypto/ssh` + 现有 `sshproxy` 模型。 |
+
+## Version Compatibility
+
+| Package A | Compatible With | Notes |
+|-----------|-----------------|-------|
+| `golang.org/x/crypto@v0.50.0` | `golang.org/x/term@v0.42.0` | `crypto` v0.50.0 的 go.mod 依赖链已拉齐 `x/term`。 |
+| `github.com/pkg/sftp@v1.13.10` | `golang.org/x/crypto` ≥ 其 go.mod 声明 | 升级时以 **较新者** 为准做一次 `go mod tidy`。 |
+| `github.com/spf13/cobra@v1.10.2` | `pflag` 新命名（`ParseErrorsAllowlist`） | 若项目仍用旧 `pflag` API，需跟随 Cobra 发布说明升级。 |
+
+## Sources
+
+- https://pkg.go.dev/golang.org/x/crypto — 默认版本 **v0.50.0**（验证日期以页面为准）
+- https://pkg.go.dev/golang.org/x/term — 默认版本 **v0.42.0**
+- https://pkg.go.dev/github.com/spf13/cobra — **v1.10.2**
+- https://github.com/spf13/cobra/releases/tag/v1.10.2 — 发布说明
+- https://pkg.go.dev/github.com/spf13/viper — **v1.21.0**
+- https://pkg.go.dev/gopkg.in/yaml.v3 — **v3.0.1**
+- https://pkg.go.dev/github.com/pkg/sftp — **v1.13.10**（v2 为 alpha）
+- https://pkg.go.dev/github.com/coder/websocket — **v1.8.14**（替代已弃用的 `nhooyr.io/websocket`）
+- https://pkg.go.dev/github.com/urfave/cli/v3 — **v3.8.0**
+- https://github.com/mutagen-io/mutagen/releases/tag/v0.18.1 — Mutagen 版本示例
+- 仓库现状：`go.mod` 中 `golang.org/x/crypto v0.37.0` — v2.0 客户端开发时建议**统一升级**并在本节版本表归档
 
 ---
-
-## 分项结论（对应调研问题）
-
-### 1. Go CLI 框架：Cobra vs urfave/cli vs stdlib
-
-- **默认推荐：`spf13/cobra`（v1.10.x）** — 子命令（如 `verify`）、flag 继承、帮助与补全生态与现有行业工具一致；维护活跃（例如依赖迁移至 `go.yaml.in/yaml/v3`）。
-- **`urfave/cli`** — 更轻、API 不同；适合命令面极薄时。
-- **`stdlib`** — 最小依赖；适合原型，若产品化多子命令则易膨胀。
-
-**集成：** 与 Docker client、配置模块同进程，无冲突；避免在同一二进制再引入 **Viper** 除非确有大量配置源（里程碑以 YAML/环境变量为主时可不用）。
-
-### 2. garble：版本、兼容性、限制
-
-- **安装路径：** `mvdan.cc/garble`（模块路径），`go install mvdan.cc/garble@latest`。
-- **Go 版本：** 上游 **README 要求 Go 1.26+**；项目锁定 **Go 1.26.1** 时与之对齐。**每次升级 Go 小版本需重跑 garble 回归**（garble 依赖 linker 补丁，新版本 Go 可能短暂滞后，见上游 issue/PR 历史）。
-- **已知限制（摘自上游 README，HIGH 置信度）：**
-  - 导出方法当前不混淆（接口约束）；`GOGARBLE` 仅按包模式。
-  - **`runtime/debug.ReadBuildInfo`、`runtime.GOROOT` 等**在混淆二进制中不可用或受限。
-  - **`//go:linkname` 注入 runtime 的包**可能直接构建失败。
-  - **Go plugin 不支持**。
-  - 需要 **git** 以给 linker 打补丁。
-  - `-tiny` 会去掉 panic 栈等，排障更难。
-- **构建成本：** 约 **2× `go build`** 时间；独立 `GARBLE_CACHE`。
-
-### 3. Docker SDK（Go）vs 调用 `docker` CLI
-
-- **推荐：Moby/Docker 官方 Go API**（`github.com/docker/docker/client`）：与引擎对话、流式 attach/exec、错误类型化；**无**每次 `exec.Command("docker", …)` 的进程与解析成本。
-- **shell out：** 仅适合快速脚本或运维 one-off；产品路径应使用 SDK，便于测试 mock与错误处理。
-- **注意：** 避免无条件 `ImagePull`（本地已有镜像时仍会拉取元数据，历史上曾导致「SDK 慢」误判）；按镜像存在性分支。
-
-### 4. YAML 配置库
-
-- **新代码优先：`go.yaml.in/yaml/v3`（≥ v3.0.4）** 或跟进 **v4** 正式版。
-- **避免**继续引入已无人维护的 **`gopkg.in/yaml.v3`** 作为直接依赖。
-
-### 5. 嵌入并加密资源（`go:embed` + AES）
-
-- **模式：** `//go:embed` 密文 blob → `init` 或首次使用时 **`AES-GCM`（`crypto/cipher`）** 解密到 `[]byte` 或 `memfile`。
-- **密钥：** 运行时从环境变量/用户配置读取；构建脚本仅注入占位或 CI 秘密。
-- **与 garble：** `-literals` 会处理字符串字面量；敏感常量仍应避免以明文字面量出现在源码中。
-
-### 6. sing-box：容器内 tun 模式配置要点
-
-- **inbound：** `type: tun`，配置 `interface_name`、`address`（1.10+ 合并 IPv4/IPv6）、`mtu`、`stack`（`system` / `gvisor` / `mixed` 按镜像与内核选择）。
-- **Linux：** `auto_route: true`，并启用 **`auto_redirect: true`**（文档称改善路由与性能，并减少与 Docker 网络冲突）。
-- **分流：** `route_exclude_address`（或 deprecated 的 inet4/inet6 等价字段）列出私网段；与 **nftables 默认拒绝**、**host-gateway** 回宿主机策略一致。
-- **权限：** 容器需 tun、nft 所需 capability；与现有 ** `--network=none` + 自建网络栈** 的架构需在设计文档中明确是否复用或分支（避免双栈冲突）。
-
-### 7. `/proc` 伪造技术
-
-| 方法 | 优点 | 缺点 |
-|------|------|------|
-| 静态 bind mount | 实现快、无守护进程 | 与真实 cgroup 不一致时可能被交叉验证 |
-| lxcfs 单文件 bind | 与 limits 更一致 | 需宿主机安装运行 lxcfs |
-| 全盘 FUSE 替换 `/proc` | 灵活 | 复杂度高、易踩内核/容器边界 |
-
-**建议：** 里程碑「系统级指纹」用 **静态文件 + 选择性 bind**；若要与内存限额展示一致，再叠加 **lxcfs**。
-
-### 8. Claude Code 官方安装与容器兼容性
-
-- **推荐路径：** `install.sh` / `install.ps1` 的 **Native** 流程；**npm 全局安装为 deprecated**。
-- **容器内：** 使用 **glibc** 系基础镜像或按文档补齐 **musl 依赖**；CI 可缓存安装目录以减少重复下载。
-- **无 UI 服务器：** 设 **`ANTHROPIC_API_KEY`** 或按文档使用 OAuth/登录流程（以官方最新说明为准）。
-
----
-
-## 不建议引入（本里程碑）
-
-| 项 | 原因 |
-|----|------|
-| **spf13/viper**（除非配置源爆炸） | 增加间接依赖与初始化顺序；仅用 YAML + env 时过重。 |
-| **子进程 `docker` CLI 作为主路径** | 可维护性与性能均弱于官方 Go client。 |
-| **继续依赖 `gopkg.in/yaml.v3`** | 上游已停止维护；应迁移至 `go.yaml.in`。 |
-| **在二进制内硬编码长期密钥** | 违背基本密钥管理；审计不通过。 |
-
----
-
-## 集成点（与现有仓库）
-
-- **不替代**控制面 HTTP API；`claude-shell` 为**用户侧**独立交付物，通过 Docker API 与本地 Engine 交互。
-- **复用概念**：sing-box JSON 模型、nftables「默认拒绝」哲学与 v1.1 文档一致；实现上可能与 `host-agent` 分流，避免在未抽象库的情况下复制大段代码（具体以阶段规划为准）。
-- **版本锁**：sing-box **1.13.3** 与镜像一致；升级需同时更新镜像与 claude-shell 模板测试。
-
----
-
-## 置信度
-
-| 主题 | 置信度 | 依据 |
-|------|--------|------|
-| Cobra / Docker Go client / sing-box tun 字段 | **高** | 官方文档与 pkg.go.dev |
-| garble 限制与 Go 版本要求 | **高** | burrowers/garble README + releases |
-| `go.yaml.in` 替代 `gopkg.in` | **高** | pkg.go.dev 与 Cobra 迁移提交 |
-| Claude Code 安装方式 | **高** | Anthropic 官方安装文档 |
-| lxcfs + Docker 单文件 bind 实践 | **中** | 社区文章与 lxcfs issue；生产需在本项目目标发行版上实测 |
-| garble 与 **Docker client 反射/接口** 组合 | **中** | 一般可构建；若遇问题可用 `GOGARBLE` 缩小范围或升级 garble |
-
----
-
-## 来源（权威优先）
-
-- Cobra：https://github.com/spf13/cobra  
-- garble：https://github.com/burrowers/garble  
-- Docker Engine Go SDK：https://pkg.go.dev/github.com/docker/docker/client  
-- go-yaml（维护版）：https://pkg.go.dev/go.yaml.in/yaml/v3  
-- sing-box Tun：https://sing-box.sagernet.org/configuration/inbound/tun/  
-- Claude Code 安装：https://docs.anthropic.com/en/docs/claude-code/setup  
-- lxcfs：https://github.com/lxc/lxcfs  
-
----
-
-*本文件仅供路线图/阶段规划消费；具体模块边界与代码位置以实现阶段 PLAN 为准。*
+*Stack research for: cloud-cli-proxy v2.0 cloud-claude 客户端栈增量*  
+*Researched: 2026-04-15*

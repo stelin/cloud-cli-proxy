@@ -1,181 +1,172 @@
 # Project Research Summary
 
-**Project:** Cloud CLI Proxy — `claude-shell`（v1.3 里程碑）  
-**Domain:** 单机 Go 二进制，透明包装 Docker 内 Claude Code；全流量经 sing-box tun + nftables；系统级指纹与容器信号收敛  
-**Researched:** 2026-04-09  
-**Confidence:** MEDIUM-HIGH（官方文档与仓库内架构证据为主；跨平台 Desktop/实机行为需阶段内验证）
+**Project:** Cloud CLI Proxy（v2.0 `cloud-claude` 透明远程 CLI 里程碑）
+**Domain:** 用户侧 Go 单二进制 + SSH 数据面 + 本地目录与远端容器实时映射，叠加既有 SSH Proxy 与受管容器网络
+**Researched:** 2026-04-15
+**Confidence:** MEDIUM–HIGH（栈与架构与仓库现状可对齐；目录映射与 FUSE/Mutagen 组合需在目标 Linux 宿主上集成验证）
 
 ## Executive Summary
 
-`claude-shell` 是面向开发者的**本地交付物**：用户用单一 `claude` 入口（PATH 前置）替代官方 CLI，由 Go 二进制编排容器，在容器内运行官方 **Native Install** 路径的 Claude Code（**不**依赖已弃用的 npm 全局安装），并与云侧产品共享同一套叙事：**tun 级全局路由 + 默认拒绝旁路**，私网与回连宿主机走明确例外（`host.docker.internal` / `host-gateway`），再通过 `verify` 子命令做出口、DNS 与指纹自检。
+本里程碑交付的是「透明替代本机 `claude`」的远程 CLI：用户通过单一 `cloud-claude` 二进制，在既有 **SSH Proxy → 容器 OpenSSH** 链路上完成 **argv 透传、PTY、SIGWINCH、信号与退出码** 语义，并把本机当前工程目录映射到容器内约定工作区，使 **Claude Code** 在受控出口与全隧道模型下运行。业界同类能力（Codespaces CLI、VS Code Remote SSH、`gp` 等）表明：**表功能**是参数与终端语义一致、可脚本化配置与稳定工作区映射；**差异化**应绑定本项目已有承诺：受控出口 IP、单宿主可私有部署、与受管容器生命周期一致。
 
-业界同类（Toolbx、Distrobox）追求与宿主深度融合；本产品目标相反——**出网可控、指纹面收敛**。实现上应复用仓库已有 **sing-box 配置思想**（与 `buildSingBoxConfig` 同源的 tun、分流、DNS），但**编排边界**与生产 **SingBoxProvider（Linux netlink + `network=none` + mgmt veth）** 分叉：跨平台 MVP 优先 **bridge + 容器内 sing-box tun**；Linux 上可选 **`network=none` + 注入 veth** 作为「与生产同构」的加强模式。CLI 侧 STACK 倾向 **`github.com/docker/docker/client`** 做类型化编排与流式 attach；架构研究则指出 **`docker run` 子进程**与手工行为一致、TTY/信号语义直观——**路线图建议：先按依赖链打通镜像 entrypoint 与最简运行路径，再在计划中明确「子进程 MVP → SDK 收敛」或「直接 SDK + 完整 Attach/Resize」**，避免长期维持两套编排。
+研究推荐的实现路径是：**以 SSH `session` 为唯一数据面**（与「SSH Proxy 默认零改造」一致），在客户端用 `golang.org/x/crypto/ssh` 与现有 `internal/sshproxy` **统一 `x/crypto` 版本线**；目录映射主路径为 **容器内 `sshfs -o slave` + 本机 SFTP**（与 `tools/cloud-dev` 已验证模式一致），**Mutagen** 作为性能或冲突场景下的备选，**WebSocket 自定义隧道**仅在网络强约束下再评审。构建顺序上应先 **镜像/FUSE 与 Worker 参数硬化**，再 **单 session `exec` 冒烟**，最后 **双 session（映射 + claude）** 与 TTY 专项。
 
-主要风险集中在：**TTY/信号/SIGWINCH**（交互与 resize 误杀）、**Docker Desktop 与 Linux Engine 语义差异**（host 网络、`host-gateway`、nft 在 VM 内核上的表现）、**sing-box tun + nft 规则顺序与能力集**（泄漏或局部绕开 tun）、**卷 UID 与 Claude Code 持久化/自动更新**、**`/proc` 伪造优先用 `docker run -v` 注入而非容器内 mount**（避免不当 `--privileged`）、以及 **garble** 与反射/排障权衡。缓解方向：以 **Linux 裸机/等同 VM** 为网络正确性准绳，Desktop 作 Tier-2；`verify` 与集成测试覆盖 resize、SIGINT、DNS、出口 IP；默认 **`DISABLE_AUTOUPDATER=1`** 与镜像版本策略对齐；产品表述坚持**诚实边界**，不承诺「不可检测」或对抗级反沙箱。
+主要风险集中在：**`--network=none` 下不可假设容器能自连用户机或随意开第二条 TCP**（映射管道必须在设计阶段固定）；**FUSE + AppArmor/seccomp** 导致「加了 `/dev/fuse` 仍失败」；**sshfs 与既有 `/workspace` bind 混用**带来的 UID 与双写；**SSH 多路复用或长驻同步**与会话上限、断线僵死；以及 **TTY/信号** 在 `x/crypto/ssh` 与跨平台上必须由调用方完整接好。缓解策略是：Linux 宿主 + 当前 nftables/sing-box 矩阵上验证；镜像与挂载选项契约化；单一写路径或互斥 mountpoint；连接与同步状态机文档化；映射与出口探测联合回归。
 
 ## Key Findings
 
 ### Recommended Stack
 
-详见 `.planning/research/STACK.md`。核心结论：**Go 1.26.1** 与 **garble**（上游要求 Go 1.26+）对齐；CLI 默认 **Cobra（≥v1.10）** 承载根命令与 `verify`；容器侧 **sing-box 1.13.3**（与受管镜像一致）tun + **`auto_route` / `auto_redirect`（Linux）**；YAML 新代码优先 **go.yaml.in/yaml/v3**，避免无人维护的 `gopkg.in/yaml.v3`；嵌入资源用 **`embed` + AES-GCM**，密钥运行时注入。指纹面以 **静态 bind mount** 覆盖 `/proc/cpuinfo`、`/proc/meminfo` 等为主，必要时再评估 **lxcfs** 单文件 bind。Claude Code 以官方 **curl/ps1 Native** 安装为准。
+v2.0 增量栈以 **Go 单二进制** 为中心，与仓库 `go` directive 对齐（建议 ≥ 1.25，并与 `golang.org/x/crypto` 声明一致）。SSH 客户端侧统一使用 **`golang.org/x/crypto/ssh`**（建议 **v0.50.0** 线，与全仓 `sshproxy` 同版本升级），配套 **`golang.org/x/term`**（**v0.42.0**）处理 **TTY** 尺寸与 raw 模式。CLI 面推荐 **`github.com/spf13/cobra` v1.10.2**，配置可选 **`github.com/spf13/viper` v1.21.0** + **`gopkg.in/yaml.v3` v3.0.1** 对应 `~/.cloud-claude/`。目录映射若走 **SFTP/sshfs**，使用 **`github.com/pkg/sftp` v1.13.10**（勿上 **v2 alpha**）。**WebSocket** 仅在为穿透 **443/WSS** 必要时引入 **`github.com/coder/websocket`**，并避免已弃用的 `x/net/websocket` 与 `nhooyr.io/websocket`。详见 `.planning/research/STACK.md`。
 
 **Core technologies:**
 
-- **Go 1.26.1 + Cobra**：单二进制 CLI、子命令与补全生态成熟。  
-- **garble**：发布混淆；需接受 README 限制（反射、`ReadBuildInfo` 等）并 CI 双轨。  
-- **sing-box 1.13.3（tun + 路由分流）**：与现网哲学一致；注意 MPTCP/UID 分流等字段。  
-- **Docker Engine Go client**（`docker/docker/client`）：推荐用于产品级编排；与架构研究中「`docker run` 子进程」可分期取舍。  
-- **`go.yaml.in/yaml/v3`**：配置解析的安全维护线。
+- **Go + `golang.org/x/crypto/ssh`：** 与现有 `internal/sshproxy` 同栈，避免两套 SSH 行为分叉。
+- **`golang.org/x/term`：** **PTY**、**SIGWINCH**、raw 与 `ReadPassword` 的标准组合。
+- **`github.com/pkg/sftp`：** **sshfs slave** 数据路径与 **SFTP** 语义，与 **OpenSSH** 子系统对齐。
+- **`cobra` /（可选）`viper`：** 子命令、`init`、与 `~/.cloud-claude/config.yaml` 约定一致。
 
 ### Expected Features
 
-详见 `.planning/research/FEATURES.md`。
+用户对「透明转发 `claude`」的默认预期包括：**argv 原样透传**、**TTY/窗口/信号/退出码** 与本地一致、**可重复的配置与凭据**、**本机 cwd 与远端工作区稳定对应**、失败时可行动的错误信息、与既有 **SSH** / 后台路径共存，以及私有部署下网关可配置。差异化应强调：**透明命令替换**、**出口与防泄漏叙事可验证**、**单一 Go 二进制与私有部署**、与受管容器生命周期深度集成、目录映射后端可演进。**应推迟或警惕的**包括：默认同步整个 `$HOME`、CLI 内嵌重图形、静默降级为本地 `claude`、多宿主调度可见化等。详见 `.planning/research/FEATURES.md`。
 
 **Must have (table stakes):**
 
-- 单一 `claude` 入口、PATH 透明替换。  
-- 冷启动可感知（拉镜像、建容器、健康检查、日志与退出码）。  
-- 容器内可复现的 Claude Code 安装与运行（全隧道下）。  
-- **tun + nftables 默认拒绝**，公网走代理、私网/回连策略明确。  
-- 本地回环与 RFC1918、`host-gateway` 回宿主机。  
-- **`verify`**：出口 IP、DNS、指纹/容器标记自检。  
-- 降低粗粒度容器信号（如 `/.dockerenv`、可读 cgroup）。
+- **argv 透传 + TTY/信号/窗口/退出码** — 否则「透明替代」不成立。
+- **init 与 `~/.cloud-claude/` 配置** — 可安装、可自动化、可迁移。
+- **当前目录到远端工作区映射（一种可交付方案）** — 先可用、可解释，再谈极致性能。
+- **清晰错误与可观测性** — 与平台错误语义对齐，避免 silent hang。
 
-**Should have (differentiators):**
+**Should have (competitive):**
 
-- 与云主机一致的 **网络哲学**（全隧道 + 默认拒绝）。  
-- **系统级指纹**（`machine-id`、`/proc/*`），优于仅 Node 层 patch。  
-- **garble** 发布单一二进制。  
-- 可选：按官方 env **收敛非必要外连**（如 `DISABLE_TELEMETRY` 等，以 Anthropic 文档为准）。
+- **出口 IP 与泄漏约束可证明** — 与现有一键测试、tun/**nftables** 模型联动。
+- **与受管镜像/到期策略一致** — 组织级叙事弱于 Codespaces，但部署形态更可控。
 
-**Defer (v2+):**
+**Defer（v2.x / 更后）：**
 
-- 对抗级反检测、宣称无法被检测。  
-- garble 与「艺术化」输出等非核心体验可后置（FEATURES MVP 已列）。
+- **端口转发 / 本地↔远端单路径拷贝**（P2，验证后再做）。
+- **多映射后端切换（Mutagen 等）**（触发后再做）。
+- **会话复用、连接池**（延迟成为主诉时）。
 
 ### Architecture Approach
 
-详见 `.planning/research/ARCHITECTURE.md`。要点：**不经过控制面**；建议模块如 `cmd/claude-shell` / `internal/claudeshell`；**抽取** `singbox_config` 中与 Provider 无关的 JSON 生成，供 CLI 与 Linux agent 共用。网络默认 **bridge + 容器内 tun + 分流** 以换跨平台；Linux 可选 **`network=none` + mgmt** 对齐生产。配置以**挂载文件为主**、环境变量为辅。生命周期：**信号转发**、**SIGWINCH**、保证容器停止与 `--rm` 清理。
+v2.0 **不**改变控制面、**host-agent**、Docker 创建、**ContainerProxyProvider** 与后台前端的主线；新增 **用户侧 `cloud-claude`** 与 **目录映射策略**。数据流为：用户机 **`cloud-claude`** → **TCP SSH** 至 **`internal/sshproxy`**（**RepoResolver** 解析 **short_id** → 容器）→ 容器 **OpenSSH**。**Pattern 1（推荐）：** 同一 SSH 连接上多 **session**——其一跑容器内 **sshfs slave**，本机侧 **SFTP**；其二 **RequestPty** 或 **exec** 跑 **`claude`**。**Pattern 2（可选）：** **Mutagen** 与用户机/宿主机目录同步，与 **Proxy** 正交。**反模式：** 在 **SSH Proxy** 内解析 **exec** 注入挂载；**sshfs** 与 **Mutagen** 同目录双写；未经评审的第二数据面。详见 `.planning/research/ARCHITECTURE.md`。
 
 **Major components:**
 
-1. **`claude` CLI**：Docker 编排、TTY、配置渲染、（可选）`verify`。  
-2. **`internal/claudeshell/config`**：合并 env/文件，输出 sing-box JSON。  
-3. **镜像 entrypoint**：sing-box → nft → Claude Code 就绪顺序；与 **machine-id / proc / 反粗检测** 分层叠加。
+1. **`cloud-claude`（`cmd/cloud-claude`）** — 配置、SSH 客户端、映射编排、**TTY**/信号/退出码、**argv** 透传。
+2. **`internal/sshproxy`** — 每客户端 **session** 独立 **`ssh.Dial`** 至容器，**pty-req** / **exec** / **window-change** / **exit-status** 透明转发；默认无需改语义。
+3. **`internal/runtime/tasks/worker.go`** — **`docker create`**、**`-v` homeDir**、**`--device /dev/fuse`** 等；与镜像内 **fuse/sshfs** 对齐。
+4. **目录映射（sshfs 路径）** — 客户端 **SFTP** + 容器 **sshfs**；**Mutagen** 为平行侧车进程。
 
 ### Critical Pitfalls
 
-详见 `.planning/research/PITFALLS.md`。
+1. **`--network=none` 下错误连通假设** — 不可假设容器能直连用户机或随意第二条 **TCP**；映射管道必须在设计阶段固定（仅 **SSH** 子系统、已存在连接、**host-agent** 显式通道等）。**避免：** 目录映射方案选型评审先于编码。
+2. **FUSE/sshfs 与 Docker 安全模块** — **`/dev/fuse` + `CAP_SYS_ADMIN`** 仍可能被 **AppArmor/seccomp** 拦截。**避免：** 在目标 Linux 发行版上做最小复现矩阵，契约写入镜像与 **CI**。
+3. **sshfs 与 `/workspace` bind 的 UID/双写** — 权限位、可执行位、属主错乱。**避免：** 单一写路径或互斥 **mountpoint**；固定挂载选项并与运行用户对齐；自动化权限与 **git** 用例。
+4. **SSH 多路复用与会话上限** — **ControlMaster** 僵死、**MaxSessions**、同步与 **TTY** 同命。**避免：** 明确共享 **TCP** 或独立连接策略；**keepalive**、陈旧 **socket** 清理；服务端 **MaxSessions** 评估。
+5. **TTY/信号/退出码缺口** — **`SIGWINCH`**、raw 恢复、无 **PTY** 时信号语义。**避免：** **`WindowChange` + defer `Restore`**；跨平台（如 Windows）降级；与 **Proxy** 联调专项。
 
-1. **TTY / 信号 / SIGWINCH** — 使用 `-it`、评估 `--init`/`tini`，文档与测试覆盖 resize、Ctrl+C、EOF；慎改 `--sig-proxy`。  
-2. **Bind mount 与 UID** — 固定镜像用户或 `--user` 对齐；`verify` 断言可写路径；`.claude` 持久化策略明确。  
-3. **Docker Desktop vs Linux** — 不以 Desktop 复现生产「三重校验」同级承诺；`host.docker.internal`/`host-gateway` 单一参数表。  
-4. **sing-box tun + nft** — `NET_ADMIN`、`/dev/net/tun`、strict_route、exclude_mptcp、UID 分流与规则顺序纳入 `verify`。  
-5. **`/proc` 伪造** — 优先 **`docker run -v`** 注入；避免依赖容器内 `mount` 或滥用 `--privileged`。  
-6. **Claude Code 自动更新与登录** — 默认 `DISABLE_AUTOUPDATER=1`；卷与账号隔离文档化。  
-7. **garble** — CI 双轨、谨慎 `-tiny`/`-literals`，保留诊断构建渠道。
+（其余：**同步一致性幻觉**、**sing-box**/**nftables** 与「文件平面」混淆、**macOS** 与 **Linux** 验证矩阵——见 **PITFALLS.md** 全文。）
 
 ## Implications for Roadmap
 
-基于合并研究，建议阶段划分如下（可与里程碑内子域再映射）。
+基于依赖关系与仓库证据，建议按以下阶段组织工作（可与正式 **roadmap** 编号对齐或拆分合并）：
 
-### Phase 1: 镜像与 entrypoint 基线（网络栈先于「好用」）
+### Phase 1：受管镜像与容器侧 FUSE 硬化
+**Rationale：** **FUSE/sshfs** 在目标宿主上不可用则后续全废；与 **Pitfall 2** 同源。  
+**Delivers：** 镜像内 **fuse/sshfs** 与运行契约；**Worker** 参数与文档一致；最小容器内挂载冒烟。  
+**Addresses：** **FEATURES** 中「容器侧 **FUSE/sshfs** 前置条件」。  
+**Avoids：** 仅在 **Docker Desktop** 上「看起来能挂载」、生产 **Linux** 翻车（**PITFALLS** 技术债表）。
 
-**Rationale:** 无稳定 tun/nft/Claude Code 启动顺序，上层 CLI 无法验收。  
-**Delivers:** 受管镜像变体或 entrypoint：sing-box 就绪 → nft → Claude Code；与健康检查/失败提示。  
-**Addresses:** FEATURES 表功能「全流量经 tun」「容器内 Claude Code」、STACK sing-box 要点。  
-**Avoids:** PITFALLS §5（能力与设备误配）、§6（串行入口过慢无 readiness 拆分）。
+### Phase 2：`cloud-claude` MVP — 单 session 透传
+**Rationale：** 先验证 **SSH**、**Resolver** 认证与 **exec/PTY** 闭环，再叠映射复杂度（**ARCHITECTURE** 建议构建顺序 2）。  
+**Delivers：** **`cmd/cloud-claude`**、**init**、配置路径、到 **Proxy** 的 **SSH**、单 **session** 在容器既有 **`/workspace`** 上跑 **`claude`**（冒烟）。  
+**Addresses：** **argv**、基础 **TTY**/**退出码**、**P1** 配置。  
+**Avoids：** 未验证透传就上双 **session**（排障面过大）。
 
-### Phase 2: sing-box 配置模板与分流（私网直连 + 公网代理）
+### Phase 3：双 session 目录映射（sshfs slave + SFTP）
+**Rationale：** 与 **Pattern 1**、**tools/cloud-dev** 证据一致；**SSH Proxy** 仍保持协议无关（**ARCHITECTURE** 步骤 3）。  
+**Delivers：** **Session A** 映射 + **Session B** **`cd` mountpoint && claude**；清理与失败路径。  
+**Addresses：** **cwd ↔ 远端工作区** **P1**、**MVP Launch With** 映射条目。  
+**Avoids：** **Pitfall 1**（映射走未设计的第二条外连）、**Pitfall 3**（与 **bind** 双写——需在设计里定 **mountpoint** 与写模型）。
 
-**Rationale:** 与现网 JSON 模型对齐，减少漂移；先定 `route.rules` 再写 `verify`。  
-**Delivers:** 共享包或模板：`ip_is_private`/`route_exclude`、`direct` 绑定接口（bridge 下 `eth0` 等）、DNS detour。  
-**Uses:** STACK sing-box 字段；ARCHITECTURE `buildSingBoxConfig` 抽取。  
-**Avoids:** §5 DNS 泄漏、§3 Desktop 与 Linux 混用假设。
+### Phase 4：终端与信号专项 + 错误与可观测性
+**Rationale：** **表功能**中 **HIGH** 复杂度项集中在此；与 **Pitfall 4/6** 对应。  
+**Delivers：** **SIGWINCH**、信号转发策略、非交互/交互分支、退出码映射、结构化日志与对用户可读错误。  
+**Addresses：** **FEATURES** **P1** 的 **TTY** 与「清晰失败路径」。  
+**Avoids：** 异常路径未 **Restore** **TTY**；**mux** 无清理策略。
 
-### Phase 3: 最简 `claude` 包装与 Docker 编排
+### Phase 5：合规叙事与联合回归（映射 + 出口）
+**Rationale：** 差异化依赖平台已有隧道与测试能力；变更 **nftables/sing-box** 时必须同时验映射（**Pitfall 7**）。  
+**Delivers：** 文档与 **CLI** 输出中与「受控出口」一致；回归清单：**出口探测** + **映射通道** 同测。  
+**Addresses：** **FEATURES** **P1**「出口/合规叙事与测试联动」。  
+**Avoids：** 仅验证出口 **IP** 却破坏文件平面。
 
-**Rationale:** 验证 pull/create/exec 闭环；此阶段明确 **子进程 `docker run` vs Docker SDK** 的选型并写入 PLAN。  
-**Delivers:** 冷启动日志、退出码、可选 dry-run；最小非 TTY 路径跑通。  
-**Implements:** ARCHITECTURE 建议构建顺序第 3 步。  
-**Avoids:** §6 冷启动感知差、ImagePull 无条件全拉（STACK 已提醒）。
-
-### Phase 4: TTY、信号、SIGWINCH 与交互体验
-
-**Rationale:** 与「透明替换」用户预期强相关。  
-**Delivers:** raw 模式、`SIGWINCH`、容器 resize/kill 策略；集成测试。  
-**Avoids:** PITFALLS §1。
-
-### Phase 5: 指纹与反粗检测（分层交付）
-
-**Rationale:** 依赖稳定容器与挂载契约。  
-**Delivers:** `machine-id`、`/proc` 文件注入、`.dockerenv`/cgroup 等逐项；`verify` 可重复断言。  
-**Avoids:** §4（容器内 mount）、§8（过度承诺）。
-
-### Phase 6: `verify` 与遥测/文档收口
-
-**Rationale:** 信任与运维闭环。  
-**Delivers:** 出口/DNS/指纹检查；官方 Claude Code data-usage env 文档化（不采信未验证第三方「源码」）。  
-**Uses:** FEATURES 专题 6。
-
-### Phase 7: garble 与多架构发布
-
-**Rationale:** 交付物收尾；非功能前置 blocker。  
-**Delivers:** `garble build` CI、arm64/amd64 镜像策略。  
-**Avoids:** §9、§10。
+### Phase 6（可选）：P2 增强 — 端口转发、Mutagen、连接复用
+**Rationale：** **FEATURES** 列为验证后增强；**ARCHITECTURE** 将 **Proxy** 连接池标为非 **v2** 必选。  
+**Delivers：** 按触发条件择一或多项交付。  
+**Addresses：** **P2** 功能与性能投诉。  
+**Avoids：** **Pitfall 5**（无状态机的双向同步）、过早引入 **WebSocket** 自定义栈。
 
 ### Phase Ordering Rationale
 
-- **先栈后壳：** 网络与进程就绪是 CLI 的前提（ARCHITECTURE 构建顺序 1→2→3）。  
-- **先通后美：** TTY/信号在「能跑」之后加固。  
-- **指纹与反检测**在网络与挂载稳定后迭代，避免与 tun 问题纠缠。  
-- **garble/多架构**最后收敛，降低调试成本。
+- **先容器与镜像、再单 session、再双 session**：符合依赖与 **ARCHITECTURE**「建议构建顺序」。  
+- **映射与 TTY 分拆**：降低并行排障维度；**合规联合回归**独立成阶段，防止网络变更与映射脱钩。  
+- **Mutagen/WebSocket/端口转发** 后置：与 **FEATURES** **P2** 与 **STACK** 变体路径一致。
 
 ### Research Flags
 
 Phases likely needing deeper research during planning:
 
-- **Phase 1–2（sing-box + nft + Desktop）：** 最小 capability 集合、**nft + auto_redirect** 与默认拒绝的实机矩阵（PITFALLS Gaps）。  
-- **Phase 5（指纹）：** `/proc` bind 在 Docker Desktop 当前版本上的稳定性（ARCHITECTURE §11）。  
-- **Phase 7（garble）：** 与 Docker client/依赖反射组合的回归策略（STACK 置信度「中」）。
+- **Phase 3（双 session 映射）：** **`--network=none` 与数据管道**、**Mutagen** 若并行评估时的拓扑与生命周期（**ARCHITECTURE** **MEDIUM** 注记）。
+- **Phase 5（网络联合回归）：** 与 **RoutingProvider**/**nftables** 变更同发的探测设计（**PITFALLS**）。
 
-Phases with standard patterns (skip extra research if PLAN 已引用官方文档):
+Phases with standard patterns (skip extra research-phase if scope unchanged):
 
-- **Cobra CLI 结构、Docker 官方 run/attach 文档、Claude Code Native 安装与 data-usage、garble README caveats。**
+- **Phase 2：** **`golang.org/x/crypto/ssh`** **Session**/**PTY** 模式文档与仓库 **sshproxy** 已有范式。
+- **Phase 4：** **SIGWINCH** + **`x/term`** 为常见组合；重点在联调而非理论空白。
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Cobra、Docker client、garble README、sing-box Tun 文档、Claude 官方安装页 |
-| Features | MEDIUM-HIGH | 透明代理与检测面多源一致；Claude 细节以官方为准 |
-| Architecture | MEDIUM-HIGH | 与仓库 `singbox_config`、Provider 分叉分析清晰；跨平台需测 |
-| Pitfalls | MEDIUM-HIGH | Docker/sing-box/garble 权威为主；反检测与策略为推理+常识 |
+| Stack | HIGH | **pkg.go.dev** 版本与仓库模块可对齐；**sshfs/Mutagen** 组合需在集成阶段实测（研究已标明）。 |
+| Features | MEDIUM | 竞品为模式级对照；与 **Claude Code** 集成的细节需集成测试（研究已标明）。 |
+| Architecture | HIGH | 与 **`sshproxy`**、**worker**、**tools/cloud-dev** 可逐条对照；**Mutagen** 拓扑为 **MEDIUM**。 |
+| Pitfalls | MEDIUM | 约束与项目 **PROJECT** 一致，部分为场景归纳，需 **E2E** 验证闭环。 |
 
-**Overall confidence:** MEDIUM-HIGH
+**Overall confidence:** MEDIUM–HIGH
 
 ### Gaps to Address
 
-- **Claude Code + 运行时**在指定版本矩阵下的外连清单（FEATURES Gaps）——需抓包或发行说明随版本验证。  
-- **Docker Desktop for Linux** vs **纯 Engine** 的 CI 矩阵（FEATURES）。  
-- **Apple Silicon / rootless** 下 tun/nft 边界（FEATURES / ARCHITECTURE）。  
-- **garble 与项目依赖**的最终组合（PITFALLS Gaps）——以依赖锁定后 CI 为准。
+- **`golang.org/x/crypto` 全仓统一升级：** 当前 `go.mod` 可能与 **STACK** 建议版本不一致，客户端开发前需 **`go mod tidy`** 与回归 **SSH** 行为。
+- **Mutagen vs sshfs 二选一或互斥策略：** 需在规划中写清默认路径与切换触发条件，避免双写（**PITFALLS**）。
+- **跨平台：** **Windows** 无 **SIGWINCH** 的降级；**macOS** 开发 vs **Linux** 生产验证矩阵（**PITFALLS 8**）。
+- **性能：** 大仓 **`node_modules`** 与 **sshfs** 小文件 **IO**（**PITFALLS Performance**）——需 **ignore** 策略与文档化 **SLA**。
 
 ## Sources
 
-### Primary (HIGH confidence)
+### Primary（HIGH confidence）
 
-- `.planning/research/STACK.md`、`FEATURES.md`、`ARCHITECTURE.md`、`PITFALLS.md`（本仓库 v1.3 调研）  
-- Cobra、garble、Docker Engine Go SDK、go.yaml.in、sing-box Tun、Anthropic Claude Code setup / data-usage（各文件「来源」节所列 URL）
+- **pkg.go.dev：** `golang.org/x/crypto`、`golang.org/x/term`、`github.com/spf13/cobra`、`github.com/spf13/viper`、`gopkg.in/yaml.v3`、`github.com/pkg/sftp`、`github.com/coder/websocket`、`github.com/urfave/cli/v3` — 版本与依赖关系  
+- **GitHub Docs：** [Using GitHub Codespaces with GitHub CLI](https://docs.github.com/en/codespaces/developing-in-a-codespace/using-github-codespaces-with-github-cli)  
+- **GitHub CLI Manual：** [gh codespace](https://cli.github.com/manual/gh_codespace)  
+- **Visual Studio Code Docs：** [Remote Development using SSH](https://code.visualstudio.com/docs/remote/ssh)  
+- **Gitpod Docs：** [Gitpod Workspace CLI (`gp`)](https://www.gitpod.io/docs/configure/workspaces/gitpod-cli)  
+- **仓库内代码：** `internal/sshproxy/proxy.go`、`internal/runtime/tasks/worker.go`、`tools/cloud-dev/main.go`  
+- **`.planning/PROJECT.md`：** v2.0 目标与约束  
 
-### Secondary (MEDIUM confidence)
+### Secondary（MEDIUM confidence）
 
-- systemd CONTAINER_INTERFACE、Distrobox/Toolbx 文档、社区容器检测与 Desktop 差异讨论
+- **Mutagen：** [GitHub Releases v0.18.1](https://github.com/mutagen-io/mutagen/releases/tag/v0.18.1)（示例版本）  
+- **Docker/FUSE 社区讨论：** 如 `docker/for-linux` **issue** 等（挂载与安全模块）  
+- **SSH multiplexing：** 社区文章与 **ServerFault**（**ControlMaster**、**MaxSessions**）  
 
-### Tertiary (LOW confidence)
+### Tertiary（LOW confidence / 待验证）
 
-- 第三方对 Claude Code 内部实现的解析 — **不作为需求依据**
+- 具体宿主 **kernel**/**moby** 版本与 **AppArmor** 组合下的最小权限挂载参数 — 需在目标环境实测  
 
 ---
-*Research completed: 2026-04-09*  
+*Research completed: 2026-04-15*  
 *Ready for roadmap: yes*
