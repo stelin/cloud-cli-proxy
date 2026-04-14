@@ -1,5 +1,27 @@
 # Milestones
 
+## v1.2 用户自助面板与 Bootstrap 重设计 (Partial: 2026-03-29, remaining deferred)
+
+**Phases completed:** 2 of 6 phases (Phase 11-12), remaining (Phase 13-16) deferred to future milestone
+**Plans completed:** 5 plans
+
+**Key accomplishments:**
+
+- 用户登录认证体系（区别于管理员 JWT），统一登录页按角色自动跳转，用户 API 资源隔离（403）
+- claude_accounts 数据模型（一个用户多个 Claude 账号，每个账号关联一台主机）
+- 用户自助面板骨架：TanStack Router 角色路由守卫，用户面板与管理员面板共存于同一 React 应用
+- 用户自助 API（UserHostsHandler + 主机列表/详情/重建 + 出口 IP 查看）
+- auth_middleware.go（AuthMiddleware / RequireRole / UserIDFromContext / RoleFromContext）
+
+**Deferred to future:**
+
+- Phase 13: 账号管理与用户资源视图（账号 CRUD、有效期、售后换号）
+- Phase 14: KasmVNC 用户面（浏览器远程桌面）
+- Phase 15: Bootstrap 重设计（短 URL 入口与实时状态推送）
+- Phase 16: 级联禁用与到期治理（用户/账号/主机到期联动）
+
+---
+
 ## v1.1 支持代理协议出网 (Shipped: 2026-03-28)
 
 **Phases completed:** 4 phases, 11 plans, 21 tasks
