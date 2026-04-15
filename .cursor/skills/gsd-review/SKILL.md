@@ -28,7 +28,7 @@ When the workflow needs to spawn a subagent:
 </cursor_skill_adapter>
 
 <objective>
-Invoke external AI CLIs (Gemini, Claude, Codex) to independently review phase plans.
+Invoke external AI CLIs (Gemini, Claude, Codex, OpenCode, Qwen Code, Cursor) to independently review phase plans.
 Produces a structured REVIEWS.md with per-reviewer feedback that can be fed back into
 planning via /gsd-plan-phase --reviews.
 
@@ -36,7 +36,7 @@ planning via /gsd-plan-phase --reviews.
 </objective>
 
 <execution_context>
-@.cursor/get-shit-done/workflows/review.md
+@/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/workflows/review.md
 </execution_context>
 
 <context>
@@ -46,9 +46,12 @@ Phase number: extracted from {{GSD_ARGS}} (required)
 - `--gemini` — Include Gemini CLI review
 - `--claude` — Include Claude CLI review (uses separate session)
 - `--codex` — Include Codex CLI review
+- `--opencode` — Include OpenCode review (uses model from user's OpenCode config)
+- `--qwen` — Include Qwen Code review (Alibaba Qwen models)
+- `--cursor` — Include Cursor agent review
 - `--all` — Include all available CLIs
 </context>
 
 <process>
-Execute the review workflow from @.cursor/get-shit-done/workflows/review.md end-to-end.
+Execute the review workflow from @/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/workflows/review.md end-to-end.
 </process>

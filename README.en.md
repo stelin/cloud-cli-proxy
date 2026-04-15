@@ -24,6 +24,7 @@ Out-of-the-box isolated cloud hosts for Claude Code and dev teams. Pre-installed
 ## Features
 
 - **One-command access** — `curl | bash` to authenticate, create container, and SSH in. Zero user config
+- **cloud-claude local CLI** — `alias claude=cloud-claude` to transparently run remote Claude Code from your local terminal with real-time directory mapping
 - **Claude Code ready** — Pre-installed in every container. All API requests auto-routed through designated exit IP
 - **Full-tunnel egress** — WireGuard + Linux netns / sing-box tun dual-channel, nftables default-deny, no DNS/WebRTC leaks
 - **Multi-protocol** — WireGuard and 5 proxy protocols (SOCKS5 / VMess / Shadowsocks / Trojan / HTTP)
@@ -99,7 +100,59 @@ curl -sSf http://YOUR_HOST/entry/abc123 | bash
 # Enter password → wait for boot → auto SSH into cloud host
 ```
 
-### Claude Code
+### cloud-claude (Local CLI, Transparent Remote)
+
+Besides SSH access, you can use the `cloud-claude` binary on your local machine to transparently run remote Claude Code with your current directory auto-mapped into the container.
+
+**Install:**
+
+Download from [Releases](https://github.com/ZaneL1u/cloud-cli-proxy/releases), or build from source:
+
+```bash
+go build -o cloud-claude ./cmd/cloud-claude
+```
+
+**Initialize config:**
+
+```bash
+cloud-claude init
+# Interactive prompts:
+#   Gateway URL (e.g. https://gw.example.com)
+#   Short ID (host short ID from admin)
+#   Password
+# Saved to ~/.cloud-claude/config.yaml
+```
+
+You can also pass values via flags or environment variables:
+
+```bash
+# Flags
+cloud-claude init --gateway https://gw.example.com --short-id abc123 --password your-password
+
+# Environment variables
+export CLOUD_CLAUDE_GATEWAY=https://gw.example.com
+export CLOUD_CLAUDE_SHORT_ID=abc123
+export CLOUD_CLAUDE_PASSWORD=your-password
+cloud-claude init
+```
+
+**Usage:**
+
+```bash
+# Set alias so `claude` transparently uses the remote host
+alias claude=cloud-claude
+
+# Use exactly like local claude
+claude
+
+# All claude arguments are passed through
+claude -p "refactor this function"
+claude --model sonnet
+```
+
+`cloud-claude` automatically: authenticates → waits for container ready → maps your current directory to `/workspace` via sshfs → launches Claude Code remotely. Terminal resizing, signals, and exit codes are all properly forwarded.
+
+### Claude Code (via SSH)
 
 Claude Code is pre-installed. Just use it:
 
@@ -118,20 +171,25 @@ Containers include KasmVNC + Chromium. Access the browser desktop via admin or u
 ## Architecture
 
 ```
-User ──curl──> Control Plane (:8080) ──Docker──> User Container (SSH + Claude Code + VNC)
-                    │                                  │
-               PostgreSQL                        WireGuard / sing-box Tunnel
-                    │                                  │
-              Admin SPA (:3000)                  Designated Exit IP
-                    │
-              SSH Proxy (:2222)
+                                                    ┌───────────────────────────────────┐
+User ──curl──> Control Plane (:8080) ──Docker──>    │ User Container                    │
+                    │                                │  SSH + Claude Code + VNC          │
+               PostgreSQL                            │  sshfs ← /workspace dir mapping  │
+                    │                                │  WireGuard / sing-box Tunnel      │
+              Admin SPA (:3000)                      │       ↓                           │
+                    │                                │  Designated Exit IP               │
+              SSH Proxy (:2222)                      └───────────────────────────────────┘
+                    ↑                                           ↑
+                    │                                           │
+User ──cloud-claude──> auth + SSH + sshfs ──────────────────────┘
 ```
 
 | Component | Description |
 |-----------|-------------|
 | **Control Plane** | Go API — auth, user management, task orchestration, SSH proxy |
 | **Host Agent** | Privileged agent — Docker containers, network namespaces, tunnels |
-| **User Container** | Ubuntu 24.04 — OpenSSH + Claude Code + KasmVNC + Chromium |
+| **User Container** | Ubuntu 24.04 — OpenSSH + Claude Code + sshfs + KasmVNC + Chromium |
+| **cloud-claude** | Go CLI — transparent local replacement for `claude`, maps local dir via sshfs |
 | **PostgreSQL** | Persists users, hosts, egress IPs, tasks, and events |
 | **Admin SPA** | React 19 + TypeScript + Vite + Tailwind CSS |
 

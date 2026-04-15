@@ -11,6 +11,8 @@ Read all files referenced by the invoking prompt's execution_context before star
 <step name="validate">
 **Check for input.**
 
+
+**Text mode (`workflow.text_mode: true` in config or `--text` flag):** Set `TEXT_MODE=true` if `--text` is present in `{{GSD_ARGS}}` OR `text_mode` from init JSON is `true`. When TEXT_MODE is active, replace every `conversational prompting` call with a plain-text numbered list and ask the user to type their choice number. This is required for non-Claude runtimes (OpenAI Codex, Gemini CLI, etc.) where `conversational prompting` is not available.
 If `{{GSD_ARGS}}` is empty, ask via conversational prompting:
 
 ```
@@ -24,7 +26,7 @@ Wait for response before continuing.
 **Check if project exists.**
 
 ```bash
-INIT=$(node ".cursor/get-shit-done/bin/gsd-tools.cjs" state load 2>/dev/null)
+INIT=$(node "/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/bin/gsd-tools.cjs" state load 2>/dev/null)
 ```
 
 Track whether `.planning/` exists — some routes require it, others don't.

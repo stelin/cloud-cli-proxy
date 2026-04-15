@@ -24,6 +24,7 @@
 ## 功能特性
 
 - **一条命令接入** — `curl | bash` 自动认证、创建容器、SSH 接入，用户无需任何配置
+- **cloud-claude 本地 CLI** — `alias claude=cloud-claude`，在本地终端透明运行远端 Claude Code，当前目录实时映射
 - **Claude Code 开箱即用** — 容器预装 Claude Code，进入即可使用，所有 API 请求自动走指定出口
 - **全流量强制出口** — WireGuard + Linux netns / sing-box tun 双通道，nftables 默认拒绝策略，杜绝 DNS / WebRTC 泄漏
 - **多协议支持** — 出口 IP 支持 WireGuard 和 5 种代理协议（SOCKS5 / VMess / Shadowsocks / Trojan / HTTP）
@@ -133,7 +134,59 @@ curl -sSf http://YOUR_HOST/entry/abc123 | bash
 # 输入密码 → 等待启动 → 自动 SSH 进入云主机
 ```
 
-### Claude Code
+### cloud-claude（本地 CLI 透明替代）
+
+除了 SSH 接入方式外，还可以在本地使用 `cloud-claude` 命令直接透明运行远端 Claude Code，当前目录自动映射到容器内。
+
+**安装：**
+
+从 [Releases](https://github.com/ZaneL1u/cloud-cli-proxy/releases) 下载对应平台的二进制文件，或从源码构建：
+
+```bash
+go build -o cloud-claude ./cmd/cloud-claude
+```
+
+**初始化配置：**
+
+```bash
+cloud-claude init
+# 交互式输入：
+#   网关地址 (如 https://gw.example.com)
+#   Short ID（管理员分配的主机短 ID）
+#   密码
+# 配置保存到 ~/.cloud-claude/config.yaml
+```
+
+也可以通过 flag 或环境变量传入：
+
+```bash
+# flag 方式
+cloud-claude init --gateway https://gw.example.com --short-id abc123 --password your-password
+
+# 环境变量方式
+export CLOUD_CLAUDE_GATEWAY=https://gw.example.com
+export CLOUD_CLAUDE_SHORT_ID=abc123
+export CLOUD_CLAUDE_PASSWORD=your-password
+cloud-claude init
+```
+
+**使用：**
+
+```bash
+# 设置 alias，之后 claude 命令自动走远端
+alias claude=cloud-claude
+
+# 直接使用，体验与本地 claude 一致
+claude
+
+# 所有 claude 参数原样透传
+claude -p "帮我重构这个函数"
+claude --model sonnet
+```
+
+`cloud-claude` 会自动完成：认证 → 等待容器就绪 → 将当前目录映射到容器 `/workspace` → 在远端启动 Claude Code。终端窗口大小、信号、退出码都会正确透传。
+
+### Claude Code（SSH 方式）
 
 进入云主机后 Claude Code 已预装，直接使用：
 
@@ -152,20 +205,25 @@ claude
 ## 架构
 
 ```
-用户 ──curl──> Control Plane (:8080) ──Docker──> 用户容器 (SSH + Claude Code + VNC)
-                    │                                  │
-               PostgreSQL                        WireGuard / sing-box 隧道
-                    │                                  │
-              Admin SPA (:3000)                   指定出口 IP
-                    │
-              SSH Proxy (:2222)
+                                                    ┌───────────────────────────────────┐
+用户 ──curl──> Control Plane (:8080) ──Docker──>     │ 用户容器                          │
+                    │                                │  SSH + Claude Code + VNC          │
+               PostgreSQL                            │  sshfs ← /workspace 目录映射      │
+                    │                                │  WireGuard / sing-box 隧道        │
+              Admin SPA (:3000)                      │       ↓                           │
+                    │                                │  指定出口 IP                      │
+              SSH Proxy (:2222)                      └───────────────────────────────────┘
+                    ↑                                           ↑
+                    │                                           │
+用户 ──cloud-claude──> 认证 + SSH + sshfs ──────────────────────┘
 ```
 
 | 组件 | 说明 |
 |------|------|
 | **Control Plane** | Go API，认证、用户管理、任务编排、SSH 代理 |
 | **Host Agent** | 特权代理，管理 Docker 容器、网络命名空间和隧道 |
-| **用户容器** | Ubuntu 24.04，预装 OpenSSH + Claude Code + KasmVNC + Chromium |
+| **用户容器** | Ubuntu 24.04，预装 OpenSSH + Claude Code + sshfs + KasmVNC + Chromium |
+| **cloud-claude** | Go CLI，透明替代本地 claude 命令，本地目录通过 sshfs 映射到容器 |
 | **PostgreSQL** | 持久化用户、主机、出口 IP、任务和事件 |
 | **Admin SPA** | React 19 + TypeScript + Vite + Tailwind CSS |
 

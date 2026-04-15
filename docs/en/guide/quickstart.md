@@ -235,7 +235,79 @@ curl -sSf http://YOUR_HOST:8080/v1/bootstrap/script | bash
 
 > Share this section directly with your users.
 
-### Connect to Cloud Host
+### Option 1: cloud-claude Local CLI (Recommended)
+
+Install `cloud-claude` locally to transparently use Claude Code on your remote cloud host. Your current directory is automatically mapped into the container.
+
+**Install:**
+
+Download from [Releases](https://github.com/ZaneL1u/cloud-cli-proxy/releases), or build from source:
+
+```bash
+go build -o cloud-claude ./cmd/cloud-claude
+sudo mv cloud-claude /usr/local/bin/
+```
+
+**First-time setup:**
+
+```bash
+cloud-claude init
+```
+
+You'll be prompted for:
+- **Gateway URL**: Server address from your admin (e.g. `https://gw.example.com`)
+- **Short ID**: Host short ID assigned by admin
+- **Password**: Your login password (hidden input)
+
+Config is saved to `~/.cloud-claude/config.yaml` and auto-loaded on subsequent runs.
+
+You can also use flags:
+
+```bash
+cloud-claude init --gateway https://gw.example.com --short-id abc123 --password your-password
+```
+
+Or environment variables:
+
+```bash
+export CLOUD_CLAUDE_GATEWAY=https://gw.example.com
+export CLOUD_CLAUDE_SHORT_ID=abc123
+export CLOUD_CLAUDE_PASSWORD=your-password
+cloud-claude init
+```
+
+**Daily usage:**
+
+```bash
+# Set alias for seamless experience
+alias claude=cloud-claude
+
+# Use exactly like local claude
+claude
+
+# All claude arguments are passed through
+claude -p "refactor this function"
+claude --model sonnet
+```
+
+When you run `cloud-claude`, it automatically:
+1. Authenticates with the gateway
+2. Waits for your container to be ready
+3. Maps your **current directory** to `/workspace` via sshfs
+4. Launches Claude Code in the container with `/workspace` as the working directory
+
+Terminal resizing (SIGWINCH), Ctrl+C signals, and exit codes are all properly forwarded — the experience is identical to local `claude`.
+
+**Error codes:**
+
+| Exit Code | Meaning | Action |
+|-----------|---------|--------|
+| 1 | Auth failed | Check Short ID and password |
+| 2 | Network error | Check gateway URL is reachable |
+| 3 | Timeout | Container startup timeout, contact admin |
+| 4 | Config error | Run `cloud-claude init` to reconfigure |
+
+### Option 2: curl + SSH Access
 
 Run the command your admin provided:
 
@@ -256,7 +328,7 @@ Enter your password and you'll be in your cloud host within seconds.
 | **zsh** | Enhanced shell experience |
 | **Node.js** | JavaScript runtime |
 
-### Using Claude Code
+### Using Claude Code (via SSH)
 
 Once inside your cloud host, just run:
 

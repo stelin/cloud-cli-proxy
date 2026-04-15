@@ -11,7 +11,7 @@ Instantly restore full project context so "Where were we?" has an immediate, com
 </purpose>
 
 <required_reading>
-@.cursor/get-shit-done/references/continuation-format.md
+@/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/references/continuation-format.md
 </required_reading>
 
 <process>
@@ -20,7 +20,7 @@ Instantly restore full project context so "Where were we?" has an immediate, com
 Load all context in one call:
 
 ```bash
-INIT=$(node ".cursor/get-shit-done/bin/gsd-tools.cjs" init resume)
+INIT=$(node "/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/bin/gsd-tools.cjs" init resume)
 if [[ "$INIT" == @file:* ]]; then INIT=$(cat "${INIT#@file:}"); fi
 ```
 
@@ -235,9 +235,9 @@ Based on user selection, route to appropriate workflow:
 
   **{phase}-{plan}: [Plan Name]** — [objective from PLAN.md]
 
-  `/gsd-execute-phase {phase} ${GSD_WS}`
+  `/clear` then:
 
-  <sub>`/clear` first → fresh context window</sub>
+  `/gsd-execute-phase {phase} ${GSD_WS}`
 
   ---
   ```
@@ -249,9 +249,9 @@ Based on user selection, route to appropriate workflow:
 
   **Phase [N]: [Name]** — [Goal from ROADMAP.md]
 
-  `/gsd-plan-phase [phase-number] ${GSD_WS}`
+  `/clear` then:
 
-  <sub>`/clear` first → fresh context window</sub>
+  `/gsd-plan-phase [phase-number] ${GSD_WS}`
 
   ---
 

@@ -235,7 +235,80 @@ curl -sSf http://YOUR_HOST:8080/v1/bootstrap/script | bash
 
 > 可以直接把这一段发给你的用户。
 
-### 接入云主机
+### 方式一：cloud-claude 本地 CLI（推荐）
+
+在本地安装 `cloud-claude` 后，可以像使用本地 `claude` 一样透明地使用远端云主机上的 Claude Code。当前目录会自动映射到容器内。
+
+**安装：**
+
+从 [Releases](https://github.com/ZaneL1u/cloud-cli-proxy/releases) 下载对应平台的二进制文件，或从源码构建：
+
+```bash
+go build -o cloud-claude ./cmd/cloud-claude
+# 将 cloud-claude 移到 PATH 中的某个目录
+sudo mv cloud-claude /usr/local/bin/
+```
+
+**首次配置：**
+
+```bash
+cloud-claude init
+```
+
+按提示依次输入：
+- **网关地址**：管理员提供的服务器地址（如 `https://gw.example.com`）
+- **Short ID**：管理员分配的主机短 ID
+- **密码**：你的登录密码（输入时不显示）
+
+配置保存在 `~/.cloud-claude/config.yaml`，后续运行自动读取。
+
+也可以通过 flag 一步完成：
+
+```bash
+cloud-claude init --gateway https://gw.example.com --short-id abc123 --password your-password
+```
+
+或通过环境变量：
+
+```bash
+export CLOUD_CLAUDE_GATEWAY=https://gw.example.com
+export CLOUD_CLAUDE_SHORT_ID=abc123
+export CLOUD_CLAUDE_PASSWORD=your-password
+cloud-claude init
+```
+
+**日常使用：**
+
+```bash
+# 推荐设置 alias
+alias claude=cloud-claude
+
+# 然后像本地一样使用
+claude
+
+# 所有 claude 参数原样透传
+claude -p "帮我重构这个函数"
+claude --model sonnet
+```
+
+运行时 `cloud-claude` 会自动完成以下步骤：
+1. 向网关认证身份
+2. 等待容器就绪
+3. 通过 sshfs 将你的**当前目录**映射到容器 `/workspace`
+4. 在容器内以 `/workspace` 为工作目录启动 Claude Code
+
+终端窗口大小调整（SIGWINCH）、Ctrl+C 信号和退出码都会正确透传，体验与本地 `claude` 完全一致。
+
+**错误提示：**
+
+| 退出码 | 含义 | 排查方向 |
+|--------|------|---------|
+| 1 | 认证失败 | 检查 Short ID 和密码 |
+| 2 | 网络错误 | 检查网关地址是否可达 |
+| 3 | 超时 | 容器启动超时，联系管理员 |
+| 4 | 配置错误 | 运行 `cloud-claude init` 重新配置 |
+
+### 方式二：curl + SSH 接入
 
 在终端执行管理员给你的命令：
 
@@ -258,7 +331,7 @@ curl -sSf http://YOUR_HOST/entry/abc123 | bash
 | **zsh** | 增强 Shell 体验 |
 | **Node.js** | JavaScript 运行时 |
 
-### 使用 Claude Code
+### 使用 Claude Code（SSH 方式）
 
 进入云主机后，直接运行：
 

@@ -4,6 +4,12 @@ Extract implementation decisions that downstream agents need. Analyze the phase 
 You are a thinking partner, not an interviewer. The user is the visionary — you are the builder. Your job is to capture decisions that will guide research and planning, not to figure out implementation yourself.
 </purpose>
 
+<required_reading>
+@/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/references/domain-probes.md
+@/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/references/gate-prompts.md
+@/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/references/universal-anti-patterns.md
+</required_reading>
+
 <downstream_awareness>
 **CONTEXT.md feeds into:**
 
@@ -107,6 +113,15 @@ Phase: "API documentation"
 
 <answer_validation>
 **IMPORTANT: Answer validation** — After every conversational prompting call, check if the response is empty or whitespace-only. If so:
+
+**Exception — "Other" with empty text:** If the user selected "Other" (or "Chat more") and the response body is empty or whitespace-only, this is NOT an empty answer — it is a signal that the user wants to type freeform input. In this case:
+1. Output a single plain-text line: "What would you like to discuss?"
+2. STOP generating. Do not call any tools. Do not output any further text.
+3. Wait for the user's next message.
+4. After receiving their message, reflect it back and continue.
+Do NOT retry the conversational prompting or generate more questions when "Other" is selected with empty text.
+
+**All other empty responses:** If the response is empty or whitespace-only (and the user did NOT select "Other"):
 1. Retry the question once with the same parameters
 2. If still empty, present the options as a plain-text numbered list and ask the user to type their choice number
 Never proceed with an empty answer.
@@ -132,12 +147,14 @@ Text mode applies to ALL workflows in the session, not just discuss-phase.
 Phase number from argument (required).
 
 ```bash
-INIT=$(node ".cursor/get-shit-done/bin/gsd-tools.cjs" init phase-op "${PHASE}")
+INIT=$(node "/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/bin/gsd-tools.cjs" init phase-op "${PHASE}")
 if [[ "$INIT" == @file:* ]]; then INIT=$(cat "${INIT#@file:}"); fi
-AGENT_SKILLS_ADVISOR=$(node ".cursor/get-shit-done/bin/gsd-tools.cjs" agent-skills gsd-advisor 2>/dev/null)
+AGENT_SKILLS_ADVISOR=$(node "/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/bin/gsd-tools.cjs" agent-skills gsd-advisor 2>/dev/null)
 ```
 
-Parse JSON for: `commit_docs`, `phase_found`, `phase_dir`, `phase_number`, `phase_name`, `phase_slug`, `padded_phase`, `has_research`, `has_context`, `has_plans`, `has_verification`, `plan_count`, `roadmap_exists`, `planning_exists`.
+Parse JSON for: `commit_docs`, `phase_found`, `phase_dir`, `phase_number`, `phase_name`, `phase_slug`, `padded_phase`, `has_research`, `has_context`, `has_plans`, `has_verification`, `plan_count`, `roadmap_exists`, `planning_exists`, `response_language`.
+
+**If `response_language` is set:** All user-facing questions, prompts, and explanations in this workflow MUST be presented in `{response_language}`. This includes conversational prompting labels, option text, gray area descriptions, and discussion summaries. Technical terms, code, and file paths remain in English. Subagent prompts stay in English — only user-facing output is translated.
 
 **If `phase_found` is false:**
 ```
@@ -149,12 +166,46 @@ Exit workflow.
 
 **If `phase_found` is true:** Continue to check_existing.
 
+**Power mode** — If `--power` is present in ARGUMENTS:
+- Skip interactive questioning entirely
+- Read and execute @/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/workflows/discuss-phase-power.md end-to-end
+- Do not continue with the steps below
+
 **Auto mode** — If `--auto` is present in ARGUMENTS:
 - In `check_existing`: auto-select "Skip" (if context exists) or continue without prompting (if no context/plans)
 - In `present_gray_areas`: auto-select ALL gray areas without asking the user
 - In `discuss_areas`: for each discussion question, choose the recommended option (first option, or the one marked "recommended") without using conversational prompting
 - Log each auto-selected choice inline so the user can review decisions in the context file
 - After discussion completes, auto-advance to plan-phase (existing behavior)
+
+**Chain mode** — If `--chain` is present in ARGUMENTS:
+- Discussion is fully interactive (questions, gray area selection — same as default mode)
+- After discussion completes, auto-advance to plan-phase → execute-phase (same as `--auto`)
+- This is the middle ground: user controls the discuss decisions, then plan+execute run autonomously
+</step>
+
+<step name="check_blocking_antipatterns" priority="first">
+**MANDATORY — Check for blocking anti-patterns before any other work.**
+
+Look for a `.continue-here.md` in the current phase directory:
+
+```bash
+ls ${phase_dir}/.continue-here.md 2>/dev/null || true
+```
+
+If `.continue-here.md` exists, parse its "Critical Anti-Patterns" table for rows with `severity` = `blocking`.
+
+**If one or more `blocking` anti-patterns are found:**
+
+This step cannot be skipped. Before proceeding to `check_existing` or any other step, the agent must demonstrate understanding of each blocking anti-pattern by answering all three questions for each one:
+
+1. **What is this anti-pattern?** — Describe it in your own words, not by quoting the handoff.
+2. **How did it manifest?** — Explain the specific failure that caused it to be recorded.
+3. **What structural mechanism (not acknowledgment) prevents it?** — Name the concrete step, checklist item, or enforcement mechanism that stops recurrence.
+
+Write these answers inline before continuing. If a blocking anti-pattern cannot be answered from the context in `.continue-here.md`, stop and ask the user for clarification.
+
+**If no `.continue-here.md` exists, or no `blocking` rows are found:** Proceed directly to `check_existing`.
 </step>
 
 <step name="check_existing">
@@ -181,6 +232,26 @@ If "View": Display CONTEXT.md, then offer update/skip
 If "Skip": Exit workflow
 
 **If doesn't exist:**
+
+**Check for interrupted discussion checkpoint:**
+
+```bash
+ls ${phase_dir}/*-DISCUSS-CHECKPOINT.json 2>/dev/null || true
+```
+
+If a checkpoint file exists (previous session was interrupted before CONTEXT.md was written):
+
+**If `--auto`:** Auto-select "Resume" — load checkpoint and continue from last completed area.
+
+**Otherwise:** Use conversational prompting:
+- header: "Resume"
+- question: "Found interrupted discussion checkpoint ({N} areas completed out of {M}). Resume from where you left off?"
+- options:
+  - "Resume" — Load checkpoint, skip completed areas, continue discussion
+  - "Start fresh" — Delete checkpoint, start discussion from scratch
+
+If "Resume": Parse the checkpoint JSON. Load `decisions` into the internal accumulator. Set `areas_completed` to skip those areas. Continue to `present_gray_areas` with only the remaining areas.
+If "Start fresh": Delete the checkpoint file. Continue as if no checkpoint existed.
 
 Check `has_plans` and `plan_count` from init. **If `has_plans` is true:**
 
@@ -260,7 +331,7 @@ Check if any pending todos are relevant to this phase's scope. Surfaces backlog 
 
 **Load and match todos:**
 ```bash
-TODO_MATCHES=$(node ".cursor/get-shit-done/bin/gsd-tools.cjs" todo match-phase "${PHASE_NUMBER}")
+TODO_MATCHES=$(node "/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/bin/gsd-tools.cjs" todo match-phase "${PHASE_NUMBER}")
 ```
 
 Parse JSON for: `todo_count`, `matches[]` (each with `file`, `title`, `area`, `score`, `reasons`).
@@ -369,7 +440,7 @@ Check if advisor mode should activate:
 
 1. Check for USER-PROFILE.md:
    ```bash
-   PROFILE_PATH=".cursor/get-shit-done/USER-PROFILE.md"
+   PROFILE_PATH="/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/USER-PROFILE.md"
    ```
    ADVISOR_MODE = file exists at PROFILE_PATH → true, otherwise → false
 
@@ -385,10 +456,38 @@ Check if advisor mode should activate:
 
 3. Resolve model for advisor agents:
    ```bash
-   ADVISOR_MODEL=$(node ".cursor/get-shit-done/bin/gsd-tools.cjs" resolve-model gsd-advisor-researcher --raw)
+   ADVISOR_MODEL=$(node "/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/bin/gsd-tools.cjs" resolve-model gsd-advisor-researcher --raw)
    ```
 
 If ADVISOR_MODE is false, skip all advisor-specific steps — workflow proceeds with existing conversational flow unchanged.
+
+**User Profile Language Detection:**
+
+Check USER-PROFILE.md for communication preferences that indicate a non-technical product owner:
+
+```bash
+PROFILE_CONTENT=$(cat "/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/USER-PROFILE.md" 2>/dev/null || true)
+```
+
+Set NON_TECHNICAL_OWNER = true if ANY of the following are present in USER-PROFILE.md:
+- `learning_style: guided`
+- The word `jargon` appears in a `frustration_triggers` section
+- `explanation_depth: practical-detailed` (without a technical modifier)
+- `explanation_depth: high-level`
+
+NON_TECHNICAL_OWNER = false if USER-PROFILE.md does not exist or none of the above signals are present.
+
+When NON_TECHNICAL_OWNER is true, reframe gray area labels and descriptions in product-outcome language before presenting them to the user. Preserve the same underlying decision — only change the framing:
+- Technical implementation term → outcome the user will experience
+  - "Token architecture" → "Color system: which approach prevents the dark theme from flashing white on open"
+  - "CSS variable strategy" → "Theme colors: how your brand colors stay consistent in both light and dark mode"
+  - "Component API surface area" → "How the building blocks connect: how tightly coupled should these parts be"
+  - "Caching strategy: SWR vs React Query" → "Loading speed: should screens show saved data right away or wait for fresh data"
+- All decisions stay the same. Only the question language adapts.
+
+This reframing applies to:
+1. Gray area labels and descriptions in `present_gray_areas`
+2. Advisor research rationale rewrites in `advisor_research` synthesis
 
 **Output your analysis internally, then present to user.**
 
@@ -492,7 +591,7 @@ After user selects gray areas in present_gray_areas, spawn parallel research age
 2. For EACH user-selected gray area, spawn a Task() in parallel:
 
    Task(
-     prompt="First, read @.cursor/agents/gsd-advisor-researcher.md for your role and instructions.
+     prompt="First, read @/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/agents/gsd-advisor-researcher.md for your role and instructions.
 
      <gray_area>{area_name}: {area_description from gray area identification}</gray_area>
      <phase_context>{phase_goal and description from ROADMAP.md}</phase_context>
@@ -519,6 +618,7 @@ After user selects gray areas in present_gray_areas, spawn parallel research age
       If agent returned too many, trim least viable. If too few, accept as-is.
    d. Rewrite rationale paragraph to weave in project context and ongoing discussion context that the agent did not have access to
    e. If agent returned only 1 option, convert from table format to direct recommendation: "Standard approach for {area}: {option}. {rationale}"
+   f. **If NON_TECHNICAL_OWNER is true:** After completing steps a–e, apply a plain language rewrite to the rationale paragraph. Replace implementation-level terms with outcome descriptions the user can reason about without technical context. The table option names may also be rewritten in plain language if they are implementation terms — the Recommendation column value and the table structure remain intact. Do not remove detail; translate it. Example: "SWR uses stale-while-revalidate to serve cached responses immediately" → "This approach shows you something right away, then quietly updates in the background — users see data instantly."
 
 4. Store synthesized tables for use in discuss_areas.
 
@@ -544,6 +644,20 @@ Table-first discussion flow — present research-backed comparison tables, then 
 3. **Record the user's selection:**
    - If user picks from table options → record as locked decision for that area
    - If user picks "Other" → receive their input, reflect it back for confirmation, record
+
+   **Thinking partner (conditional):**
+   If `features.thinking_partner` is enabled in config, check the user's answer for tradeoff signals
+   (see `references/thinking-partner.md` for signal list). If tradeoff detected:
+
+   ```
+   I notice competing priorities here — {option_A} optimizes for {goal_A} while {option_B} optimizes for {goal_B}.
+
+   Want me to think through the tradeoffs before we lock this in?
+   [Yes, analyze] / [No, decision made]
+   ```
+
+   If yes: provide 3-5 bullet analysis (what each optimizes/sacrifices, alignment with PROJECT.md goals, recommendation). Then return to normal flow.
+   If no or thinking_partner disabled: continue to next area.
 
 4. **After recording pick, Claude decides whether follow-up questions are needed:**
    - If the pick has ambiguity that would affect downstream planning → ask 1-2 targeted follow-up questions using conversational prompting
@@ -640,6 +754,16 @@ Each answer (or answer set, in batch mode) should reveal the next question or ne
 ```
 After all areas are auto-resolved, skip the "Explore more gray areas" prompt and proceed directly to write_context.
 
+**CRITICAL — Auto-mode pass cap:**
+In `--auto` mode, the discuss step MUST complete in a **single pass**. After writing CONTEXT.md once, you are DONE — proceed immediately to write_context and then auto_advance. Do NOT re-read your own CONTEXT.md to find "gaps", "undefined types", or "missing decisions" and run additional passes. This creates a self-feeding loop where each pass generates references that the next pass treats as gaps, consuming unbounded time and resources.
+
+Check the pass cap from config:
+```bash
+MAX_PASSES=$(node "/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/bin/gsd-tools.cjs" config-get workflow.max_discuss_passes 2>/dev/null || echo "3")
+```
+
+If you have already written and committed CONTEXT.md, the discuss step is complete. Move on.
+
 **Interactive mode (no `--auto`):**
 
 **For each area:**
@@ -718,6 +842,44 @@ Back to [current area]: [return to current question]"
 ```
 
 Track deferred ideas internally.
+
+**Incremental checkpoint — save after each area completes:**
+
+After each area is resolved (user says "Next area" or area auto-resolves in `--auto` mode), immediately write a checkpoint file with all decisions captured so far. This prevents data loss if the session is interrupted mid-discussion.
+
+**Checkpoint file:** `${phase_dir}/${padded_phase}-DISCUSS-CHECKPOINT.json`
+
+Write after each area:
+```json
+{
+  "phase": "{PHASE_NUM}",
+  "phase_name": "{phase_name}",
+  "timestamp": "{ISO timestamp}",
+  "areas_completed": ["Area 1", "Area 2"],
+  "areas_remaining": ["Area 3", "Area 4"],
+  "decisions": {
+    "Area 1": [
+      {"question": "...", "answer": "...", "options_presented": ["..."]},
+      {"question": "...", "answer": "...", "options_presented": ["..."]}
+    ],
+    "Area 2": [
+      {"question": "...", "answer": "...", "options_presented": ["..."]}
+    ]
+  },
+  "deferred_ideas": ["..."],
+  "canonical_refs": ["..."]
+}
+```
+
+This is a structured checkpoint, not the final CONTEXT.md — the `write_context` step still produces the canonical output. But if the session dies, the next `/gsd-discuss-phase` invocation can detect this checkpoint and offer to resume from it instead of starting from scratch.
+
+**On session resume:** In the `check_existing` step, also check for `*-DISCUSS-CHECKPOINT.json`. If found and no CONTEXT.md exists:
+- Display: "Found interrupted discussion checkpoint ({N} areas completed). Resume from checkpoint?"
+- Options: "Resume" / "Start fresh"
+- On "Resume": Load the checkpoint, skip completed areas, continue from where it left off
+- On "Start fresh": Delete the checkpoint, proceed as normal
+
+**After write_context completes successfully:** Delete the checkpoint file — the canonical CONTEXT.md now has all decisions.
 
 **Track discussion log data internally:**
 For each question asked, accumulate:
@@ -873,13 +1035,14 @@ Created: .planning/phases/${PADDED_PHASE}-${SLUG}/${PADDED_PHASE}-CONTEXT.md
 
 **Phase ${PHASE}: [Name]** — [Goal from ROADMAP.md]
 
-`/gsd-plan-phase ${PHASE} ${GSD_WS}`
+`/clear` then:
 
-<sub>`/clear` first → fresh context window</sub>
+`/gsd-plan-phase ${PHASE} ${GSD_WS}`
 
 ---
 
 **Also available:**
+- `/gsd-discuss-phase ${PHASE} --chain ${GSD_WS}` — re-run with auto plan+execute after
 - `/gsd-plan-phase ${PHASE} --skip-research ${GSD_WS}` — plan without research
 - `/gsd-ui-phase ${PHASE} ${GSD_WS}` — generate UI design contract before planning (if phase has frontend work)
 - Review/edit CONTEXT.md before continuing
@@ -933,10 +1096,16 @@ Created: .planning/phases/${PADDED_PHASE}-${SLUG}/${PADDED_PHASE}-CONTEXT.md
 
 Write file.
 
+**Clean up checkpoint file** — CONTEXT.md is now the canonical record:
+
+```bash
+rm -f "${phase_dir}/${padded_phase}-DISCUSS-CHECKPOINT.json"
+```
+
 Commit phase context and discussion log:
 
 ```bash
-node ".cursor/get-shit-done/bin/gsd-tools.cjs" commit "docs(${padded_phase}): capture phase context" --files "${phase_dir}/${padded_phase}-CONTEXT.md" "${phase_dir}/${padded_phase}-DISCUSSION-LOG.md"
+node "/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/bin/gsd-tools.cjs" commit "docs(${padded_phase}): capture phase context" --files "${phase_dir}/${padded_phase}-CONTEXT.md" "${phase_dir}/${padded_phase}-DISCUSSION-LOG.md"
 ```
 
 Confirm: "Committed: docs(${padded_phase}): capture phase context"
@@ -946,7 +1115,7 @@ Confirm: "Committed: docs(${padded_phase}): capture phase context"
 Update STATE.md with session info:
 
 ```bash
-node ".cursor/get-shit-done/bin/gsd-tools.cjs" state record-session \
+node "/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/bin/gsd-tools.cjs" state record-session \
   --stopped-at "Phase ${PHASE} context gathered" \
   --resume-file "${phase_dir}/${padded_phase}-CONTEXT.md"
 ```
@@ -954,32 +1123,32 @@ node ".cursor/get-shit-done/bin/gsd-tools.cjs" state record-session \
 Commit STATE.md:
 
 ```bash
-node ".cursor/get-shit-done/bin/gsd-tools.cjs" commit "docs(state): record phase ${PHASE} context session" --files .planning/STATE.md
+node "/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/bin/gsd-tools.cjs" commit "docs(state): record phase ${PHASE} context session" --files .planning/STATE.md
 ```
 </step>
 
 <step name="auto_advance">
 Check for auto-advance trigger:
 
-1. Parse `--auto` flag from {{GSD_ARGS}}
-2. **Sync chain flag with intent** — if user invoked manually (no `--auto`), clear the ephemeral chain flag from any previous interrupted `--auto` chain. This does NOT touch `workflow.auto_advance` (the user's persistent settings preference):
+1. Parse `--auto` and `--chain` flags from {{GSD_ARGS}}
+2. **Sync chain flag with intent** — if user invoked manually (no `--auto` and no `--chain`), clear the ephemeral chain flag from any previous interrupted `--auto` chain. This does NOT touch `workflow.auto_advance` (the user's persistent settings preference):
    ```bash
-   if [[ ! "{{GSD_ARGS}}" =~ --auto ]]; then
-     node ".cursor/get-shit-done/bin/gsd-tools.cjs" config-set workflow._auto_chain_active false 2>/dev/null
+   if [[ ! "{{GSD_ARGS}}" =~ --auto ]] && [[ ! "{{GSD_ARGS}}" =~ --chain ]]; then
+     node "/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/bin/gsd-tools.cjs" config-set workflow._auto_chain_active false 2>/dev/null
    fi
    ```
 3. Read both the chain flag and user preference:
    ```bash
-   AUTO_CHAIN=$(node ".cursor/get-shit-done/bin/gsd-tools.cjs" config-get workflow._auto_chain_active 2>/dev/null || echo "false")
-   AUTO_CFG=$(node ".cursor/get-shit-done/bin/gsd-tools.cjs" config-get workflow.auto_advance 2>/dev/null || echo "false")
+   AUTO_CHAIN=$(node "/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/bin/gsd-tools.cjs" config-get workflow._auto_chain_active 2>/dev/null || echo "false")
+   AUTO_CFG=$(node "/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/bin/gsd-tools.cjs" config-get workflow.auto_advance 2>/dev/null || echo "false")
    ```
 
-**If `--auto` flag present AND `AUTO_CHAIN` is not true:** Persist chain flag to config (handles direct `--auto` usage without new-project):
+**If `--auto` or `--chain` flag present AND `AUTO_CHAIN` is not true:** Persist chain flag to config (handles direct usage without new-project):
 ```bash
-node ".cursor/get-shit-done/bin/gsd-tools.cjs" config-set workflow._auto_chain_active true
+node "/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/bin/gsd-tools.cjs" config-set workflow._auto_chain_active true
 ```
 
-**If `--auto` flag present OR `AUTO_CHAIN` is true OR `AUTO_CFG` is true:**
+**If `--auto` flag present OR `--chain` flag present OR `AUTO_CHAIN` is true OR `AUTO_CFG` is true:**
 
 Display banner:
 ```
@@ -1006,8 +1175,9 @@ This keeps the auto-advance chain flat — discuss, plan, and execute all run at
 
   Auto-advance pipeline finished: discuss → plan → execute
 
-  Next: /gsd-discuss-phase ${NEXT_PHASE} --auto ${GSD_WS}
-  <sub>/clear first → fresh context window</sub>
+  /clear then:
+
+  Next: /gsd-discuss-phase ${NEXT_PHASE} ${WAS_CHAIN ? "--chain" : "--auto"} ${GSD_WS}
   ```
 - **PLANNING COMPLETE** → Planning done, execution didn't complete:
   ```
@@ -1025,11 +1195,26 @@ This keeps the auto-advance chain flat — discuss, plan, and execute all run at
   Continue: /gsd-plan-phase ${PHASE} --gaps ${GSD_WS}
   ```
 
-**If neither `--auto` nor config enabled:**
+**If none of `--auto`, `--chain`, nor config enabled:**
 Route to `confirm_creation` step (existing behavior — show manual next steps).
 </step>
 
 </process>
+
+<power_user_mode>
+When `--power` flag is present in ARGUMENTS, skip interactive questioning and execute the power user workflow.
+
+The power user mode generates ALL questions upfront into machine-readable and human-friendly files, then waits for the user to answer at their own pace before processing all answers in a single pass.
+
+**Full step-by-step instructions:** @/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/workflows/discuss-phase-power.md
+
+**Summary of flow:**
+1. Run the same phase analysis (gray area identification) as standard mode
+2. Write all questions to `{phase_dir}/{padded_phase}-QUESTIONS.json` and `{phase_dir}/{padded_phase}-QUESTIONS.html`
+3. Notify user with file paths and wait for a "refresh" or "finalize" command
+4. On "refresh": read the JSON, process answered questions, update stats and HTML
+5. On "finalize": read all answers from JSON, generate CONTEXT.md in the standard format
+</power_user_mode>
 
 <success_criteria>
 - Phase validated against roadmap
@@ -1046,4 +1231,9 @@ Route to `confirm_creation` step (existing behavior — show manual next steps).
 - Deferred ideas preserved for future phases
 - STATE.md updated with session info
 - User knows next steps
+- Checkpoint file written after each area completes (incremental save)
+- Interrupted sessions can be resumed from checkpoint (no re-answering completed areas)
+- Checkpoint file cleaned up after successful CONTEXT.md write
+- `--chain` triggers interactive discuss followed by auto plan+execute (no auto-answering)
+- `--chain` and `--auto` both persist chain flag and auto-advance to plan-phase
 </success_criteria>
