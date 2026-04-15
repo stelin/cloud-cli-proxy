@@ -15,7 +15,7 @@
 
 [English](README.en.md) | [Documentation](https://zanel1u.github.io/cloud-cli-proxy/)
 
-**Go · React · PostgreSQL · Docker · WireGuard**
+**Go · React · PostgreSQL · Docker · sing-box**
 
 </div>
 
@@ -26,8 +26,8 @@
 - **一条命令接入** — `curl | bash` 自动认证、创建容器、SSH 接入，用户无需任何配置
 - **cloud-claude 本地 CLI** — `alias claude=cloud-claude`，在本地终端透明运行远端 Claude Code，当前目录实时映射
 - **Claude Code 开箱即用** — 容器预装 Claude Code，进入即可使用，所有 API 请求自动走指定出口
-- **全流量强制出口** — WireGuard + Linux netns / sing-box tun 双通道，nftables 默认拒绝策略，杜绝 DNS / WebRTC 泄漏
-- **多协议支持** — 出口 IP 支持 WireGuard 和 5 种代理协议（SOCKS5 / VMess / Shadowsocks / Trojan / HTTP）
+- **全流量强制出口** — sing-box tun + Linux netns 全隧道，nftables 默认拒绝策略，杜绝 DNS / WebRTC 泄漏
+- **多协议支持** — 出口 IP 支持 6 种代理协议（SOCKS5 / VMess / VLESS / Shadowsocks / Trojan / HTTP）
 - **每用户隔离** — 独立 Docker 容器，预装 KasmVNC 远程桌面 + Chromium 浏览器
 - **管理后台** — React SPA 仪表盘，用户、主机、出口 IP、事件日志一站式管理
 - **用户自助面板** — 用户可查看主机状态、重建主机、访问 VNC 桌面
@@ -120,7 +120,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yaml up -d --force-
 
 登录管理后台，依次完成：
 
-1. **添加出口 IP** — 支持 WireGuard 配置或代理协议，可一键测试连通性
+1. **添加出口 IP** — 支持多种代理协议，可一键测试连通性
 2. **创建用户** — 设置用户名、密码、到期时间
 3. **创建主机** — 为用户创建容器并绑定出口 IP
 4. **分发接入命令** — 在主机详情页复制 `curl` 命令发给用户
@@ -140,7 +140,11 @@ curl -sSf http://YOUR_HOST/entry/abc123 | bash
 
 **安装：**
 
-从 [Releases](https://github.com/ZaneL1u/cloud-cli-proxy/releases) 下载对应平台的二进制文件，或从源码构建：
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZaneL1u/cloud-cli-proxy/main/scripts/install.sh | bash
+```
+
+也可以从 [Releases](https://github.com/ZaneL1u/cloud-cli-proxy/releases) 手动下载，或从源码构建：
 
 ```bash
 go build -o cloud-claude ./cmd/cloud-claude
@@ -209,7 +213,7 @@ claude
 用户 ──curl──> Control Plane (:8080) ──Docker──>     │ 用户容器                          │
                     │                                │  SSH + Claude Code + VNC          │
                PostgreSQL                            │  sshfs ← /workspace 目录映射      │
-                    │                                │  WireGuard / sing-box 隧道        │
+                    │                                │  sing-box tun 隧道                │
               Admin SPA (:3000)                      │       ↓                           │
                     │                                │  指定出口 IP                      │
               SSH Proxy (:2222)                      └───────────────────────────────────┘
@@ -327,7 +331,7 @@ make release VERSION=1.5.0
 
 - [快速开始](https://zanel1u.github.io/cloud-cli-proxy/zh/guide/quickstart) — 部署和首次使用
 - [部署指南](https://zanel1u.github.io/cloud-cli-proxy/zh/guide/deployment) — systemd 原生部署
-- [配置参考](https://zanel1u.github.io/cloud-cli-proxy/zh/guide/configuration) — 环境变量和 WireGuard 配置
+- [配置参考](https://zanel1u.github.io/cloud-cli-proxy/zh/guide/configuration) — 环境变量和出口代理配置
 - [架构说明](https://zanel1u.github.io/cloud-cli-proxy/zh/guide/architecture) — 系统设计和项目结构
 - [API 参考](https://zanel1u.github.io/cloud-cli-proxy/zh/reference/api) — 完整 Admin API
 - [故障排查](https://zanel1u.github.io/cloud-cli-proxy/zh/reference/faq) — 常见问题和灾难恢复

@@ -11,6 +11,8 @@ import (
 	"github.com/zanel1u/cloud-cli-proxy/internal/cloudclaude"
 )
 
+var Version = "dev"
+
 const (
 	exitOK             = 0
 	exitAuthFailed     = 1
@@ -25,6 +27,7 @@ func main() {
 		Use:                "cloud-claude",
 		Short:              "透明远程 Claude Code CLI",
 		Long:               "连接远端云主机并启动 Claude Code 交互会话。\n首次使用请先运行 cloud-claude init 配置网关与凭证。",
+		Version:            Version,
 		SilenceUsage:       true,
 		SilenceErrors:      true,
 		DisableFlagParsing: true,
@@ -108,6 +111,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 }
 
 func runRoot(cmd *cobra.Command, args []string) error {
+	if len(args) > 0 && (args[0] == "--version" || args[0] == "-v" || args[0] == "version") {
+		fmt.Printf("cloud-claude %s\n", Version)
+		return nil
+	}
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
 	}

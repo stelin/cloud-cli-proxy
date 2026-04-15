@@ -116,6 +116,55 @@ jobs:
           git commit -m "docs(changelog): update for v${VERSION}"
           git push origin "HEAD:${DEFAULT_BRANCH}"
 
+  build-binaries:
+    needs: create-release
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build cloud-claude
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="${{ needs.create-release.outputs.version }}"
+          LDFLAGS="-s -w -X main.Version=${VERSION}"
+          BINARY="cloud-claude-${{ matrix.goos }}-${{ matrix.goarch }}"
+          go build -ldflags "${LDFLAGS}" -trimpath -o "${BINARY}" ./cmd/cloud-claude
+
+      - name: Compress binary
+        run: |
+          BINARY="cloud-claude-${{ matrix.goos }}-${{ matrix.goarch }}"
+          ARCHIVE="cloud-claude-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
+          tar czf "${ARCHIVE}" "${BINARY}"
+          sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ARCHIVE="cloud-claude-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
+          gh release upload "${{ github.ref_name }}" "${ARCHIVE}" "${ARCHIVE}.sha256" --clobber
+
   publish-images:
     needs: create-release
     uses: ./.github/workflows/build-images.yml

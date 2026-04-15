@@ -3,7 +3,7 @@ export
 
 DEV_COMPOSE := docker compose -f deploy/compose/control-plane.dev.yml
 
-.PHONY: dev dev-api dev-web db test test-go test-smoke build clean gateway-image up up-build down logs release
+.PHONY: dev dev-api dev-web db test test-go test-smoke build build-cli install-cli clean gateway-image up up-build down logs release
 
 # ── Development ──────────────────────────────────────────────
 
@@ -67,13 +67,20 @@ gateway-image: ## Build sing-box + iptables sidecar (required for macOS/Windows 
 build: ## Build all artifacts
 	go build -o bin/control-plane ./cmd/control-plane
 	GOOS=linux GOARCH=amd64 go build -o bin/host-agent ./cmd/host-agent
+	go build -ldflags "-s -w" -trimpath -o bin/cloud-claude ./cmd/cloud-claude
 	cd web/admin && pnpm build
 
 build-api: ## Build Go backend only
 	go build -o bin/control-plane ./cmd/control-plane
 
+build-cli: ## Build cloud-claude CLI
+	go build -ldflags "-s -w" -trimpath -o bin/cloud-claude ./cmd/cloud-claude
+
 build-web: ## Build frontend only
 	cd web/admin && pnpm build
+
+install-cli: ## Install cloud-claude to /usr/local/bin
+	go build -ldflags "-s -w" -trimpath -o /usr/local/bin/cloud-claude ./cmd/cloud-claude
 
 # ── Production ───────────────────────────────────────────────
 

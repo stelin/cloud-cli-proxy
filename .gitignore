@@ -1,6 +1,7 @@
 # Compiled binaries
 bin/
 /control-plane
+/cloud-claude
 *.exe
 *.dll
 *.so

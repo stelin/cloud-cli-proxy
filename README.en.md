@@ -15,7 +15,7 @@ Out-of-the-box isolated cloud hosts for Claude Code and dev teams. Pre-installed
 
 [中文](README.md) | [Documentation](https://zanel1u.github.io/cloud-cli-proxy/en/)
 
-**Go · React · PostgreSQL · Docker · WireGuard**
+**Go · React · PostgreSQL · Docker · sing-box**
 
 </div>
 
@@ -26,8 +26,8 @@ Out-of-the-box isolated cloud hosts for Claude Code and dev teams. Pre-installed
 - **One-command access** — `curl | bash` to authenticate, create container, and SSH in. Zero user config
 - **cloud-claude local CLI** — `alias claude=cloud-claude` to transparently run remote Claude Code from your local terminal with real-time directory mapping
 - **Claude Code ready** — Pre-installed in every container. All API requests auto-routed through designated exit IP
-- **Full-tunnel egress** — WireGuard + Linux netns / sing-box tun dual-channel, nftables default-deny, no DNS/WebRTC leaks
-- **Multi-protocol** — WireGuard and 5 proxy protocols (SOCKS5 / VMess / Shadowsocks / Trojan / HTTP)
+- **Full-tunnel egress** — sing-box tun + Linux netns full-tunnel, nftables default-deny, no DNS/WebRTC leaks
+- **Multi-protocol** — 6 proxy protocols (SOCKS5 / VMess / VLESS / Shadowsocks / Trojan / HTTP)
 - **Per-user isolation** — Dedicated Docker containers with KasmVNC remote desktop + Chromium
 - **Admin dashboard** — React SPA for users, hosts, egress IPs, events, and stats
 - **User self-service** — View host status, rebuild hosts, access VNC desktop
@@ -86,7 +86,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yaml up -d --force-
 
 Log into the admin dashboard, then:
 
-1. **Add egress IPs** — WireGuard config or proxy protocol, with one-click connectivity test
+1. **Add egress IPs** — Multiple proxy protocols, with one-click connectivity test
 2. **Create users** — Set username, password, expiration
 3. **Create hosts** — Create container for user and bind egress IP
 4. **Share access command** — Copy the `curl` command from host detail page
@@ -106,7 +106,11 @@ Besides SSH access, you can use the `cloud-claude` binary on your local machine 
 
 **Install:**
 
-Download from [Releases](https://github.com/ZaneL1u/cloud-cli-proxy/releases), or build from source:
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZaneL1u/cloud-cli-proxy/main/scripts/install.sh | bash
+```
+
+Or download manually from [Releases](https://github.com/ZaneL1u/cloud-cli-proxy/releases), or build from source:
 
 ```bash
 go build -o cloud-claude ./cmd/cloud-claude
@@ -175,7 +179,7 @@ Containers include KasmVNC + Chromium. Access the browser desktop via admin or u
 User ──curl──> Control Plane (:8080) ──Docker──>    │ User Container                    │
                     │                                │  SSH + Claude Code + VNC          │
                PostgreSQL                            │  sshfs ← /workspace dir mapping  │
-                    │                                │  WireGuard / sing-box Tunnel      │
+                    │                                │  sing-box tun Tunnel              │
               Admin SPA (:3000)                      │       ↓                           │
                     │                                │  Designated Exit IP               │
               SSH Proxy (:2222)                      └───────────────────────────────────┘
@@ -238,7 +242,7 @@ Full docs on [GitHub Pages](https://zanel1u.github.io/cloud-cli-proxy/en/):
 
 - [Quick Start](https://zanel1u.github.io/cloud-cli-proxy/en/guide/quickstart) — Deploy and first use
 - [Deployment](https://zanel1u.github.io/cloud-cli-proxy/en/guide/deployment) — systemd native deployment
-- [Configuration](https://zanel1u.github.io/cloud-cli-proxy/en/guide/configuration) — Environment variables and WireGuard setup
+- [Configuration](https://zanel1u.github.io/cloud-cli-proxy/en/guide/configuration) — Environment variables and egress proxy setup
 - [Architecture](https://zanel1u.github.io/cloud-cli-proxy/en/guide/architecture) — System design and project structure
 - [API Reference](https://zanel1u.github.io/cloud-cli-proxy/en/reference/api) — Full Admin API
 - [FAQ & Recovery](https://zanel1u.github.io/cloud-cli-proxy/en/reference/faq) — Troubleshooting and disaster recovery
