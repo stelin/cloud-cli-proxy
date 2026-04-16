@@ -199,17 +199,33 @@ A host requires at least one bound egress IP to start.
 
 ### 5. Send to User
 
-Copy the access command from the host detail page in the admin dashboard, or send this directly (replace `SHORT_ID` with the host's short ID):
+After the host is created, an egress IP is bound, and the task shows the container is **ready**, copy access info from the host detail page in the admin UI.
+
+**Option A: One-liner SSH (classic)**
+
+Send the user (replace `YOUR_HOST` and `SHORT_ID` with the public gateway and the **host** short ID):
 
 ```bash
 curl -sSf http://YOUR_HOST/entry/SHORT_ID | bash
 ```
 
-Or use the bootstrap method (requires username input):
+Or the bootstrap flow (asks for username):
 
 ```bash
 curl -sSf http://YOUR_HOST:8080/v1/bootstrap/script | bash
 ```
+
+**Option B: cloud-claude (recommended)**
+
+In addition to the `curl` command, share these three values (as shown in the admin UI):
+
+| Field | Meaning |
+|-------|---------|
+| **Gateway URL** | Public HTTPS base URL of the control plane, e.g. `https://gw.example.com` (same origin as the admin UI in the browser; usually **not** the `:3000` dev frontend port) |
+| **Short ID** | **Host** short ID from the host detail page. If the user configures a **user** short ID instead, they connect to that user’s primary host |
+| **Password** | The user’s password from the admin dashboard |
+
+After installing `cloud-claude` and running `init` once with those values, the user runs `cloud-claude` from their **project directory**; the cwd is sshfs-mounted at the **same path** in the container. By default `git` runs on the laptop (tune with `proxy_commands`).
 
 ## User Access
 
@@ -217,63 +233,62 @@ curl -sSf http://YOUR_HOST:8080/v1/bootstrap/script | bash
 
 ### Option 1: cloud-claude Local CLI (Recommended)
 
-Install `cloud-claude` locally to transparently use Claude Code on your remote cloud host. Your current directory is automatically mapped into the container.
+#### Install
 
-**Install:**
+**Homebrew (macOS / Linux, recommended):**
+
+```bash
+brew tap ZaneL1u/tap
+brew install cloud-claude
+```
+
+**One-liner (any platform):**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ZaneL1u/cloud-cli-proxy/main/scripts/install.sh | bash
 ```
 
-**First-time setup:**
+Or download the matching archive from [Releases](https://github.com/ZaneL1u/cloud-cli-proxy/releases), or `go build ./cmd/cloud-claude`.
+
+#### First-time setup (once)
 
 ```bash
 cloud-claude init
 ```
 
-You'll be prompted for:
-- **Gateway URL**: Server address from your admin (e.g. `https://gw.example.com`)
-- **Short ID**: Host short ID assigned by admin
-- **Password**: Your login password (hidden input)
+Prompts: **Gateway URL**, **Short ID** (host or user), **Password** → `~/.cloud-claude/config.yaml`.
 
-Config is saved to `~/.cloud-claude/config.yaml` and auto-loaded on subsequent runs.
-
-You can also use flags:
+Flags or environment variables:
 
 ```bash
 cloud-claude init --gateway https://gw.example.com --short-id abc123 --password your-password
-```
 
-Or environment variables:
-
-```bash
 export CLOUD_CLAUDE_GATEWAY=https://gw.example.com
 export CLOUD_CLAUDE_SHORT_ID=abc123
 export CLOUD_CLAUDE_PASSWORD=your-password
 cloud-claude init
 ```
 
-**Daily usage:**
+#### Connect and run Claude Code
 
 ```bash
-# Set alias for seamless experience
-alias claude=cloud-claude
+cd ~/your/project   # directory to mount into the container
 
-# Use exactly like local claude
-claude
+alias claude=cloud-claude   # optional
 
-# All claude arguments are passed through
-claude -p "refactor this function"
-claude --model sonnet
+cloud-claude
+cloud-claude -p "refactor this function"
 ```
 
-When you run `cloud-claude`, it automatically:
-1. Authenticates with the gateway
-2. Waits for your container to be ready
-3. Maps your **current directory** to `/workspace` via sshfs
-4. Launches Claude Code in the container with `/workspace` as the working directory
+**Optional:** check remote timezone, locale, egress IP, FUSE, toolchain:
 
-Terminal resizing (SIGWINCH), Ctrl+C signals, and exit codes are all properly forwarded — the experience is identical to local `claude`.
+```bash
+cloud-claude env check
+```
+
+**Optional:** set `proxy_commands` in `~/.cloud-claude/config.yaml` (list of command names to run on the host). Default is `git` only; use `[]` to disable.
+
+When you run `cloud-claude`, it: (1) authenticates; (2) waits for the container; (3) sshfs-mounts the cwd at the **same path** in the container; (4) starts Claude Code remotely. Terminal size, signals, and exit codes are forwarded.
 
 **Error codes:**
 

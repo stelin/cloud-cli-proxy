@@ -24,7 +24,7 @@
 ## 功能特性
 
 - **一条命令接入** — `curl | bash` 自动认证、创建容器、SSH 接入，用户无需任何配置
-- **cloud-claude 本地 CLI** — `alias claude=cloud-claude`，在本地终端透明运行远端 Claude Code，当前目录实时映射
+- **cloud-claude 本地 CLI** — `alias claude=cloud-claude`，在本地终端透明运行远端 Claude Code；当前目录经 sshfs 映射到容器内**同名路径**（与本地路径一致），可选将 `git` 等命令代理到本机执行
 - **Claude Code 开箱即用** — 容器预装 Claude Code，进入即可使用，所有 API 请求自动走指定出口
 - **全流量强制出口** — sing-box tun + Linux netns 全隧道，nftables 默认拒绝策略，杜绝 DNS / WebRTC 泄漏
 - **多协议支持** — 出口 IP 支持 6 种代理协议（SOCKS5 / VMess / VLESS / Shadowsocks / Trojan / HTTP）
@@ -123,7 +123,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yaml up -d --force-
 1. **添加出口 IP** — 支持多种代理协议，可一键测试连通性
 2. **创建用户** — 设置用户名、密码、到期时间
 3. **创建主机** — 为用户创建容器并绑定出口 IP
-4. **分发接入命令** — 在主机详情页复制 `curl` 命令发给用户
+4. **分发接入信息** — 在主机详情页复制 `curl` 命令；若用户使用 `cloud-claude`，另发：**网关 HTTPS 地址**、**主机 Short ID**、**用户密码**
 
 ### 用户接入
 
@@ -134,61 +134,77 @@ curl -sSf http://YOUR_HOST/entry/abc123 | bash
 # 输入密码 → 等待启动 → 自动 SSH 进入云主机
 ```
 
-### cloud-claude（本地 CLI 透明替代）
+### cloud-claude（本地 CLI，推荐）
 
-除了 SSH 接入方式外，还可以在本地使用 `cloud-claude` 命令直接透明运行远端 Claude Code，当前目录自动映射到容器内。
+管理员在后台**创建主机并绑定出口 IP**、容器就绪后，把下面三样信息发给用户即可连接：
 
-**安装：**
+| 信息 | 说明 |
+|------|------|
+| **网关地址** | 对外访问控制面的 HTTPS 地址，例如 `https://gw.example.com`（与浏览器打开管理后台同源，一般不含 `:3000` 管理前端端口） |
+| **Short ID** | 主机详情页上的**主机短 ID**；若配置里填的是**用户短 ID**，则连到该用户的主主机 |
+| **密码** | 该用户在后台的登录密码 |
+
+用户在本机安装 CLI、初始化一次后，在**任意项目目录**执行 `cloud-claude` 即可进入远端 Claude Code；当前目录会映射到容器内**相同路径**，便于与本地工具链配合（默认将 `git` 代理到本机，可在 `~/.cloud-claude/config.yaml` 用 `proxy_commands` 调整）。
+
+#### 安装 cloud-claude
+
+**Homebrew（macOS / Linux，推荐）：**
+
+```bash
+brew tap ZaneL1u/tap
+brew install cloud-claude
+```
+
+**一行脚本（任意平台）：**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ZaneL1u/cloud-cli-proxy/main/scripts/install.sh | bash
 ```
 
-也可以从 [Releases](https://github.com/ZaneL1u/cloud-cli-proxy/releases) 手动下载，或从源码构建：
+也可以从 [Releases](https://github.com/ZaneL1u/cloud-cli-proxy/releases) 手动下载对应平台的 `tar.gz`，或从源码构建：
 
 ```bash
-go build -o cloud-claude ./cmd/cloud-claude
+go build -ldflags "-s -w" -trimpath -o cloud-claude ./cmd/cloud-claude
 ```
 
-**初始化配置：**
+#### 初始化（只需一次）
 
 ```bash
 cloud-claude init
-# 交互式输入：
-#   网关地址 (如 https://gw.example.com)
-#   Short ID（管理员分配的主机短 ID）
-#   密码
-# 配置保存到 ~/.cloud-claude/config.yaml
+# 交互式输入：网关地址、Short ID、密码 → 写入 ~/.cloud-claude/config.yaml
 ```
 
-也可以通过 flag 或环境变量传入：
+或使用 flag / 环境变量：
 
 ```bash
-# flag 方式
 cloud-claude init --gateway https://gw.example.com --short-id abc123 --password your-password
 
-# 环境变量方式
 export CLOUD_CLAUDE_GATEWAY=https://gw.example.com
 export CLOUD_CLAUDE_SHORT_ID=abc123
 export CLOUD_CLAUDE_PASSWORD=your-password
 cloud-claude init
 ```
 
-**使用：**
+#### 日常使用
 
 ```bash
-# 设置 alias，之后 claude 命令自动走远端
-alias claude=cloud-claude
+cd ~/你的项目目录   # 希望 Claude Code 打开的工程根目录
 
-# 直接使用，体验与本地 claude 一致
-claude
+alias claude=cloud-claude   # 可选：与本地 claude 命令习惯一致
 
-# 所有 claude 参数原样透传
-claude -p "帮我重构这个函数"
-claude --model sonnet
+cloud-claude                # 或 claude
+cloud-claude -p "帮我重构这个函数"
 ```
 
-`cloud-claude` 会自动完成：认证 → 等待容器就绪 → 将当前目录映射到容器 `/workspace` → 在远端启动 Claude Code。终端窗口大小、信号、退出码都会正确透传。
+**可选：** 检查远端容器时区、语言、出口 IP、FUSE 等：
+
+```bash
+cloud-claude env check
+```
+
+**可选：** 在 `~/.cloud-claude/config.yaml` 中配置 `proxy_commands`（命令名列表），指定在**本机**执行的命令；默认仅 `git`；设为空数组可关闭代理。
+
+`cloud-claude` 会自动完成：向网关认证 → 等待容器就绪 → sshfs 将当前目录挂到容器内同名路径 → 在远端启动 Claude Code。终端大小、信号、退出码会透传。
 
 ### Claude Code（SSH 方式）
 
@@ -212,7 +228,7 @@ claude
                                                     ┌───────────────────────────────────┐
 用户 ──curl──> Control Plane (:8080) ──Docker──>     │ 用户容器                          │
                     │                                │  SSH + Claude Code + VNC          │
-               PostgreSQL                            │  sshfs ← /workspace 目录映射      │
+               PostgreSQL                            │  sshfs ← 本地 CWD 同名路径映射    │
                     │                                │  sing-box tun 隧道                │
               Admin SPA (:3000)                      │       ↓                           │
                     │                                │  指定出口 IP                      │
@@ -227,7 +243,7 @@ claude
 | **Control Plane** | Go API，认证、用户管理、任务编排、SSH 代理 |
 | **Host Agent** | 特权代理，管理 Docker 容器、网络命名空间和隧道 |
 | **用户容器** | Ubuntu 24.04，预装 OpenSSH + Claude Code + sshfs + KasmVNC + Chromium |
-| **cloud-claude** | Go CLI，透明替代本地 claude 命令，本地目录通过 sshfs 映射到容器 |
+| **cloud-claude** | Go CLI，透明替代本地 claude；本地目录经 sshfs 映射到容器内同名路径，可选命令本机代理 |
 | **PostgreSQL** | 持久化用户、主机、出口 IP、任务和事件 |
 | **Admin SPA** | React 19 + TypeScript + Vite + Tailwind CSS |
 
