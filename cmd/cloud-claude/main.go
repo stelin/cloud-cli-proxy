@@ -64,13 +64,31 @@ func main() {
 	}
 	envCmd.AddCommand(envCheckCmd)
 
-	rootCmd.AddCommand(initCmd, envCmd)
+	sshCmd := &cobra.Command{
+		Use:           "ssh",
+		Short:         "SSH 密钥相关工具",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+
+	sshDoctorCmd := &cobra.Command{
+		Use:           "doctor",
+		Short:         "体检远端容器 /workspace/.ssh 下的密钥文件（owner/mode/PEM 尾换行）",
+		Long:          "扫描远端 /workspace/.ssh 下所有文件，报告 owner 不一致、mode 不规范、PEM 私钥缺末尾换行等常见问题。\n带 --fix 时会尝试自动修复（chown / chmod / 追加换行）。",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE:          runSSHDoctor,
+	}
+	sshDoctorCmd.Flags().Bool("fix", false, "尝试自动修复发现的问题（chown / chmod / 追加 PEM 尾换行）")
+	sshCmd.AddCommand(sshDoctorCmd)
+
+	rootCmd.AddCommand(initCmd, envCmd, sshCmd)
 
 	// DisableFlagParsing 会阻止 cobra 识别子命令，
 	// 在检测到已知子命令时关闭它以恢复正常路由。
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "init", "env", "help", "--help", "-h":
+		case "init", "env", "ssh", "help", "--help", "-h":
 			rootCmd.DisableFlagParsing = false
 		}
 	}
@@ -169,6 +187,46 @@ func runEnvCheck(cmd *cobra.Command, args []string) error {
 	result, err := cloudclaude.RunEnvCheck(sshCfg)
 	if err != nil {
 		return fmt.Errorf("环境检测失败: %w", err)
+	}
+
+	fmt.Println()
+	result.Print()
+	return nil
+}
+
+func runSSHDoctor(cmd *cobra.Command, args []string) error {
+	fix, _ := cmd.Flags().GetBool("fix")
+
+	cfg, err := cloudclaude.LoadConfig()
+	if err != nil {
+		return err
+	}
+
+	client := cloudclaude.NewEntryClient(cfg.Gateway)
+
+	fmt.Println("正在连接云主机...")
+	authResp, err := client.AuthenticateAndWait(
+		cmd.Context(),
+		cfg.ShortID,
+		cfg.Password,
+		func(msg string) { fmt.Printf("\r%s", msg) },
+	)
+	if err != nil {
+		return fmt.Errorf("认证失败: %w", err)
+	}
+
+	fmt.Println("\r正在体检远端 /workspace/.ssh ...")
+
+	sshCfg := cloudclaude.SSHConfig{
+		Host:     authResp.SSHHost,
+		Port:     authResp.SSHPort,
+		User:     authResp.SSHUser,
+		Password: authResp.SSHPass,
+	}
+
+	result, err := cloudclaude.RunSSHDoctor(sshCfg, cloudclaude.SSHDoctorOptions{Fix: fix})
+	if err != nil {
+		return fmt.Errorf("体检失败: %w", err)
 	}
 
 	fmt.Println()
