@@ -24,6 +24,11 @@ const (
 	taskStateCanceled     = "canceled"
 )
 
+const (
+	sshManagedBeginMarker = "# >>> cloud-cli-proxy managed keys (do not edit) >>>"
+	sshManagedEndMarker   = "# <<< cloud-cli-proxy managed keys <<<"
+)
+
 type WorkerRepo interface {
 	UpdateTaskStatus(context.Context, string, string, string, string, string) (repository.Task, error)
 	UpdateHostStatus(ctx context.Context, hostID string, status string) error
@@ -442,9 +447,7 @@ func (w *Worker) injectSSHKeys(ctx context.Context, request agentapi.HostActionR
 		"mkdir -p %s && cat > %s/authorized_keys && chmod 600 %s/authorized_keys && chown %s:%s %s/authorized_keys",
 		sshDir, sshDir, sshDir, user, user, sshDir,
 	)
-	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", containerName, "bash", "-c", script)
-	cmd.Stdin = strings.NewReader(content)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := execInContainer(ctx, containerName, script, content); err != nil {
 		w.repo.RecordEvent(ctx, repository.RecordEventParams{
 			HostID:  &request.HostID,
 			Level:   "warn",
@@ -482,9 +485,7 @@ func (w *Worker) injectSSHKeys(ctx context.Context, request agentapi.HostActionR
 				"mkdir -p %s && cat > %s && chmod 600 %s && chown %s:%s %s",
 				sshDir, keyFile, keyFile, user, user, keyFile,
 			)
-			cmd := exec.CommandContext(ctx, "docker", "exec", "-i", containerName, "bash", "-c", script)
-			cmd.Stdin = strings.NewReader(key.PrivateKey)
-			if out, err := cmd.CombinedOutput(); err != nil {
+			if out, err := execInContainer(ctx, containerName, script, key.PrivateKey); err != nil {
 				w.repo.RecordEvent(ctx, repository.RecordEventParams{
 					HostID:  &request.HostID,
 					Level:   "warn",
@@ -499,9 +500,7 @@ func (w *Worker) injectSSHKeys(ctx context.Context, request agentapi.HostActionR
 				"mkdir -p %s && cat > %s && chmod 644 %s && chown %s:%s %s",
 				sshDir, pubFile, pubFile, user, user, pubFile,
 			)
-			cmd := exec.CommandContext(ctx, "docker", "exec", "-i", containerName, "bash", "-c", script)
-			cmd.Stdin = strings.NewReader(key.PublicKey)
-			if out, err := cmd.CombinedOutput(); err != nil {
+			if out, err := execInContainer(ctx, containerName, script, key.PublicKey); err != nil {
 				w.repo.RecordEvent(ctx, repository.RecordEventParams{
 					HostID:  &request.HostID,
 					Level:   "warn",
@@ -529,9 +528,7 @@ func (w *Worker) injectSSHKeysLegacy(ctx context.Context, request agentapi.HostA
 			"mkdir -p %s && cat > %s && chmod 600 %s && chown %s:%s %s",
 			sshDir, keyFile, keyFile, user, user, keyFile,
 		)
-		cmd := exec.CommandContext(ctx, "docker", "exec", "-i", containerName, "bash", "-c", script)
-		cmd.Stdin = strings.NewReader(request.SSHPrivateKey)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if out, err := execInContainer(ctx, containerName, script, request.SSHPrivateKey); err != nil {
 			w.repo.RecordEvent(ctx, repository.RecordEventParams{
 				HostID:  &request.HostID,
 				Level:   "warn",
@@ -551,9 +548,7 @@ func (w *Worker) injectSSHKeysLegacy(ctx context.Context, request agentapi.HostA
 			"mkdir -p %s && cat > %s && chmod 644 %s && chown %s:%s %s",
 			sshDir, pubKeyFile, pubKeyFile, user, user, pubKeyFile,
 		)
-		cmd := exec.CommandContext(ctx, "docker", "exec", "-i", containerName, "bash", "-c", script)
-		cmd.Stdin = strings.NewReader(request.SSHPublicKey)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if out, err := execInContainer(ctx, containerName, script, request.SSHPublicKey); err != nil {
 			w.repo.RecordEvent(ctx, repository.RecordEventParams{
 				HostID:  &request.HostID,
 				Level:   "warn",
@@ -592,6 +587,16 @@ func (rv *repoValidator) GetEgressIPByHost(ctx context.Context, hostID string) (
 		TunnelType:  network.TunnelTypeProxy,
 		ProxyConfig: eip.ProxyConfig,
 	}, nil
+}
+
+// execInContainer 在目标容器中以 `docker exec -i <container> bash -c <script>` 执行，
+// 支持可选 stdin。暴露为 package-level 变量以便单元测试注入 fake。
+var execInContainer = func(ctx context.Context, container, script, stdin string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", container, "bash", "-c", script)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	return cmd.CombinedOutput()
 }
 
 func loadProxyPublicKey() string {
