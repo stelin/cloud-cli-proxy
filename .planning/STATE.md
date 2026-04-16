@@ -4,8 +4,8 @@ milestone: v2.0
 milestone_name: cloud-claude 透明远程 CLI
 status: shipped
 stopped_at: Milestone v2.0 completed and archived
-last_updated: "2026-04-15T15:30:00.000Z"
-last_activity: 2026-04-15
+last_updated: "2026-04-16T15:50:00.000Z"
+last_activity: 2026-04-16
 progress:
   total_phases: 5
   completed_phases: 5
