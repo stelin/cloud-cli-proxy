@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v2.1.1 - 2026-04-16
+## What's Changed
+
+### Backend (Go / API)
+- fix(cloudclaude): return remote mount path in timeout error (85502d8)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v2.1.0...v2.1.1
+
+
 ## v2.0 - 2026-04-15
 ## What's Changed
 
