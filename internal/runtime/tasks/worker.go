@@ -433,27 +433,39 @@ func (w *Worker) injectSSHKeys(ctx context.Context, request agentapi.HostActionR
 	user := firstNonEmpty(request.Username, "workspace")
 	sshDir := "/workspace/.ssh"
 
-	var authorizedKeys []string
+	var managed []string
 	if proxyPubKey := loadProxyPublicKey(); proxyPubKey != "" {
-		authorizedKeys = append(authorizedKeys, proxyPubKey)
+		managed = append(managed, proxyPubKey)
 	}
 	for _, key := range request.SSHKeys {
 		if key.Purpose == "inbound" && key.PublicKey != "" {
-			authorizedKeys = append(authorizedKeys, strings.TrimSpace(key.PublicKey))
+			managed = append(managed, strings.TrimSpace(key.PublicKey))
 		}
 	}
-	content := strings.Join(authorizedKeys, "\n") + "\n"
-	script := fmt.Sprintf(
-		"mkdir -p %s && cat > %s/authorized_keys && chmod 600 %s/authorized_keys && chown %s:%s %s/authorized_keys",
-		sshDir, sshDir, sshDir, user, user, sshDir,
-	)
-	if out, err := execInContainer(ctx, containerName, script, content); err != nil {
-		w.repo.RecordEvent(ctx, repository.RecordEventParams{
-			HostID:  &request.HostID,
-			Level:   "warn",
-			Type:    "runtime.ssh_authorized_keys_failed",
-			Message: fmt.Sprintf("inject authorized_keys failed: %s", strings.TrimSpace(string(out))),
-		})
+
+	authorizedPath := sshDir + "/authorized_keys"
+	existing, _ := containerReadFile(ctx, containerName, authorizedPath)
+	merged := mergeAuthorizedKeys(existing, managed)
+
+	switch {
+	case merged == "":
+		// managed 与 existing 均为空，彻底跳过，不创建文件
+	case merged == existing:
+		// 内容未变，保持幂等；仍尝试修正属主/权限（容错失败）
+		w.fixFileOwnership(ctx, request, containerName, user, authorizedPath, "600")
+	default:
+		writeScript := fmt.Sprintf(
+			"mkdir -p %s && cat > %s && chmod 600 %s && chown %s:%s %s",
+			sshDir, authorizedPath, authorizedPath, user, user, authorizedPath,
+		)
+		if out, err := execInContainer(ctx, containerName, writeScript, merged); err != nil {
+			w.repo.RecordEvent(ctx, repository.RecordEventParams{
+				HostID:  &request.HostID,
+				Level:   "warn",
+				Type:    "runtime.ssh_authorized_keys_failed",
+				Message: fmt.Sprintf("inject authorized_keys failed: %s", strings.TrimSpace(string(out))),
+			})
+		}
 	}
 
 	outboundIdx := 0
@@ -481,32 +493,54 @@ func (w *Worker) injectSSHKeys(ctx context.Context, request agentapi.HostActionR
 		}
 
 		if key.PrivateKey != "" {
-			script := fmt.Sprintf(
-				"mkdir -p %s && cat > %s && chmod 600 %s && chown %s:%s %s",
-				sshDir, keyFile, keyFile, user, user, keyFile,
-			)
-			if out, err := execInContainer(ctx, containerName, script, key.PrivateKey); err != nil {
+			if containerFileNonEmpty(ctx, containerName, keyFile) {
 				w.repo.RecordEvent(ctx, repository.RecordEventParams{
-					HostID:  &request.HostID,
-					Level:   "warn",
-					Type:    "runtime.ssh_key_inject_failed",
-					Message: fmt.Sprintf("inject outbound private key failed: %s", strings.TrimSpace(string(out))),
+					HostID:   &request.HostID,
+					Level:    "info",
+					Type:     "runtime.ssh_key_skipped_existing",
+					Message:  "outbound private key file already present, skip overwrite",
+					Metadata: map[string]any{"host_id": request.HostID, "file": keyFile},
 				})
+				w.fixFileOwnership(ctx, request, containerName, user, keyFile, "600")
+			} else {
+				script := fmt.Sprintf(
+					"mkdir -p %s && cat > %s && chmod 600 %s && chown %s:%s %s",
+					sshDir, keyFile, keyFile, user, user, keyFile,
+				)
+				if out, err := execInContainer(ctx, containerName, script, key.PrivateKey); err != nil {
+					w.repo.RecordEvent(ctx, repository.RecordEventParams{
+						HostID:  &request.HostID,
+						Level:   "warn",
+						Type:    "runtime.ssh_key_inject_failed",
+						Message: fmt.Sprintf("inject outbound private key failed: %s", strings.TrimSpace(string(out))),
+					})
+				}
 			}
 		}
 
 		if key.PublicKey != "" {
-			script := fmt.Sprintf(
-				"mkdir -p %s && cat > %s && chmod 644 %s && chown %s:%s %s",
-				sshDir, pubFile, pubFile, user, user, pubFile,
-			)
-			if out, err := execInContainer(ctx, containerName, script, key.PublicKey); err != nil {
+			if containerFileNonEmpty(ctx, containerName, pubFile) {
 				w.repo.RecordEvent(ctx, repository.RecordEventParams{
-					HostID:  &request.HostID,
-					Level:   "warn",
-					Type:    "runtime.ssh_key_inject_failed",
-					Message: fmt.Sprintf("inject outbound public key failed: %s", strings.TrimSpace(string(out))),
+					HostID:   &request.HostID,
+					Level:    "info",
+					Type:     "runtime.ssh_key_skipped_existing",
+					Message:  "outbound public key file already present, skip overwrite",
+					Metadata: map[string]any{"host_id": request.HostID, "file": pubFile},
 				})
+				w.fixFileOwnership(ctx, request, containerName, user, pubFile, "644")
+			} else {
+				script := fmt.Sprintf(
+					"mkdir -p %s && cat > %s && chmod 644 %s && chown %s:%s %s",
+					sshDir, pubFile, pubFile, user, user, pubFile,
+				)
+				if out, err := execInContainer(ctx, containerName, script, key.PublicKey); err != nil {
+					w.repo.RecordEvent(ctx, repository.RecordEventParams{
+						HostID:  &request.HostID,
+						Level:   "warn",
+						Type:    "runtime.ssh_key_inject_failed",
+						Message: fmt.Sprintf("inject outbound public key failed: %s", strings.TrimSpace(string(out))),
+					})
+				}
 			}
 		}
 
@@ -524,17 +558,28 @@ func (w *Worker) injectSSHKeysLegacy(ctx context.Context, request agentapi.HostA
 			keyFile = sshDir + "/id_rsa"
 		}
 
-		script := fmt.Sprintf(
-			"mkdir -p %s && cat > %s && chmod 600 %s && chown %s:%s %s",
-			sshDir, keyFile, keyFile, user, user, keyFile,
-		)
-		if out, err := execInContainer(ctx, containerName, script, request.SSHPrivateKey); err != nil {
+		if containerFileNonEmpty(ctx, containerName, keyFile) {
 			w.repo.RecordEvent(ctx, repository.RecordEventParams{
-				HostID:  &request.HostID,
-				Level:   "warn",
-				Type:    "runtime.ssh_key_inject_failed",
-				Message: fmt.Sprintf("inject private key failed: %s", strings.TrimSpace(string(out))),
+				HostID:   &request.HostID,
+				Level:    "info",
+				Type:     "runtime.ssh_key_skipped_existing",
+				Message:  "legacy private key file already present, skip overwrite",
+				Metadata: map[string]any{"host_id": request.HostID, "file": keyFile},
 			})
+			w.fixFileOwnership(ctx, request, containerName, user, keyFile, "600")
+		} else {
+			script := fmt.Sprintf(
+				"mkdir -p %s && cat > %s && chmod 600 %s && chown %s:%s %s",
+				sshDir, keyFile, keyFile, user, user, keyFile,
+			)
+			if out, err := execInContainer(ctx, containerName, script, request.SSHPrivateKey); err != nil {
+				w.repo.RecordEvent(ctx, repository.RecordEventParams{
+					HostID:  &request.HostID,
+					Level:   "warn",
+					Type:    "runtime.ssh_key_inject_failed",
+					Message: fmt.Sprintf("inject private key failed: %s", strings.TrimSpace(string(out))),
+				})
+			}
 		}
 	}
 
@@ -544,17 +589,28 @@ func (w *Worker) injectSSHKeysLegacy(ctx context.Context, request agentapi.HostA
 			pubKeyFile = sshDir + "/id_rsa.pub"
 		}
 
-		script := fmt.Sprintf(
-			"mkdir -p %s && cat > %s && chmod 644 %s && chown %s:%s %s",
-			sshDir, pubKeyFile, pubKeyFile, user, user, pubKeyFile,
-		)
-		if out, err := execInContainer(ctx, containerName, script, request.SSHPublicKey); err != nil {
+		if containerFileNonEmpty(ctx, containerName, pubKeyFile) {
 			w.repo.RecordEvent(ctx, repository.RecordEventParams{
-				HostID:  &request.HostID,
-				Level:   "warn",
-				Type:    "runtime.ssh_key_inject_failed",
-				Message: fmt.Sprintf("inject public key failed: %s", strings.TrimSpace(string(out))),
+				HostID:   &request.HostID,
+				Level:    "info",
+				Type:     "runtime.ssh_key_skipped_existing",
+				Message:  "legacy public key file already present, skip overwrite",
+				Metadata: map[string]any{"host_id": request.HostID, "file": pubKeyFile},
 			})
+			w.fixFileOwnership(ctx, request, containerName, user, pubKeyFile, "644")
+		} else {
+			script := fmt.Sprintf(
+				"mkdir -p %s && cat > %s && chmod 644 %s && chown %s:%s %s",
+				sshDir, pubKeyFile, pubKeyFile, user, user, pubKeyFile,
+			)
+			if out, err := execInContainer(ctx, containerName, script, request.SSHPublicKey); err != nil {
+				w.repo.RecordEvent(ctx, repository.RecordEventParams{
+					HostID:  &request.HostID,
+					Level:   "warn",
+					Type:    "runtime.ssh_key_inject_failed",
+					Message: fmt.Sprintf("inject public key failed: %s", strings.TrimSpace(string(out))),
+				})
+			}
 		}
 	}
 }
@@ -597,6 +653,105 @@ var execInContainer = func(ctx context.Context, container, script, stdin string)
 		cmd.Stdin = strings.NewReader(stdin)
 	}
 	return cmd.CombinedOutput()
+}
+
+// containerFileNonEmpty 判断容器内文件是否存在且非空。任何异常一律返回 false，
+// 调用方据此走"需要写入"分支，保持原有自举路径可用。
+// path 通过 stdin 传入，避免脚本字符串层面做 shell 拼接。
+func containerFileNonEmpty(ctx context.Context, container, path string) bool {
+	script := `P=$(cat) && [ -s "$P" ] && echo y || echo n`
+	out, err := execInContainer(ctx, container, script, path)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "y"
+}
+
+// containerReadFile 读取容器内文件；不存在或读失败都返回 ("", false)，
+// 存在则返回完整原始内容与 true。path 通过 stdin 传入。
+func containerReadFile(ctx context.Context, container, path string) (string, bool) {
+	script := `P=$(cat) && [ -f "$P" ] && cat "$P" || exit 42`
+	out, err := execInContainer(ctx, container, script, path)
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
+}
+
+// mergeAuthorizedKeys 在已有 authorized_keys 内容与控制面权威条目之间做"marker 块合并"：
+//   - existing 为空或不可读：managed 空 → 返回空串（调用方应跳过写入，避免创建空文件）；
+//     managed 非空 → 只返回 marker 块包裹的 managed 内容。
+//   - existing 非空且包含 marker 对：把 marker 对中间（含 marker）替换为新 marker 块；
+//     managed 为空时整段删除，保留 marker 之外的其他行。
+//   - existing 非空但没有 marker 对：managed 非空 → 末尾追加新 marker 块；managed 空 → 返回 existing 原样。
+//
+// 结果保证以 `\n` 结尾（除非整体为空字符串）；不做整体 TrimSpace，以免破坏用户自加行。
+func mergeAuthorizedKeys(existing string, managed []string) string {
+	if existing == "" {
+		if len(managed) == 0 {
+			return ""
+		}
+		return sshManagedBeginMarker + "\n" + strings.Join(managed, "\n") + "\n" + sshManagedEndMarker + "\n"
+	}
+
+	lines := strings.Split(existing, "\n")
+	beginIdx, endIdx := -1, -1
+	for i, line := range lines {
+		if beginIdx == -1 && line == sshManagedBeginMarker {
+			beginIdx = i
+			continue
+		}
+		if beginIdx != -1 && line == sshManagedEndMarker {
+			endIdx = i
+			break
+		}
+	}
+
+	var managedBlock []string
+	if len(managed) > 0 {
+		managedBlock = append(managedBlock, sshManagedBeginMarker)
+		managedBlock = append(managedBlock, managed...)
+		managedBlock = append(managedBlock, sshManagedEndMarker)
+	}
+
+	var result []string
+	if beginIdx != -1 && endIdx != -1 {
+		result = append(result, lines[:beginIdx]...)
+		result = append(result, managedBlock...)
+		result = append(result, lines[endIdx+1:]...)
+	} else {
+		if len(managed) == 0 {
+			return existing
+		}
+		result = append(result, lines...)
+		for len(result) > 0 && result[len(result)-1] == "" {
+			result = result[:len(result)-1]
+		}
+		result = append(result, managedBlock...)
+	}
+
+	for len(result) > 0 && result[len(result)-1] == "" {
+		result = result[:len(result)-1]
+	}
+
+	if len(result) == 0 {
+		return ""
+	}
+	return strings.Join(result, "\n") + "\n"
+}
+
+// fixFileOwnership 只修属主/权限，不重写内容；chown/chmod 失败仅记录 warn 事件，不阻断后续流程。
+func (w *Worker) fixFileOwnership(ctx context.Context, request agentapi.HostActionRequest, containerName, user, path, mode string) {
+	script := fmt.Sprintf("chown %s:%s %s && chmod %s %s", user, user, path, mode, path)
+	if out, err := execInContainer(ctx, containerName, script, ""); err != nil {
+		w.repo.RecordEvent(ctx, repository.RecordEventParams{
+			HostID:   &request.HostID,
+			Level:    "warn",
+			Type:     "runtime.ssh_key_chown_failed",
+			Message:  fmt.Sprintf("chown %s failed: %s", path, strings.TrimSpace(string(out))),
+			Metadata: map[string]any{"host_id": request.HostID, "file": path},
+		})
+	}
 }
 
 func loadProxyPublicKey() string {
