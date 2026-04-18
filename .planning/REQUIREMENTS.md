@@ -163,48 +163,50 @@
 
 由 roadmap 阶段填充。每个 REQ-ID 必须映射到唯一一个 phase。
 
-| Requirement | Phase | Status |
-|-------------|-------|--------|
-| REQ-F1-A | — | Pending |
-| REQ-F1-B | — | Pending |
-| REQ-F1-C | — | Pending |
-| REQ-F1-D | — | Pending |
-| REQ-F1-E | — | Pending |
-| REQ-F2-A | — | Pending |
-| REQ-F2-B | — | Pending |
-| REQ-F2-C | — | Pending |
-| REQ-F3-A | — | Pending |
-| REQ-F3-B | — | Pending |
-| REQ-F3-C | — | Pending |
-| REQ-F3-D | — | Pending |
-| REQ-F4-A | — | Pending |
-| REQ-F4-B | — | Pending |
-| REQ-F4-C | — | Pending |
-| REQ-F5-A | — | Pending |
-| REQ-F5-B | — | Pending |
-| REQ-F5-C | — | Pending |
-| REQ-F5-D | — | Pending |
-| REQ-F6-A | — | Pending |
-| REQ-F6-B | — | Pending |
-| REQ-F6-C | — | Pending |
-| REQ-F6-D | — | Pending |
-| REQ-F7-A | — | Pending |
-| REQ-F7-B | — | Pending |
-| REQ-F7-C | — | Pending |
-| REQ-F7-D | — | Pending |
-| REQ-F8-A | — | Pending |
-| REQ-F8-B | — | Pending |
-| REQ-F8-C | — | Pending |
-| BASE-01 | — | Pending |
-| BASE-02 | — | Pending |
-| BASE-03 | — | Pending |
-| BASE-04 | — | Pending |
+每个 REQ 主映射唯一一个 phase；F8 错误码体系是横切关注点（每个 phase 落码时遵循 Phase 34 定义的命名规范），主交付 phase 为 Phase 34。
+
+| Requirement | Phase | Status | 说明 |
+|-------------|-------|--------|------|
+| REQ-F1-A | Phase 31 | Pending | 三层 mount 单一 `/workspace` 视图 |
+| REQ-F1-B | Phase 31 | Pending | 首连 ≤ 8s 含三段式中文进度（最终验收对接 Phase 35 / BASE-02） |
+| REQ-F1-C | Phase 31 | Pending | 10k 文件 1.5× 性能（最终验收对接 Phase 35 / BASE-01） |
+| REQ-F1-D | Phase 31 | Pending | > 50MB 候选目录拒绝 + 自动降级 sshfs |
+| REQ-F1-E | Phase 31 | Pending | Mutagen conflict 中文冒泡 |
+| REQ-F2-A | Phase 31 | Pending | `--mount-mode` 四档切换 |
+| REQ-F2-B | Phase 31 | Pending | 任一层失败 ≤ 2s 降级 + 禁止静默 |
+| REQ-F2-C | Phase 31 | Pending | banner 彩色 mount 模式标签 |
+| REQ-F3-A | Phase 32 | Pending | KeepAlive 15s/4 与服务端 15s/8 基线（服务端 sshd_config 在 Phase 29 落地） |
+| REQ-F3-B | Phase 32 | Pending | 断网本地输入缓冲 + 灰色未确认样式 |
+| REQ-F3-C | Phase 32 | Pending | 重连失败 prompt 原因 + 下一步 |
+| REQ-F3-D | Phase 32 | Pending | 重连退避 + token 复用不弹密码 |
+| REQ-F4-A | Phase 32 | Pending | tmux 默认包装 + 重连不丢进程 |
+| REQ-F4-B | Phase 32 | Pending | `cloud-claude sessions ls/attach` |
+| REQ-F4-C | Phase 32 | Pending | 容器内 tmux 不可用降级提示 |
+| REQ-F5-A | Phase 32 | Pending | 多端默认共享 attach |
+| REQ-F5-B | Phase 32 | Pending | 第二端 banner 中文显示来源 + 活跃时间 |
+| REQ-F5-C | Phase 32 | Pending | `--new-session` / `--take-over` |
+| REQ-F5-D | Phase 32 | Pending | 账号级 Mutagen 单例锁 |
+| REQ-F6-A | Phase 34 | Pending | doctor 5 维度覆盖 |
+| REQ-F6-B | Phase 34 | Pending | doctor 输出四要素 |
+| REQ-F6-C | Phase 34 | Pending | doctor `--fix` 至少 5 类 |
+| REQ-F6-D | Phase 34 | Pending | doctor `--verbose` / `--json` / 退出码 0/1/2 |
+| REQ-F7-A | Phase 33 | Pending | named volume `claude-state-{id}` + label（数据模型在 Phase 30） |
+| REQ-F7-B | Phase 33 | Pending | 容器重建 OAuth 保留 |
+| REQ-F7-C | Phase 31 | Pending | 连接握手期 OAuth 过期中文提示 |
+| REQ-F7-D | Phase 33 | Pending | admin DELETE 事务联动 `volume rm` |
+| REQ-F8-A | Phase 34 | Pending | 错误码 `<DOMAIN>_<KIND>_<NUM>` 体系（横切：各 phase 落码时遵循） |
+| REQ-F8-B | Phase 34 | Pending | 错误三要素（横切：各 phase 落码时遵循） |
+| REQ-F8-C | Phase 34 | Pending | `cloud-claude explain <code>` |
+| BASE-01 | Phase 35 | Pending | 元数据响应 1.5× 真机基准 |
+| BASE-02 | Phase 35 | Pending | 首连 ≤ 8s 真机基准 |
+| BASE-03 | Phase 35 | Pending | 弱网 30s 无感知 UAT |
+| BASE-04 | Phase 29 | Pending | 镜像 ≤ 700MB CI gate（Phase 35 二次回归） |
 
 **Coverage:**
-- v3.0 requirements: 30 active (24 functional + 4 baselines)
-- Open questions: 10
+- v3.0 requirements: 30 functional + 4 baselines = 34 total
+- Open questions: 10（已分布到 Phase 29-34 的 `Open questions to resolve` 段）
 - Out of scope: 20
-- Mapped to phases: 0 ⚠️ (待 ROADMAP.md 阶段填充)
+- Mapped to phases: 34/34 ✓ — 30 functional REQ + 4 BASE 全部映射到唯一 phase；F8 错误码 / BASE-04 在多个 phase 横切引用，但主交付 phase 唯一
 
 ---
 
