@@ -203,14 +203,18 @@ type CreateUserWithRoleParams struct {
 }
 
 type ClaudeAccount struct {
-	ID          string    `json:"id"`
-	UserID      string    `json:"user_id"`
-	HostID      *string   `json:"host_id,omitempty"`
-	Email       string    `json:"email"`
-	DisplayName string    `json:"display_name"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID     string  `json:"id"`
+	UserID string  `json:"user_id"`
+	HostID *string `json:"host_id,omitempty"`
+	Email  string  `json:"email"`
+	// PersistentVolumeName 对应 claude_accounts.persistent_volume_name。
+	// 语义（Phase 30 D-02）：nil = 控制面尚未为该账号分配持久化 volume；
+	// 非 nil 值 = 已分配的 Docker named volume 名称，规范化为 claude-state-{claude_account_id}（D-01）。
+	PersistentVolumeName *string   `json:"persistent_volume_name,omitempty"`
+	DisplayName          string    `json:"display_name"`
+	Status               string    `json:"status"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 type SSHKey struct {
