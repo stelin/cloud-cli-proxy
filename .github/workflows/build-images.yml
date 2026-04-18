@@ -85,3 +85,30 @@ jobs:
           cache-to: |
             type=gha,scope=${{ matrix.image }},mode=max
             type=registry,ref=${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:buildcache,mode=max
+
+      # Scheme B (D-29): multi-arch push cannot --load; separate amd64 load build for size inspect only.
+      - name: Build managed-user (amd64 load-only for size gate)
+        if: matrix.image == 'managed-user'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: managed-user:size-gate
+          cache-from: |
+            type=gha,scope=${{ matrix.image }}
+            type=registry,ref=${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:buildcache
+
+      - name: Assert managed-user image size <= 700MB
+        if: matrix.image == 'managed-user'
+        run: |
+          set -euo pipefail
+          SIZE_BYTES=$(docker image inspect --format='{{.Size}}' managed-user:size-gate)
+          SIZE_MB=$(( SIZE_BYTES / 1048576 ))
+          echo "managed-user image size: ${SIZE_BYTES} bytes (${SIZE_MB} MiB)"
+          if [ "${SIZE_BYTES}" -gt 734003200 ]; then
+            echo "::error::managed-user image ${SIZE_MB} MiB exceeds 700 MiB hard cap (BASE-04)"
+            exit 1
+          fi
