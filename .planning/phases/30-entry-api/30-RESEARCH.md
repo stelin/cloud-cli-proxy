@@ -2,7 +2,7 @@
 
 **Researched:** 2026-04-18  
 **Domain:** Go 控制面 HTTP（Entry）、PostgreSQL 迁移、JSON 契约向后兼容、`HostActionRequest` 与 cloud-claude 客户端  
-**Confidence:** HIGH（仓库与 CONTEXT 已对齐）；MEDIUM（enqueue 路径是否在本 phase 填入 `ClaudeAccountID` 需 planner 与 Phase 33 边界对齐）
+**Confidence:** HIGH（仓库与 CONTEXT 已对齐；`ClaudeAccountID` enqueue 默认策略已收敛，见下文 **Open Questions** 修订稿）
 
 ## Summary
 
@@ -12,14 +12,14 @@
 
 **与 Phase 29 文档的一点差异（以 Phase 30 CONTEXT 为准）：** 29-CONTEXT **D-27** 写「Phase 30 从 `image.lock` 读能力字段写入 `AuthResponse`」；**30-CONTEXT D-04～D-07** 已锁定能力字段由控制面根据 `hosts.template_image_ref` 做**纯字符串 tag 解析**与 **`v3.0.0` 字面相等**推导，且不调 registry。**规划与实现必须以 30-CONTEXT 为准** [CITED: `.planning/phases/30-entry-api/30-CONTEXT.md`；对照 `.planning/phases/29-v3-worker/29-CONTEXT.md`]。
 
-**Primary recommendation：** 以 `0014` 迁移 + `ClaudeAccount` 模型扩展为底座；在 `EntryStore` 增加按 **D-05** 规则解析 `claude_account_id` 的查询，并在 `ready` 分支用 `Host.TemplateImageRef` 实现 **D-06/D-07**；契约层补 `HostActionRequest.ClaudeAccountID` 与现有 `worker_volume_test` 同类 JSON 测试；`runtime_service` 是否在 Phase 30 一并写入 `ClaudeAccountID` 作为显式规划项（否则 Phase 33 前该字段在链路上可能恒为空字符串/省略）。
+**Primary recommendation：** 以 `0014` 迁移 + `ClaudeAccount` 模型扩展为底座；在 `EntryStore` 增加按 **D-05** 规则解析 `claude_account_id` 的查询，并在 `ready` 分支用 `Host.TemplateImageRef` 实现 **D-06/D-07**；契约层补 `HostActionRequest.ClaudeAccountID` 与现有 `worker_volume_test` 同类 JSON 测试；**默认在 Phase 30 于 `runtime_service.QueueHostAction` 组装请求时写入 `ClaudeAccountID`（与 Entry 同源 D-05 查询语义）**，使 host-agent 链路与 Phase 33 前置排障一致，避免「契约已加字段但链路上恒为空」的灰区。
 
 <user_constraints>
 ## User Constraints（from CONTEXT.md）
 
-### Locked Decisions
+以下自 `.planning/phases/30-entry-api/30-CONTEXT.md` **原文分段拷贝**，避免与 planner 摘要产生偏差。
 
-（来源节名：`## Implementation Decisions` — `.planning/phases/30-entry-api/30-CONTEXT.md`）
+## Implementation Decisions
 
 ### Q4 · 持久化 volume 命名（ROADMAP Open question）
 
@@ -61,9 +61,7 @@
 
 （`todo match-phase` 无匹配，本节省略。）
 
-### Deferred Ideas（OUT OF SCOPE）
-
-（来源：`.planning/phases/30-entry-api/30-CONTEXT.md` `## Deferred Ideas`）
+## Deferred Ideas
 
 - **双 volume**（creds/cache 分离）与 **`ccp_` 前缀命名**：已在 Q4 明确推迟；若运维提出再开 phase 或 backlog。
 - **独立 `/capabilities` endpoint**：Q5 已关闭；若未来需无凭证探测能力再评估。
@@ -75,13 +73,15 @@
 
 </user_constraints>
 
+> **Planner 注（非 CONTEXT 原文，与 D-10 对齐）：** 仓库内 `internal/store/migrator/migrator.go` 的 `RunMigrations` **仅执行向上迁移**（`*.sql` 排序、`schema_migrations` 去重、无自动 `down` runner）[VERIFIED: `internal/store/migrator/migrator.go`]。故 D-10「干净库与升级库上可重复执行」应落实为：**升级路径**用 `ADD COLUMN IF NOT EXISTS` 等幂等 DDL；**回滚路径**仅在迁移文件内手写 `DROP COLUMN IF EXISTS ...`（或运维删除 `schema_migrations` 对应 filename 后人工执行逆向 SQL）— **勿**假设存在 golang-migrate 式独立 `down` 文件或 CI 自动 down。
+
 <phase_requirements>
 ## Phase Requirements
 
 | ID / 来源 | 描述 | Research Support |
 |-----------|------|------------------|
 | ROADMAP Phase 30 Goal | 打开客户端动态能力探测控制面通道 | Entry 响应扩展 + DB 列 + `HostActionRequest` 字段 |
-| ROADMAP Success #1 | migration `0014` 干净库与升级库 up/down 幂等 | `IF NOT EXISTS` / `DROP COLUMN IF EXISTS` 模式对齐既有迁移 [VERIFIED: `0007`/`0013` 风格] |
+| ROADMAP Success #1 | migration `0014` 干净库与升级库上可重复 / 可回滚执行 | **Up：** `ADD COLUMN IF NOT EXISTS` 等与 `RunMigrations` 兼容的幂等 DDL [VERIFIED: `internal/store/migrator/migrator.go` 仅 forward]；**Down：** 同文件内显式 `DROP COLUMN IF EXISTS`（无自动 down runner） |
 | ROADMAP Success #2 | 旧 `AuthResponse` 调新 API 不报错、未知字段忽略 | Go `encoding/json` 默认忽略未知 object 键 [CITED: https://pkg.go.dev/encoding/json] |
 | ROADMAP Success #3 | v3 客户端读到示例值（在测试数据满足 D-05 时） | `template_image_ref` 含 `:v3.0.0` + 存在 `claude_accounts` 行 |
 | ROADMAP Success #4 | host-agent 解析 `Volumes`（无新 endpoint） | Phase 29 已交付；本阶段补 `ClaudeAccountID` 的 JSON round-trip 测试即可对齐验收表述 |
@@ -98,7 +98,7 @@
 | `image_version` / `supports_*` 推导（D-06/07） | API / Backend | — | 仅依赖已持久化的 `hosts.template_image_ref`，无 registry 调用 |
 | Entry JSON 响应形状 | API / Backend | — | `EntryHandler` 拥有响应序列化 |
 | `AuthResponse` 反序列化 | Browser / Client（CLI） | — | `cloud-claude` 作为 HTTP 客户端消费 Entry |
-| `HostActionRequest.ClaudeAccountID` | API / Backend（契约） | API / Backend（enqueue） | 类型在 `agentapi`；谁写入由 planner 定（见 Open Questions） |
+| `HostActionRequest.ClaudeAccountID` | API / Backend（契约 + enqueue） | — | 类型在 `agentapi`；**默认**由 `runtime_service` 在入队时写入（与 Open Questions 修订稿一致） |
 
 ## Standard Stack
 
@@ -131,19 +131,32 @@
 
 ```mermaid
 flowchart LR
-  CLI["cloud-claude CLI\nEntryClient.Authenticate"]
-  EP["POST /v1/entry/{shortId}/auth\nEntryHandler.Auth"]
-  DB[("PostgreSQL\nusers / hosts / claude_accounts")]
-  RS["Runtime enqueue\n(runtime_service)"]
-  HA["host-agent\n/agent/host/action"]
+  subgraph ClientTier["客户端 / CLI"]
+    CC[cloud-claude\nEntryClient]
+  end
 
-  CLI -->|"JSON password"| EP
-  EP -->|"bcrypt + lookups"| DB
-  EP -->|"ready + v3 扩展字段"| CLI
-  RS -->|"HostActionRequest JSON\nVolumes + ClaudeAccountID"| HA
+  subgraph ControlPlane["控制面 API"]
+    EP[POST /v1/entry/.../auth\nEntryHandler.Auth]
+    RS[runtime_service\nQueueHostAction]
+  end
+
+  subgraph DataTier["数据层"]
+    DB[(PostgreSQL)]
+  end
+
+  subgraph HostAgent["宿主机 agent"]
+    HA["/agent/host/action"]
+  end
+
+  CC -->|password JSON| EP
+  EP -->|读 users/hosts/claude_accounts\nD-05 / template_image_ref| DB
+  EP -->|ready + v3 扩展字段| CC
+
+  RS -->|读 host + claude_accounts\n填充 ClaudeAccountID| DB
+  RS -->|HostActionRequest JSON| HA
 ```
 
-说明：`Entry` 与 `HostAction` 两条链在 Phase 30 **契约上**交汇（同一 `claude_account_id` 语义），但 **D-04** 禁止通过 host-agent 回传镜像 labels 推导能力。
+说明：**能力字段**仅经 Entry 响应下发（**D-03/D-04**）；**`ClaudeAccountID`** 默认在控制面 **enqueue** 与 **Entry** 两侧同源规则（D-05）解析，再进入 `HostActionRequest`。**禁止**依赖 host-agent 回传镜像 labels 推导 `image_version` / `supports_*`。
 
 ### Recommended Project Structure（本 phase 相关增量）
 
@@ -160,7 +173,7 @@ internal/cloudclaude/
 internal/agentapi/
 └── contracts.go       # HostActionRequest.ClaudeAccountID
 internal/runtime/
-└── runtime_service.go # 可选：enqueue 时填充 ClaudeAccountID（规划项）
+└── runtime_service.go # 建议默认：enqueue 时填充 ClaudeAccountID（与 Entry 同源 D-05）
 ```
 
 ### Pattern 1：JSON 向后兼容（服务端追加字段）
@@ -210,7 +223,7 @@ type Legacy struct {
 
 | 路径 | 变更性质 |
 |------|----------|
-| `internal/store/migrations/0014_claude_account_persistent_volume.sql` | 新增：可空 `persistent_volume_name`；安全 down [VERIFIED: 与 D-10 命名一致] |
+| `internal/store/migrations/0014_claude_account_persistent_volume.sql` | 新增：可空 `persistent_volume_name`；幂等 `ADD` + 可选同文件 `DROP COLUMN IF EXISTS` 供人工回滚 [VERIFIED: D-10 文件名；`migrator` 仅 forward] |
 | `internal/store/repository/models.go` | `ClaudeAccount` 增加 `PersistentVolumeName *string` 或 `sql.Null`-友好类型 |
 | `internal/store/repository/queries.go` | 新增 D-05 查询；可选列表方法供 admin（**不在**本 phase 暴露则可不写） |
 | `internal/controlplane/http/entry.go` | 扩展 `EntryStore`；`ready` 分支写入 v3 字段；需能读到 `Host.TemplateImageRef`（可能新增 store 方法或扩展现有 host 解析路径） |
@@ -219,9 +232,9 @@ type Legacy struct {
 | `internal/runtime/tasks/worker_volume_test.go` 或新建 `contracts_test.go` | `ClaudeAccountID` 的 JSON omitempty / 旧 JSON 兼容 |
 | `internal/cloudclaude/entry_test.go`（新建）或现有测试包 | 旧 struct 解新 JSON；新字段缺失默认值 |
 | `internal/controlplane/app/app.go` | 若 `EntryStore` 仅 `*Repository` 实现，编译期会强制实现新方法 |
-| `internal/runtime/runtime_service.go` | **可选**：`QueueHostAction` 组装 `ClaudeAccountID`（与 Open Questions 对齐） |
+| `internal/runtime/runtime_service.go` | **默认本 phase 修改**：`QueueHostAction` 组装 `ClaudeAccountID`（与 Entry 同源 D-05；查无则省略字段） |
 
-**不必修改（除非 planner 决定提前接线）：** `internal/runtime/tasks/worker.go` 已在 Phase 29 处理 `Volumes`；Phase 30 不要求 worker 消费 `ClaudeAccountID`，除非规划明确「enqueue 即填」。
+**worker 边界：** `internal/runtime/tasks/worker.go` 已在 Phase 29 处理 `Volumes`；Phase 30 **不要求** worker 消费 `ClaudeAccountID`（Phase 33 再接线即可），但链路上字段应对齐契约以便抓包排障。
 
 ## Common Pitfalls
 
@@ -236,7 +249,7 @@ type Legacy struct {
 
 **What goes wrong：** 全串被当作 `image_version`，D-07 比较为 `false`，`supports_*` 为 `false`。  
 **Why it happens：** 自定义镜像 ref 可能无 tag。  
-**How to avoid：** 接受 D-06 行为；若运维强制要求 `v3.0.0` 能力，需保证 ref 带 `:v3.0.0`（运营约束，非代码猜测）[ASSUMED: 运维将受管镜像 ref 保持带 tag]。
+**How to avoid：** 接受 D-06 行为；**运维基线**将受管 `template_image_ref` 固定为带 `:v3.0.0` 后缀（或等价 tag），以便 ROADMAP Success #3 与 `supports_*` 在真环境稳定为 `true` [ASSUMED: 运维基线，非 CI 职责]。
 
 ### Pitfall 3：`host` 解析两条路径字段不一致
 
@@ -288,21 +301,25 @@ ClaudeAccountID string `json:"claude_account_id,omitempty"`
 
 | # | Claim | Section | Risk if Wrong |
 |---|-------|---------|---------------|
-| A1 | 生产环境受管主机的 `template_image_ref` 在需要能力探测时会包含 `:v3.0.0` 或可接受 `supports_*=false` | Pitfall 2 | 客户端误判无 Mutagen/mergerfs |
-| A2 | `claude_accounts.id::text` 与 JSON 中 UUID 字符串格式（是否带连字符）全仓库统一即可 | D-01 | volume 命名与 DB 不一致 |
+| A1 | **已由运维基线替代：** 受管主机 `template_image_ref` 固定带 `:v3.0.0`（或团队书面约定的等价 tag）；**非 CI 负责**在流水线中「证明」生产 tag | Pitfall 2 / 测试与 CI 边界 | 真机 `supports_*` 与 ROADMAP 示例不一致时优先查运维配置 |
+| A2 | **`claude_accounts.id` 文本形式：** 采用 PostgreSQL `gen_random_uuid()` 默认的 **带连字符** UUID 字符串（`id::text`），`claude-state-{id}` 与 Entry JSON **同一表示**，全仓库禁止混用无连字符变体除非 CONTEXT 修订 | D-01 | volume 名与 account id 不一致 |
 
-**若上表为空：** 不适用 — 本研究保留需产品/运维确认的假设。
+**说明：** 上表为执行期仍依赖的**显式约定**；A1 强调职责边界（运维非 CI），A2 消除 D-01「可任选格式」的实现分叉。
 
-## Open Questions
+## Open Questions（修订稿 · 2026-04-18）
 
-1. **`runtime_service.QueueHostAction` 是否在 Phase 30 写入 `ClaudeAccountID`？**
-   - **What we know：** 契约与本阶段 ROADMAP 含「API 契约层接收」；`runtime_service` 是实际上链路径 [VERIFIED: `runtime_service.go` 组装 `HostActionRequest`]。  
-   - **What's unclear：** Phase 30 边界是否仅「类型 + 测试」而不改 enqueue。  
-   - **Recommendation：** Planner 二选一写死——**(a)** Phase 30 仅 struct + JSON 测试，Phase 33 再接线；**(b)** Phase 30 在 enqueue 用与 D-05 相同 SQL 填 `ClaudeAccountID`，worker 立即可见（仍可不消费）。
+以下在原 Open Questions 基础上**合并用户修订**：默认策略写死，减少 planner 分叉。
 
-2. **`persistent_volume_name` 是否需要二级索引？**
-   - **What we know：** ROADMAP Scope 曾写「索引」；30-CONTEXT 未强制。  
-   - **Recommendation：** 若查询模式仅为 `id` PK 与 Phase 33 `volume create` 按名幂等，**可不加索引**；若引入按 volume 名反查 account 再加 [LOW confidence：视 Phase 33 查询而定]。
+### Q1（已收敛）`runtime_service.QueueHostAction` 是否写入 `ClaudeAccountID`？
+
+- **结论（默认）：** **是 —— 选原稿 (b)。** Phase 30 在 `QueueHostAction` 组装 `HostActionRequest` 时，使用与 Entry **D-05** 等价的查询（推荐在 `internal/store/repository` 增加可复用方法如 `ResolveClaudeAccountIDForHost(ctx, hostID, userID)`，由 `entry` 与 `runtime_service` **同调**，避免 `http` ↔ `runtime` 包循环 import），查无则 **省略 JSON 键**（`omitempty` + 空串不序列化）。  
+- **理由：** 契约字段若不在入队路径赋值，易出现「JSON 有键、链路上恒空」灰区，Phase 33 排障成本高 [VERIFIED: 当前 `runtime_service.go` 未填该字段]。  
+- **例外（需显式写进 PLAN 才采用）：** 若执行期发现 `runtime` → `repository` 循环依赖或初始化顺序无法解，可短期回退为「仅契约 + 单测」，但必须在 PLAN 标注 **tech debt** 与 Phase 33 前必须接线。
+
+### Q2（已收敛）`persistent_volume_name` 二级索引 + 迁移「down」语义
+
+- **索引：** **默认不加**二级索引；`persistent_volume_name` 生命周期与 Phase 33 `ensureDockerVolume` / 按 `claude-state-{id}` 命名对齐，查询主路径为 account **PK** 与 volume **名约定**，非按列扫表。若未来出现「按 volume 名反查 account」热路径再补索引（在后续 phase RESEARCH 复审）。  
+- **迁移 down：** 与 **golang-migrate 自动 down 文件** 脱钩；本仓库 **`RunMigrations` 仅 forward** [VERIFIED: `internal/store/migrator/migrator.go`]。回滚依赖 **`0014` 文件内** `DROP COLUMN IF EXISTS persistent_volume_name` + 运维治理 `schema_migrations`。
 
 ## Environment Availability
 
@@ -315,6 +332,13 @@ ClaudeAccountID string `json:"claude_account_id,omitempty"`
 **Missing dependencies with no fallback：** 无（本 phase 以单元测试为主即可闭环）。
 
 **Step 2.6 说明：** 无强制外部 SaaS；本地 DB 版本与生产 PG 18 基线差异不阻塞规划 [ASSUMED: CI 使用与 `go test` 一致的容器化 Postgres]。
+
+## 测试与 CI 边界
+
+- **版本与能力字段：** `image_version` / `supports_*` 的**黄金值**（如 `v3.0.0`、`true`/`true`）由**单测固定种子数据**（`hosts.template_image_ref`、`claude_accounts` 行）断言即可；**不要求 CI 成为「生产镜像 tag」的真相源** — 与 Assumptions **A1** 一致。  
+- **旧客户端兼容：** 使用「精简 `struct` + `json.Unmarshal`」覆盖「新 JSON 多字段」路径，依赖标准库忽略未知键 [CITED: https://pkg.go.dev/encoding/json]；可另建「仅含旧字段 JSON → 新 `AuthResponse`」反序列化用例。  
+- **迁移：** CI / 本地 `go test` 若带集成库，应跑 `RunMigrations` 对**干净 schema** 重复执行两次不失败 [VERIFIED: migrator 语义]；**down** 路径以迁移文件内 `DROP COLUMN IF EXISTS` 手工验证为补充，不依赖框架自动 down。  
+- **enqueue：** 为 `runtime_service` 增加**轻量 stub repository** 或复用现有 test DB，断言 `HostActionRequest` JSON 在「有 / 无 claude_account」两种种子下 `claude_account_id` 键存在性符合 D-05。
 
 ## Security Domain
 
@@ -351,6 +375,7 @@ ClaudeAccountID string `json:"claude_account_id,omitempty"`
 - `internal/store/repository/models.go` — `ClaudeAccount` / `Host`  
 - `internal/store/repository/queries.go` — `GetHostByShortID` 字段集  
 - `internal/runtime/runtime_service.go` — `HostActionRequest` 组装点  
+- `internal/store/migrator/migrator.go` — 仅 forward 的迁移语义  
 - `internal/runtime/tasks/worker_volume_test.go` — Volumes JSON 测试范式  
 - `go.mod` — 依赖版本  
 - https://pkg.go.dev/encoding/json — 未知 JSON 键忽略语义  
@@ -369,7 +394,7 @@ ClaudeAccountID string `json:"claude_account_id,omitempty"`
 
 - Standard stack：**HIGH** — 来自 `go.mod` 与官方 `encoding/json` 文档  
 - Architecture：**HIGH** — 与仓库文件一致  
-- Pitfalls：**MEDIUM** — 数据种子与 `template_image_ref` 形态依赖环境  
+- Pitfalls：**MEDIUM → 略降** — 运维基线（A1）与 UUID 表示（A2）已写死后，环境分叉风险主要剩「种子数据是否覆盖 D-05 三步」  
 
 **Research date：** 2026-04-18  
 **Valid until：** ~30 天（栈稳定）；若 `template_image_ref` 或账号数据策略变更需复审  
