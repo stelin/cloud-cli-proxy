@@ -132,27 +132,8 @@ func actionToHostStatus(action agentapi.HostAction) string {
 	}
 }
 
-func (w *Worker) createHost(ctx context.Context, request agentapi.HostActionRequest) error {
+func (w *Worker) buildCreateArgs(request agentapi.HostActionRequest, containerName, hostname string) ([]string, error) {
 	homeDir := firstNonEmpty(request.HomeDir, hostHomeDir(request.HostID))
-	containerName := firstNonEmpty(request.ContainerName, containerNameForHost(request.HostID))
-	if err := os.MkdirAll(homeDir, 0o755); err != nil {
-		return fmt.Errorf("prepare host home dir %s: %w", homeDir, err)
-	}
-
-	w.pullImage(ctx, request.ImageName)
-
-	if exists, err := w.containerExists(ctx, containerName); err != nil {
-		return err
-	} else if exists {
-		if err := w.runDocker(ctx, "rm", "-f", containerName); err != nil {
-			return err
-		}
-	}
-
-	hostname := request.Hostname
-	if hostname == "" {
-		hostname = containerName
-	}
 
 	args := []string{
 		"create",
@@ -186,11 +167,51 @@ func (w *Worker) createHost(ctx context.Context, request agentapi.HostActionRequ
 		"-v", fmt.Sprintf("%s:%s", homeDir, firstNonEmpty(request.HomeMount, defaultWorkspaceMount)),
 	)
 
+	for _, vm := range request.Volumes {
+		if vm.Name == "" || vm.Target == "" {
+			return nil, fmt.Errorf("invalid volume mount: name=%q target=%q", vm.Name, vm.Target)
+		}
+		opts := fmt.Sprintf("type=volume,src=%s,dst=%s", vm.Name, vm.Target)
+		if vm.ReadOnly {
+			opts += ",readonly"
+		}
+		args = append(args, "--mount", opts)
+	}
+
 	for key, value := range request.Labels {
 		args = append(args, "--label", fmt.Sprintf("%s=%s", key, value))
 	}
 
 	args = append(args, request.ImageName)
+	return args, nil
+}
+
+func (w *Worker) createHost(ctx context.Context, request agentapi.HostActionRequest) error {
+	homeDir := firstNonEmpty(request.HomeDir, hostHomeDir(request.HostID))
+	containerName := firstNonEmpty(request.ContainerName, containerNameForHost(request.HostID))
+	if err := os.MkdirAll(homeDir, 0o755); err != nil {
+		return fmt.Errorf("prepare host home dir %s: %w", homeDir, err)
+	}
+
+	w.pullImage(ctx, request.ImageName)
+
+	if exists, err := w.containerExists(ctx, containerName); err != nil {
+		return err
+	} else if exists {
+		if err := w.runDocker(ctx, "rm", "-f", containerName); err != nil {
+			return err
+		}
+	}
+
+	hostname := request.Hostname
+	if hostname == "" {
+		hostname = containerName
+	}
+
+	args, err := w.buildCreateArgs(request, containerName, hostname)
+	if err != nil {
+		return err
+	}
 
 	if err := w.runDocker(ctx, args...); err != nil {
 		return err
