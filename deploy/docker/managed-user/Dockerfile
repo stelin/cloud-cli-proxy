@@ -93,6 +93,25 @@ RUN ARCH=$(dpkg --print-architecture) \
     && rm /tmp/mergerfs.deb \
     && mergerfs --version
 
+# Mutagen agent v0.18.1 — 仅保留 mutagen-agents.tar.gz，runtime 由 entrypoint 解压（D-05）
+ARG MUTAGEN_VERSION=v0.18.1
+ARG MUTAGEN_SHA256_AMD64=7735286c778cc438418209f24d03a64f3a0151c8065ef0fe079cfaf093af6f8f
+ARG MUTAGEN_SHA256_ARM64=bcba735aebf8cbc11da9b3742118a665599ac697fa06bc5751cac8dcd540db8a
+RUN ARCH=$(dpkg --print-architecture) \
+    && case "${ARCH}" in \
+         amd64) EXPECTED_SHA="${MUTAGEN_SHA256_AMD64}" ;; \
+         arm64) EXPECTED_SHA="${MUTAGEN_SHA256_ARM64}" ;; \
+         *) echo "unsupported arch: ${ARCH}" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSL -o /tmp/mutagen.tar.gz \
+        "https://github.com/mutagen-io/mutagen/releases/download/${MUTAGEN_VERSION}/mutagen_linux_${ARCH}_${MUTAGEN_VERSION}.tar.gz" \
+    && echo "${EXPECTED_SHA}  /tmp/mutagen.tar.gz" | sha256sum -c - \
+    && mkdir -p /opt \
+    && tar -xzf /tmp/mutagen.tar.gz -C /tmp mutagen-agents.tar.gz \
+    && mv /tmp/mutagen-agents.tar.gz /opt/mutagen-agents.tar.gz \
+    && rm /tmp/mutagen.tar.gz \
+    && ls -l /opt/mutagen-agents.tar.gz
+
 RUN locale-gen en_US.UTF-8
 ENV LANG=en_US.UTF-8
 ENV LANGUAGE=en_US:en
