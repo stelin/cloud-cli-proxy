@@ -112,6 +112,12 @@ RUN ARCH=$(dpkg --print-architecture) \
     && rm /tmp/mutagen.tar.gz \
     && ls -l /opt/mutagen-agents.tar.gz
 
+# 版本元数据（C4 Mutagen 版本漂移防御 / Phase 30 Entry API 读取的旁路数据源）
+RUN mkdir -p /etc/cloud-claude \
+    && echo "${MERGERFS_VERSION}" > /etc/cloud-claude/mergerfs.version \
+    && echo "${MUTAGEN_VERSION}" > /etc/cloud-claude/mutagen.version \
+    && echo "runtime-filled" > /etc/cloud-claude/tmux.version
+
 RUN locale-gen en_US.UTF-8
 ENV LANG=en_US.UTF-8
 ENV LANGUAGE=en_US:en
