@@ -101,7 +101,7 @@
 
 ### host-preflight 与 AppArmor override
 
-- **D-23**：新增 `deploy/host-preflight.sh`，独立可执行脚本，职责：
+- **D-23**：扩展 `deploy/scripts/host-preflight.sh`（**已存在**的独立可执行脚本），追加 AppArmor override 检测逻辑。职责：
   1. 检测宿主机发行版（`/etc/os-release`）是否为 Ubuntu 25.04+
   2. 若是，检查 `/etc/apparmor.d/local/fusermount3` 是否包含 `capability dac_override,`
   3. 缺失时退出码 `1`，打印**修复命令**（不自动 sudo 执行）：
@@ -113,8 +113,11 @@
      ```
   4. 非 Ubuntu 25.04 宿主机退出码 `0` + 提示"当前宿主机无需 override"
 
-  > **路径修正说明（2026-04-18）**：本决策最初误写为 `/etc/apparmor.d/local/docker-default`。实际上 Ubuntu 25.04 在 fuse 3.14.0-10 中新增了独立的 `/etc/apparmor.d/fusermount3` profile，才是真正拦截 `capability dac_override` 的执行者；修改 `docker-default` 的 local override 无法影响该 profile。经 29-RESEARCH.md §Conflicts with CONTEXT.md 论证（证据链：Launchpad bug #2111105、moby#50013、sysbox#947、stargz-snapshotter#2144），统一修正为 `fusermount3` 路径，以真正防御 Critical Pitfall C6。详见 29-DISCUSSION-LOG.md §修正记录 2026-04-18。
-- **D-24**：`deploy/host-preflight.sh` **不**嵌入 cloud-cli-proxy 控制面启动流程——保持独立脚本，由运维手动运行 / CI 工作流作为可选 step / Phase 34 `doctor host` 维度调用。理由：宿主机级改动需 sudo，不能由控制面进程 silent 执行。
+  > **路径修正说明（2026-04-18）**：
+  > 1. AppArmor override 路径原写为 `/etc/apparmor.d/local/docker-default`，经 29-RESEARCH.md §Conflicts with CONTEXT.md 论证（Launchpad bug #2111105、moby#50013、sysbox#947、stargz-snapshotter#2144 一致指向 fusermount3），统一修正为 `/etc/apparmor.d/local/fusermount3`，以真正防御 Critical Pitfall C6。
+  > 2. 脚本路径原写为"新增 `deploy/host-preflight.sh`"，经 29-PATTERNS.md 代码映射确认 `deploy/scripts/host-preflight.sh` **已存在**（见文件 `1-45` 行），修正为"扩展现有脚本、追加 AppArmor 检测函数"。
+  > 详见 29-DISCUSSION-LOG.md §修正记录 2026-04-18。
+- **D-24**：`deploy/scripts/host-preflight.sh` **不**嵌入 cloud-cli-proxy 控制面启动流程——保持独立脚本，由运维手动运行 / CI 工作流作为可选 step / Phase 34 `doctor host` 维度调用。理由：宿主机级改动需 sudo，不能由控制面进程 silent 执行。
 - **D-25**：运维手册 `docs/` 中新增一节 `v3.0 AppArmor override 部署`（或在 deploy/ README 中），包含：override 内容、`apparmor_parser -r` 刷新命令、回滚命令、如何验证 override 生效。
 
 ### image.lock 扩展字段

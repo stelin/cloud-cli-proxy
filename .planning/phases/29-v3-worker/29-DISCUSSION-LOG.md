@@ -119,9 +119,11 @@
 
 ---
 
-## 修正记录 2026-04-18 — D-23 AppArmor override 路径
+## 修正记录 2026-04-18 — D-23 路径两处修正（AppArmor override + 脚本位置）
 
-**背景：** `gsd-phase-researcher`（29-RESEARCH.md）通过 WebSearch 2026-04-18 实时验证时发现，D-23 最初指定的 `/etc/apparmor.d/local/docker-default` 路径与上游主流修复方式不一致。
+**背景：**
+1. `gsd-phase-researcher`（29-RESEARCH.md）通过 WebSearch 2026-04-18 实时验证时发现，D-23 最初指定的 AppArmor override 路径 `/etc/apparmor.d/local/docker-default` 与上游主流修复方式不一致。
+2. 本地 pattern 映射（29-PATTERNS.md AP9）发现 `deploy/scripts/host-preflight.sh` 已存在（见该文件 `1-45` 行的 require_cmd / FUSE 检测骨架），D-23 原文"新增 `deploy/host-preflight.sh`"的路径与现实代码结构有偏差。
 
 **技术原因：** Ubuntu 25.04 在 fuse 3.14.0-10 中新增了独立的 `/etc/apparmor.d/fusermount3` profile，它才是在 25.04+ 下拦截 `capability dac_override` 的真正执行者。修改 `docker-default` 的 local override 无法影响这个独立 profile——按原 D-23 实现，host-preflight.sh 即使通过，容器内 FUSE 挂载（mergerfs / sshfs / mutagen）仍会报 `fusermount3: mount failed: Permission denied`，连 `--privileged` 也无法绕过。Critical Pitfall **C6** 的防御会实际失效。
 
@@ -148,3 +150,9 @@
 - 29-RESEARCH.md §host-preflight.sh 骨架已按 `fusermount3` 路径实现，planner 可直接消费
 
 **Notes:** D-23 文本已在 29-CONTEXT.md 内就地修正并附修正说明；不删除修正历史，便于后续审计追溯。
+
+**脚本位置修正（同日，第二处）：**
+- 原表述：新增 `deploy/host-preflight.sh`
+- 实际结构：`deploy/scripts/host-preflight.sh` 已存在，现包含 docker / ip / systemctl / nft / FUSE / nsenter / curl 的 require_cmd 串行检测（见 `1-45` 行）
+- 处置：修正 D-23 / D-24 表述为"扩展 `deploy/scripts/host-preflight.sh`，追加 AppArmor override 检测"
+- 影响：Plan-E（host-preflight & 文档）的工作量从"新建脚本"变为"追加函数 + 更新运维手册"，Dockerfile / 其他 plan 不受影响；不触发额外决策分叉。
