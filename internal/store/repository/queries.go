@@ -1149,20 +1149,84 @@ func (r *Repository) CreateUserWithRole(ctx context.Context, params CreateUserWi
 	return item, nil
 }
 
+// getHostByShortIDSQL 将 SQL 文本提升为包级常量，方便数据层回归测试断言
+// Wave 2 所需列（template_image_ref）已纳入 SELECT，且保持对 sshproxy / entry 的向后兼容。
+const getHostByShortIDSQL = `
+	SELECT h.id::text, h.short_id, h.entry_password, h.status,
+	       h.user_id::text, u.status, u.username,
+	       COALESCE(h.template_image_ref, '')
+	FROM hosts h
+	JOIN users u ON u.id = h.user_id
+	WHERE h.short_id = $1
+`
+
 func (r *Repository) GetHostByShortID(ctx context.Context, shortID string) (HostSSHAuth, error) {
 	var item HostSSHAuth
-	if err := r.db.QueryRow(ctx, `
-		SELECT h.id::text, h.short_id, h.entry_password, h.status, h.user_id::text, u.status, u.username
-		FROM hosts h
-		JOIN users u ON u.id = h.user_id
-		WHERE h.short_id = $1
-	`, shortID).Scan(
+	if err := r.db.QueryRow(ctx, getHostByShortIDSQL, shortID).Scan(
 		&item.HostID, &item.HostShortID, &item.EntryPassword,
 		&item.HostStatus, &item.UserID, &item.UserStatus, &item.Username,
+		&item.TemplateImageRef,
 	); err != nil {
 		return HostSSHAuth{}, fmt.Errorf("get host by short_id: %w", err)
 	}
 	return item, nil
+}
+
+// resolveClaudeAccountByHostSQL / resolveClaudeAccountByUserFallbackSQL 实现 D-05 的确定性解析。
+// 两条语句都全部使用参数化查询（T-30-01 缓解），避免 SQL 注入。
+const resolveClaudeAccountByHostSQL = `
+	SELECT id::text
+	FROM claude_accounts
+	WHERE host_id = $1
+	ORDER BY created_at ASC
+	LIMIT 1
+`
+
+const resolveClaudeAccountByUserFallbackSQL = `
+	SELECT id::text
+	FROM claude_accounts
+	WHERE user_id = $1 AND host_id IS NULL
+	ORDER BY created_at ASC
+	LIMIT 1
+`
+
+// ResolveClaudeAccountIDForEntry 按 Phase 30 D-05 的两阶段规则返回 claude_account_id。
+//
+// 规则：
+//  1. 优先取与当前 host 显式绑定、创建时间最早的账号；
+//  2. 否则回退到当前 user 未绑定任何 host 的最早账号；
+//  3. 两步都未命中时返回 (""，false，nil)，供 Wave 2 Entry API 以 omitempty 省略字段输出，
+//     不视为错误（D-05 第三条）。
+//
+// 入参 hostID 可为空串；空串时直接跳过第一步走 fallback，用于调用方只有 user 上下文的场景。
+func (r *Repository) ResolveClaudeAccountIDForEntry(ctx context.Context, userID, hostID string) (string, bool, error) {
+	if userID == "" {
+		return "", false, fmt.Errorf("resolve claude account: user id is required")
+	}
+
+	if hostID != "" {
+		var accountID string
+		err := r.db.QueryRow(ctx, resolveClaudeAccountByHostSQL, hostID).Scan(&accountID)
+		switch {
+		case err == nil:
+			return accountID, true, nil
+		case errors.Is(err, pgx.ErrNoRows):
+			// fall through to user fallback
+		default:
+			return "", false, fmt.Errorf("resolve claude account by host: %w", err)
+		}
+	}
+
+	var accountID string
+	err := r.db.QueryRow(ctx, resolveClaudeAccountByUserFallbackSQL, userID).Scan(&accountID)
+	switch {
+	case err == nil:
+		return accountID, true, nil
+	case errors.Is(err, pgx.ErrNoRows):
+		return "", false, nil
+	default:
+		return "", false, fmt.Errorf("resolve claude account by user fallback: %w", err)
+	}
 }
 
 func (r *Repository) UpdateHostEntryPassword(ctx context.Context, hostID, password string) error {
