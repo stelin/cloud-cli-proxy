@@ -1,3 +1,10 @@
+// Package cloudclaude — 文件挂载共享 helper。
+//
+// Phase 31 拆分后 mount.go 仅承载 sshfs / mutagen / merge / strategy 四档共享 helper：
+//   - MountNotReadyError / channelRWC：基础类型
+//   - waitForMount / fusermountCleanup / cleanupStaleFUSE / rmdirChain / sshRun / shellQuote
+//
+// 具体 mount 实现见 mount_{sshfs,mutagen,merge,strategy}.go。
 package cloudclaude
 
 import (
@@ -7,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -37,89 +43,6 @@ type channelRWC struct {
 
 func (c *channelRWC) Close() error {
 	return c.WriteCloser.Close()
-}
-
-// mountWorkspace 在 SSH 连接上开启 sshfs session 并启动嵌入式 SFTP server，
-// 将 localDir 映射到容器内 remotePath（用户的真实 CWD 路径）。
-// 返回的 cleanup 函数按正确顺序关闭所有资源并移除创建的目录。
-func mountWorkspace(conn *ssh.Client, localDir, remotePath string) (cleanup func(), err error) {
-	// 清理可能残留的上一次 FUSE mount（异常退出场景）
-	cleanupStaleFUSE(conn, remotePath)
-
-	// 在容器内创建挂载目标目录并确保当前用户可写（sshfs 要求挂载点由执行用户拥有）
-	mkdirCmd := fmt.Sprintf(
-		"sudo mkdir -p %s && sudo chown $(id -u):$(id -g) %s",
-		shellQuote(remotePath), shellQuote(remotePath),
-	)
-	if err := sshRun(conn, mkdirCmd); err != nil {
-		return nil, fmt.Errorf("创建远端挂载目录失败: %w", err)
-	}
-
-	sshfsSession, err := conn.NewSession()
-	if err != nil {
-		return nil, fmt.Errorf("创建 sshfs session 失败: %w", err)
-	}
-
-	stdin, err := sshfsSession.StdinPipe()
-	if err != nil {
-		sshfsSession.Close()
-		return nil, fmt.Errorf("获取 sshfs stdin pipe 失败: %w", err)
-	}
-
-	stdout, err := sshfsSession.StdoutPipe()
-	if err != nil {
-		stdin.Close()
-		sshfsSession.Close()
-		return nil, fmt.Errorf("获取 sshfs stdout pipe 失败: %w", err)
-	}
-
-	sshfsCmd := fmt.Sprintf("sshfs : %s -o passive -f", shellQuote(remotePath))
-	if err := sshfsSession.Start(sshfsCmd); err != nil {
-		stdin.Close()
-		sshfsSession.Close()
-		return nil, fmt.Errorf("启动 sshfs 失败: %w", err)
-	}
-
-	rwc := &channelRWC{Reader: stdout, WriteCloser: stdin}
-
-	server, err := sftp.NewServer(rwc, sftp.WithServerWorkingDirectory(localDir))
-	if err != nil {
-		stdin.Close()
-		sshfsSession.Close()
-		return nil, fmt.Errorf("创建 SFTP server 失败: %w", err)
-	}
-
-	sftpDone := make(chan error, 1)
-	go func() {
-		sftpDone <- server.Serve()
-	}()
-
-	checkCmd := fmt.Sprintf("mountpoint -q %s", shellQuote(remotePath))
-	check := func() error {
-		sess, err := conn.NewSession()
-		if err != nil {
-			return err
-		}
-		defer sess.Close()
-		return sess.Run(checkCmd)
-	}
-
-	if err := waitForMount(remotePath, check, 200*time.Millisecond, 10*time.Second); err != nil {
-		sshfsSession.Close()
-		<-sftpDone
-		server.Close()
-		fusermountCleanup(conn, remotePath)
-		return nil, fmt.Errorf("等待挂载就绪失败: %w", err)
-	}
-
-	cleanup = func() {
-		sshfsSession.Close()
-		<-sftpDone
-		server.Close()
-		fusermountCleanup(conn, remotePath)
-		rmdirChain(conn, remotePath)
-	}
-	return cleanup, nil
 }
 
 // waitForMount 轮询 check 函数直到挂载就绪或超时。
