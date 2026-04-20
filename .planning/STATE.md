@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: 远端开发体验升级
 status: executing
-stopped_at: "Completed 32-04-mount-strategy-sync-lock-invoke PLAN.md (Gap #2 closed)"
-last_updated: "2026-04-20T10:27:52.032Z"
+stopped_at: "Completed 32-05-bufferedstdin-reconnect-wiring PLAN.md (Gap #1 closed; SC5 / REQ-F3-B code-level VERIFIED)"
+last_updated: "2026-04-20T10:38:58.433Z"
 last_activity: 2026-04-20
 progress:
   total_phases: 8
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-04-17)
 
 Milestone: v3.0 远端开发体验升级
 Phase: 32 (ssh-tmux) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-04-20
 
@@ -61,6 +61,7 @@ v3.0 关键方向已定：
 - [Phase 32-ssh-tmux]: Plan 02 tmux-multiclient：session.go 全新文件（867 行）含 DetectTmux + 命名 helpers + D-10 远程命令模板 + 文件注册表 (writeClientFile/removeClientFile/readClientHostnames，D-12 完整方案 schema_version=1) + runClaudeWithSession (PTY/RunKeepAlive/Reconnector 三协同) + RunSessionsLs/Attach；ssh.go ConnectAndRunClaudeV3 OAuth 后插入 SessionConfig 构造 + DetectTmux 路由（runClaude 函数体 zero diff 保留作 fallback）；MountConfig 末尾追加 SessionShortID/SessionTakeOver/LocalHostname；cmd 层新增 sessions.go cobra 子命令 + main.go 4 处改造 (AddCommand/DisableFlagParsing/runRoot 剥离 --new-session/--take-over/KeepAlive < 15s 启动校验)；21 个新单测全 PASS；shellescape.Quote 11 处防注入 + TestBuildTmuxRemoteCmd_SpecialCharsQuoted 显式覆盖；BufferedStdin 跨 attach 周期持久化留 v3.1 (Plan 01 已 ship StateAddr 模式，PLAN 提到的 RegisterStateListener 接口未落地，本 plan 走每轮 attach 本地 atomic.Int32 简化方案不影响 30s 抖动恢复)
 - [Phase 32-ssh-tmux]: Plan 03 sync-lock-integration：sync_lock.go 新建（122 行）实现 AcquireSyncLock(conn, accountID) 通过远程 `flock -n -E 99 -F /tmp/cloud-claude/locks/sync-<id>.lock -c 'echo $$; exec sleep infinity' & echo $!`（D-17 路径 / D-18 注入位置 / D-19 anon noop）；ErrSyncLocked sentinel + parseLastInt 容错纯函数 + 9 个单测；ssh.go ConnectAndRunClaudeV3 把 SyncSessionLock 默认 noop 替换为真实 AcquireSyncLock 包装（errors.Is(ErrSyncLocked) 时 mountCfg.IsSecondaryClient=true + stderr [SESSION_SYNC_LOCKED]）；MountConfig 末尾追加 IsSecondaryClient bool；session.go SessionConfig 同字段 + writeClientFile 签名追加 role 形参 + runClaudeWithSession + pTYAttachOnce 4 处 role 三元（依 sessionCfg.IsSecondaryClient 决定 primary/secondary）；integration_test.go 末尾追加 6 个 TestIntegration_Phase32_*（PgrepNoSystemdLogind / TmuxSurvivesSighupSshd / SyncLockMutexes / SyncLockAnonNoop / DetectTmuxAvailable / NetworkDisconnect30s 框架短模式跳过）+ defaultFixtureSSHConfig helper；test-fixture-up/down.sh zero diff；go.mod 无新依赖；carry-over：(a) Phase 31 mount_strategy.MountWorkspace 未实际调用 SyncSessionLock 闭包（D-31 落地缺口）— 本 plan 严遵 user "不重写 mount_strategy" 指令，闭包安装到位但调用链留 verifier；(b) Plan 02 BufferedStdin 未真接入 Reconnector 共享状态（REQ-F3-B 端到端集成缺失）保持原样不修
 - [Phase 32]: Plan 04 闭合 Gap #2 / SC11：MountWorkspace 真实调用 cfg.SyncSessionLock(cfg.ClaudeAccountID)，ErrSyncLocked 强制 ModeSSHFSOnly + DowngradeChain 追加 sync_locked + IsSecondaryClient=true；其它 lockErr 透传 ModeFailed（M13 防御）；成功拿锁挂入 finalCleanup LIFO 末尾。
+- [Phase 32]: Plan 05 闭合 Gap #1 / SC5：Reconnector + BufferedStdin 单例提升到 runClaudePTYWithReconnect 外层；pTYAttachOnce 删除局部 atomic.Int32 并新增 bufferedPipeR io.Reader 参数共享外层 atomic；onReconnected 闭包内 bs.Flush() 按序回放 ringBuf；input_buffer.go 新增 echoMu sync.Mutex co-fix WR-04；bs.Run 单 goroutine co-fix WR-03；新增 TestPTYReconnect_BufferedInputFlush 6 断言覆盖 SC5 端到端；公开 API zero diff（Plan 01/02/03/04 不影响）；race mode 全 PASS
 
 ### Pending Todos
 
@@ -88,6 +89,6 @@ None — 等待 REQUIREMENTS.md 与 ROADMAP.md 产出后进入 phase 执行。
 
 ## Session Continuity
 
-Last session: 2026-04-20T10:27:52.029Z
-Stopped at: Completed 32-04-mount-strategy-sync-lock-invoke PLAN.md (Gap #2 closed)
+Last session: 2026-04-20T10:38:58.427Z
+Stopped at: Completed 32-05-bufferedstdin-reconnect-wiring PLAN.md (Gap #1 closed; SC5 / REQ-F3-B code-level VERIFIED)
 Resume file: None

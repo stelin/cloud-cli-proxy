@@ -29,7 +29,7 @@
 ### B1 · SSH 会话稳定性与自动重连（F3）
 
 - [ ] **REQ-F3-A**：客户端默认 `ServerAliveInterval=15s` / `ServerAliveCountMax=4`；服务端默认 `ClientAliveInterval=15s` / `ClientAliveCountMax=8`；二者均不允许配置低于 15 秒
-- [ ] **REQ-F3-B**：网络中断期间用户键入字符在客户端本地缓冲并以"未确认"灰色样式显示，重连成功后按序提交（对标 Mosh 本地 echo）
+- [x] **REQ-F3-B**：网络中断期间用户键入字符在客户端本地缓冲并以"未确认"灰色样式显示，重连成功后按序提交（对标 Mosh 本地 echo）
 - [ ] **REQ-F3-C**：cloud-claude 自动重连失败时，prompt 必须显示具体失败原因 + 下一步操作（按 Enter 重试 / 运行 `cloud-claude doctor`）
 - [ ] **REQ-F3-D**：重连过程使用退避策略 `1s → 2s → 4s → 8s → 30s 上限`，复用本地缓存的 Entry API token，不重新弹出密码
 
@@ -176,7 +176,7 @@
 | REQ-F2-B | Phase 31 | Complete | 任一层失败 ≤ 2s 降级 + 禁止静默 |
 | REQ-F2-C | Phase 31 | Complete | banner 彩色 mount 模式标签 |
 | REQ-F3-A | Phase 32 | Pending | KeepAlive 15s/4 与服务端 15s/8 基线（服务端 sshd_config 在 Phase 29 落地） |
-| REQ-F3-B | Phase 32 | Pending | 断网本地输入缓冲 + 灰色未确认样式 |
+| REQ-F3-B | Phase 32 | Complete | 断网本地输入缓冲 + 灰色未确认样式 |
 | REQ-F3-C | Phase 32 | Pending | 重连失败 prompt 原因 + 下一步 |
 | REQ-F3-D | Phase 32 | Pending | 重连退避 + token 复用不弹密码 |
 | REQ-F4-A | Phase 32 | Pending | tmux 默认包装 + 重连不丢进程 |
