@@ -393,11 +393,8 @@ func (h *AdminHostsHandler) RotateSSHPassword() nethttp.Handler {
 
 		if host.Status == "running" {
 			containerName := "cloudproxy-" + hostID
-			owner, userErr := h.store.GetUser(r.Context(), host.UserID)
+			// 与 host-agent create 时 CONTAINER_USER 一致（managed-user 镜像默认为 workspace）。
 			containerUser := "workspace"
-			if userErr == nil && owner.Username != "" {
-				containerUser = owner.Username
-			}
 			if syncErr := syncContainerPassword(containerName, containerUser, newPassword); syncErr != nil {
 				h.logger.Warn("sync password to running container failed (will take effect on next rebuild)",
 					"host_id", hostID, "container", containerName, "error", syncErr)

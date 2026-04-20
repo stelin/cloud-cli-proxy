@@ -157,12 +157,13 @@ func (w *Worker) buildCreateArgs(request agentapi.HostActionRequest, containerNa
 		args = append(args, "--cpus", fmt.Sprintf("%.1f", request.CPULimit))
 	}
 
+	linuxUser := firstNonEmpty(request.DefaultUser, "workspace")
 	args = append(args,
 		"-e", "TZ="+firstNonEmpty(request.Timezone, "America/Los_Angeles"),
 		"-e", "LANG=en_US.UTF-8",
 		"-e", "LANGUAGE=en_US:en",
 		"-e", "LC_ALL=en_US.UTF-8",
-		"-e", "CONTAINER_USER=workspace",
+		"-e", "CONTAINER_USER="+linuxUser,
 		"-e", "CONTAINER_SSH_PASSWORD="+firstNonEmpty(request.EntryPassword, "workspace"),
 		"-v", fmt.Sprintf("%s:%s", homeDir, firstNonEmpty(request.HomeMount, defaultWorkspaceMount)),
 	)
@@ -427,7 +428,7 @@ func (w *Worker) waitForSSH(ctx context.Context, request agentapi.HostActionRequ
 // syncContainerCredentials forces the container's Linux password to match
 // the request, regardless of what the entrypoint set via environment variables.
 func (w *Worker) syncContainerCredentials(ctx context.Context, request agentapi.HostActionRequest, containerName string) {
-	user := "workspace"
+	user := firstNonEmpty(request.DefaultUser, "workspace")
 	pass := firstNonEmpty(request.EntryPassword, "workspace")
 
 	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", containerName, "chpasswd")
@@ -451,7 +452,8 @@ func (w *Worker) injectSSHKeys(ctx context.Context, request agentapi.HostActionR
 		return
 	}
 
-	user := firstNonEmpty(request.Username, "workspace")
+	// 必须与容器内 CONTAINER_USER / entrypoint 一致；不能用平台用户名（request.Username）。
+	user := firstNonEmpty(request.DefaultUser, "workspace")
 	sshDir := "/workspace/.ssh"
 
 	var managed []string
@@ -570,7 +572,7 @@ func (w *Worker) injectSSHKeys(ctx context.Context, request agentapi.HostActionR
 }
 
 func (w *Worker) injectSSHKeysLegacy(ctx context.Context, request agentapi.HostActionRequest, containerName string) {
-	user := firstNonEmpty(request.Username, "workspace")
+	user := firstNonEmpty(request.DefaultUser, "workspace")
 	sshDir := "/workspace/.ssh"
 
 	if request.SSHPrivateKey != "" {
