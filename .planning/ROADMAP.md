@@ -157,13 +157,16 @@
 
 ### Phase 29.1: 修复 GetHost 缺失 entry_password 字段导致容器密码退化为 workspace (INSERTED)
 
-**Goal:** [Urgent work - to be planned]
-**Requirements**: TBD
+**Goal:** 修复 `GetHost` SELECT 漏 `entry_password` 导致的全链路密码退化：(1) 新建容器 `CONTAINER_SSH_PASSWORD` 与 DB `hosts.entry_password` 严格一致，杜绝 `"workspace"` 字面量 fallback；(2) 仓储层 6 个 Host 读函数整批补齐 `entry_password` 列；(3) worker / runtime 任何 `EntryPassword == ""` 路径改 fail-fast + audit event；(4) entrypoint 新增 `passwd -S` 自检，容器宁可起不来也不起"伪成功"；(5) admin 批量 resync 端点一键修复存量运行容器；(6) 仓储 / worker / handler 三层回归测试 + 端到端人工 UAT。
+**Requirements**: P0-HOTFIX-29.1（无正式 REQ-ID，线上紧急修复）
 **Depends on:** Phase 29
-**Plans:** 0 plans
+**Plans:** 4 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 29.1 to break down)
+- [ ] `.planning/phases/29.1-gethost-entry-password-workspace/29.1-01-PLAN.md` — 仓储层：6 个 Host 读函数 SELECT + Scan 补 `entry_password`，SQL 提升为包级常量，新增 `TestAllHostReadQueriesIncludeEntryPassword` 契约测试（Wave 1）
+- [ ] `.planning/phases/29.1-gethost-entry-password-workspace/29.1-02-PLAN.md` — runtime/worker fail-fast：`QueueHostAction` / `buildCreateArgs` / `syncContainerCredentials` 去除 `"workspace"` 密码 fallback，改 RecordEvent + error，新增 2 条 worker 单测（Wave 1）
+- [ ] `.planning/phases/29.1-gethost-entry-password-workspace/29.1-03-PLAN.md` — 镜像自检：`entrypoint.sh` 在 chpasswd 后追加 `passwd -S` 自检，非 `P|PS` 状态 `exit 1`（Wave 1）
+- [ ] `.planning/phases/29.1-gethost-entry-password-workspace/29.1-04-PLAN.md` — 存量修复 + e2e：新增 `POST /v1/admin/hosts/resync-passwords` admin 端点（复用 adminGuard），`syncContainerPassword` 提升为 `var` 便于 mock，3 条 handler 单测 + 人工 UAT（Wave 2，depends_on 01+02）
 
 ### Phase 30: 控制面数据模型 + Entry API 扩展
 **Goal**: 为 v3.0 体验所需的"客户端动态能力探测"打开控制面通道——`claude_accounts.persistent_volume_name` 字段就绪、`HostActionRequest` 在 API 契约层接收 `ClaudeAccountID + Volumes`、`Entry API` 在现有 `/v1/entry/{id}/auth` 响应里追加 `image_version` / `supports_mutagen` / `supports_mergerfs` / `claude_account_id` 字段（向后兼容，旧 client 不破）。本阶段不交付任何 user-facing REQ-F*，但 Phase 31/33 全部依赖它。
