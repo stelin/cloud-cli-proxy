@@ -22,6 +22,11 @@ type LastSessionSnapshot struct {
 	ClaudeAccountID     string          `json:"claude_account_id,omitempty"`
 	ImageVersion        string          `json:"image_version,omitempty"`
 	APFSCaseInsensitive bool            `json:"apfs_case_insensitive"`
+
+	// [Phase 32 D-27 新增] 全部 omitempty + schema_version 保持 1（向后兼容）
+	TmuxSession    string `json:"tmux_session,omitempty"`    // 实际 attach 的 tmux session 名（Plan 02 写）
+	ClientRole     string `json:"client_role,omitempty"`     // "primary" | "secondary"（Plan 03 写）
+	ReconnectCount int    `json:"reconnect_count,omitempty"` // Reconnector.ReconnectCount() 累计值
 }
 
 // DowngradeStep 描述单次降级动作。

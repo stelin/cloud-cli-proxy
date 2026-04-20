@@ -1,6 +1,7 @@
 package cloudclaude
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -101,6 +102,50 @@ func Test_WriteLastSession_Atomic(t *testing.T) {
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), ".tmp") {
 			t.Errorf("发现 .tmp 残留文件: %s", e.Name())
+		}
+	}
+}
+
+// Phase 32 D-27: 三个新字段 round-trip 验证。
+func TestLastSessionSnapshot_NewFieldsRoundTrip(t *testing.T) {
+	snap := LastSessionSnapshot{
+		SchemaVersion:  1,
+		Timestamp:      time.Now().UTC(),
+		IntendedMode:   "auto",
+		ActualMode:     "full",
+		TmuxSession:    "claude-abc12345",
+		ClientRole:     "primary",
+		ReconnectCount: 3,
+	}
+	data, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(`"tmux_session":"claude-abc12345"`)) {
+		t.Errorf("序列化丢失 tmux_session: %s", data)
+	}
+	if !bytes.Contains(data, []byte(`"client_role":"primary"`)) {
+		t.Errorf("序列化丢失 client_role: %s", data)
+	}
+	if !bytes.Contains(data, []byte(`"reconnect_count":3`)) {
+		t.Errorf("序列化丢失 reconnect_count: %s", data)
+	}
+	var back LastSessionSnapshot
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.TmuxSession != "claude-abc12345" || back.ClientRole != "primary" || back.ReconnectCount != 3 {
+		t.Errorf("反序列化字段丢失: %+v", back)
+	}
+}
+
+// Phase 32 D-27: omitempty 隐藏空值。
+func TestLastSessionSnapshot_OmitemptyForEmpty(t *testing.T) {
+	snap := LastSessionSnapshot{SchemaVersion: 1}
+	data, _ := json.Marshal(snap)
+	for _, key := range []string{"tmux_session", "client_role", "reconnect_count"} {
+		if bytes.Contains(data, []byte(`"`+key+`"`)) {
+			t.Errorf("空字段 %s 应被 omitempty 隐藏: %s", key, data)
 		}
 	}
 }
