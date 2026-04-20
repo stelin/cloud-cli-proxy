@@ -22,15 +22,19 @@ const RingBufCapacity = 4096
 //
 // ringBuf 满 → 丢最早 1KB + [SESSION_BUFFER_OVERFLOW] warning（CONTEXT D-06）。
 type BufferedStdin struct {
-	src       io.Reader
-	pipeW     io.WriteCloser
-	state     *atomic.Int32 // 共享 Reconnector.state
-	ringBuf   []byte
-	ringMu    sync.Mutex
+	src     io.Reader
+	pipeW   io.WriteCloser
+	state   *atomic.Int32 // 共享 Reconnector.state
+	ringBuf []byte
+	ringMu  sync.Mutex
+	// echoMu 保护 grayOpen + pipeW.Write + closeGrayIfOpen 跨 goroutine 调用
+	// （Phase 32 Gap #1 / WR-04 co-fix —— Run 与 Flush 并发执行时避免 data race）。
+	// 锁顺序：echoMu 外 / ringMu 内（仅 Flush 嵌套，handleReconnecting 串行不嵌套）。
+	echoMu    sync.Mutex
 	localEcho io.Writer
 	noColor   bool
 	onEnter   func()
-	grayOpen  bool // 是否已 echo 过开头 \x1b[90m
+	grayOpen  bool // 是否已 echo 过开头 \x1b[90m（在 echoMu 下读写）
 }
 
 // NewBufferedStdin 用 io.Pipe 拿到 (pipeR, pipeW)；返回的 io.Reader 直接喂给 ssh.Session.Stdin。
@@ -68,8 +72,12 @@ func (b *BufferedStdin) Run(ctx context.Context) error {
 			c := buf[0]
 			switch ConnState(b.state.Load()) {
 			case StateConnected:
-				b.closeGrayIfOpen()
-				if _, werr := b.pipeW.Write(buf[:n]); werr != nil {
+				// echoMu 保护 closeGrayIfOpen + pipeW.Write 与 Flush / handleReconnecting 并发安全。
+				b.echoMu.Lock()
+				b.closeGrayIfOpenLocked()
+				_, werr := b.pipeW.Write(buf[:n])
+				b.echoMu.Unlock()
+				if werr != nil {
 					return werr
 				}
 			case StateReconnecting:
@@ -104,12 +112,15 @@ func (b *BufferedStdin) handleReconnecting(c byte) {
 	b.ringMu.Unlock()
 
 	if b.localEcho != nil {
-		// 进入 Reconnecting 时一次性 echo \x1b[90m，退出时 \x1b[0m（不逐字节包；RESEARCH §4.3）
+		// 进入 Reconnecting 时一次性 echo \x1b[90m，退出时 \x1b[0m（不逐字节包；RESEARCH §4.3）。
+		// echoMu 保护 grayOpen 与 localEcho 写入，与 Run-Connected / Flush 并发安全（WR-04 co-fix）。
+		b.echoMu.Lock()
 		if !b.grayOpen && !b.noColor {
 			fmt.Fprint(b.localEcho, ansiGray)
 			b.grayOpen = true
 		}
 		fmt.Fprintf(b.localEcho, "%c", c)
+		b.echoMu.Unlock()
 	}
 	if c == '\r' || c == '\n' {
 		if b.onEnter != nil {
@@ -118,7 +129,15 @@ func (b *BufferedStdin) handleReconnecting(c byte) {
 	}
 }
 
+// closeGrayIfOpen 对外 API，自己管锁；用于不在 echoMu 内调用的场景。
 func (b *BufferedStdin) closeGrayIfOpen() {
+	b.echoMu.Lock()
+	defer b.echoMu.Unlock()
+	b.closeGrayIfOpenLocked()
+}
+
+// closeGrayIfOpenLocked 调用方必须已持有 echoMu。
+func (b *BufferedStdin) closeGrayIfOpenLocked() {
 	if b.grayOpen && b.localEcho != nil && !b.noColor {
 		fmt.Fprint(b.localEcho, ansiReset)
 		b.grayOpen = false
@@ -126,8 +145,14 @@ func (b *BufferedStdin) closeGrayIfOpen() {
 }
 
 // Flush 把 ringBuf 内容按序写 pipeW；reconnect 成功的 onReconnected 回调中调用。
+//
+// 锁顺序：echoMu → ringMu（嵌套）；与 handleReconnecting（串行两锁）/ Run-Connected
+// （仅 echoMu）兼容无死锁。
 func (b *BufferedStdin) Flush() error {
-	b.closeGrayIfOpen()
+	b.echoMu.Lock()
+	defer b.echoMu.Unlock()
+	b.closeGrayIfOpenLocked()
+
 	b.ringMu.Lock()
 	defer b.ringMu.Unlock()
 	if len(b.ringBuf) == 0 {
