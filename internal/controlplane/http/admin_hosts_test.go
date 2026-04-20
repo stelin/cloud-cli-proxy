@@ -17,12 +17,14 @@ import (
 )
 
 type stubHostStore struct {
-	hosts     []repository.HostWithUsername
-	detail    repository.HostDetail
-	host      repository.Host
-	listErr   error
-	detailErr error
-	hostErr   error
+	hosts        []repository.HostWithUsername
+	detail       repository.HostDetail
+	host         repository.Host
+	runningHosts []repository.Host
+	listErr      error
+	detailErr    error
+	hostErr      error
+	runningErr   error
 }
 
 func (s *stubHostStore) ListHostsWithUsername(_ context.Context) ([]repository.HostWithUsername, error) {
@@ -55,6 +57,10 @@ func (s *stubHostStore) DeleteHost(_ context.Context, _ string) error {
 
 func (s *stubHostStore) UpdateHostEntryPassword(_ context.Context, _ string, _ string) error {
 	return nil
+}
+
+func (s *stubHostStore) ListRunningHosts(_ context.Context) ([]repository.Host, error) {
+	return s.runningHosts, s.runningErr
 }
 
 func TestAdminHostsHandler(t *testing.T) {

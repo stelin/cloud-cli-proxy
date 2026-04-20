@@ -31,6 +31,7 @@ type AdminHostStore interface {
 	BindEgressIPToHost(context.Context, string, string) (repository.HostBinding, error)
 	DeleteHost(context.Context, string) error
 	UpdateHostEntryPassword(context.Context, string, string) error
+	ListRunningHosts(ctx context.Context) ([]repository.Host, error)
 }
 
 type AdminHostsHandler struct {
@@ -913,7 +914,8 @@ func (h *AdminHostsHandler) UpdateClaude() nethttp.Handler {
 }
 
 // syncContainerPassword updates the Linux user password inside a running container via docker exec.
-func syncContainerPassword(containerName, user, password string) error {
+// Exposed as a package-level var so unit tests can inject a fake implementation (Phase 29.1).
+var syncContainerPassword = func(containerName, user, password string) error {
 	cmd := exec.CommandContext(context.Background(), "docker", "exec", "-i", containerName,
 		"chpasswd")
 	cmd.Stdin = strings.NewReader(fmt.Sprintf("%s:%s\n", user, password))
