@@ -81,7 +81,7 @@
   - [ ] `.planning/phases/31-cli/plans/01-errcodes-mutagen-embed/PLAN.md` — errcodes 注册表雏形（15 条）+ Mutagen v0.18.1 4 平台 go:embed + 跨平台 case-insensitive Go probe（Wave 1）
   - [ ] `.planning/phases/31-cli/plans/02-mount-three-layer/PLAN.md` — mount.go 拆 4 文件 + `--mount-mode` 状态机 + 安全门 + 50MB 拒绝 + askpass / sshfs 抖动 watcher / last-session.json + `ConnectAndRunClaudeV3` + cobra flag（Wave 2）
   - [ ] `.planning/phases/31-cli/plans/03-oauth-conflicts-integration/PLAN.md` — OAuth 三态检查 + Mutagen conflict 冒泡（--template）+ `cloud-claude sync conflicts` 子命令 + 6 个集成测试 + docker compose fixture（Wave 3）
-- [ ] **Phase 32: SSH 会话可靠性 + tmux 包装 + 多端** — `session.go` tmux 决策、KeepAlive + 退避重连、`--new-session`/`--take-over`、多端 banner、账号级 Mutagen 单例锁 (3/5 plans 完成 + 2 个 gap-closure 待执行)
+- [x] **Phase 32: SSH 会话可靠性 + tmux 包装 + 多端** — `session.go` tmux 决策、KeepAlive + 退避重连、`--new-session`/`--take-over`、多端 banner、账号级 Mutagen 单例锁 (3/5 plans 完成 + 2 个 gap-closure 待执行) (completed 2026-04-20)
   Plans:
   - [x] `.planning/phases/32-ssh-tmux/plans/01-net-resilience/PLAN.md` — KeepAlive 应用层 + TCP 平台特化 + reconnect 退避状态机 + input_buffer 灰色未确认 + 10 条新错误码 + colors/last_session 字段（Wave 1）
   - [x] `.planning/phases/32-ssh-tmux/plans/02-tmux-multiclient/PLAN.md` — session.go tmux 包装 + take-over + 多端 banner + sessions ls/attach 子命令 + ConnectAndRunClaudeV3 路由 + cmd flag 剥离与 KeepAlive 校验（Wave 2）
@@ -120,7 +120,7 @@
 | 29. 受管镜像 v3 + Worker 容器参数 | v3.0 | 6/6 | Complete    | 2026-04-18 |
 | 30. 控制面数据模型 + Entry API | v3.0 | 2/2 | Complete    | 2026-04-18 |
 | 31. CLI 三层文件映射重构 | v3.0 | 3/3 | Complete   | 2026-04-19 |
-| 32. SSH 会话可靠性 + tmux + 多端 | v3.0 | 3/3 | In Progress (待 verify) | — |
+| 32. SSH 会话可靠性 + tmux + 多端 | v3.0 | 0/0 | Complete    | 2026-04-20 |
 | 33. Claude Code 状态持久化 | v3.0 | 0/2 | Pending | — |
 | 34. cloud-claude doctor v3 + 错误码统一 | v3.0 | 0/3 | Pending | — |
 | 35. E2E 稳定化 + 性能验收 | v3.0 | 0/2 | Pending | — |
