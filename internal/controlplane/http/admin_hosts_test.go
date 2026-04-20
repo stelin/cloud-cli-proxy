@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	nethttp "net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -221,5 +223,130 @@ func TestAdminHostsHandler(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func newTestAdminHostsHandler(t *testing.T, store AdminHostStore, events EventRecorder, queue HostActionQueuer) *AdminHostsHandler {
+	t.Helper()
+	return NewAdminHostsHandler(slog.New(slog.NewTextHandler(io.Discard, nil)), store, queue, events)
+}
+
+func TestResyncPasswords_NoRunningHosts(t *testing.T) {
+	store := &stubHostStore{runningHosts: nil}
+	events := &stubEventRecorder{}
+	h := newTestAdminHostsHandler(t, store, events, &stubQueuer{})
+
+	req := httptest.NewRequest("POST", "/v1/admin/hosts/resync-passwords", nil)
+	rec := httptest.NewRecorder()
+	h.ResyncPasswords().ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if v, _ := body["total"].(float64); v != 0 {
+		t.Errorf("total=%v, want 0", v)
+	}
+	if v, _ := body["succeeded"].(float64); v != 0 {
+		t.Errorf("succeeded=%v, want 0", v)
+	}
+	if v, _ := body["failed"].(float64); v != 0 {
+		t.Errorf("failed=%v, want 0", v)
+	}
+	if v, _ := body["skipped_empty_password"].(float64); v != 0 {
+		t.Errorf("skipped_empty_password=%v, want 0", v)
+	}
+}
+
+func TestResyncPasswords_SkipsEmptyEntryPassword(t *testing.T) {
+	orig := syncContainerPassword
+	called := 0
+	syncContainerPassword = func(containerName, user, password string) error {
+		called++
+		return nil
+	}
+	t.Cleanup(func() { syncContainerPassword = orig })
+
+	store := &stubHostStore{runningHosts: []repository.Host{{ID: "h-empty", EntryPassword: ""}}}
+	events := &stubEventRecorder{}
+	h := newTestAdminHostsHandler(t, store, events, &stubQueuer{})
+
+	req := httptest.NewRequest("POST", "/v1/admin/hosts/resync-passwords", nil)
+	rec := httptest.NewRecorder()
+	h.ResyncPasswords().ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if called != 0 {
+		t.Errorf("syncContainerPassword must NOT be called for empty EntryPassword; called=%d", called)
+	}
+	if !events.hasType("runtime.entry_password_missing") {
+		t.Error("expected runtime.entry_password_missing event")
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if v, _ := body["skipped_empty_password"].(float64); v != 1 {
+		t.Errorf("skipped_empty_password=%v, want 1", v)
+	}
+}
+
+func TestResyncPasswords_Success_RecordsEventsAndCallsSyncContainerPassword(t *testing.T) {
+	orig := syncContainerPassword
+	var gotPassword, gotUser, gotContainer string
+	syncContainerPassword = func(containerName, user, password string) error {
+		gotContainer = containerName
+		gotUser = user
+		gotPassword = password
+		return nil
+	}
+	t.Cleanup(func() { syncContainerPassword = orig })
+
+	const samplePassword = "PLACEHOLDER-8C"
+	store := &stubHostStore{runningHosts: []repository.Host{{ID: "h-ok", EntryPassword: samplePassword}}}
+	events := &stubEventRecorder{}
+	h := newTestAdminHostsHandler(t, store, events, &stubQueuer{})
+
+	req := httptest.NewRequest("POST", "/v1/admin/hosts/resync-passwords", nil)
+	rec := httptest.NewRecorder()
+	h.ResyncPasswords().ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if gotContainer != "cloudproxy-h-ok" {
+		t.Errorf("container=%q, want cloudproxy-h-ok", gotContainer)
+	}
+	if gotUser != "workspace" {
+		t.Errorf("user=%q, want workspace", gotUser)
+	}
+	if gotPassword != samplePassword {
+		t.Errorf("password argument not forwarded correctly: got=%q", gotPassword)
+	}
+	if !events.hasType("runtime.entry_password_resynced") {
+		t.Error("expected runtime.entry_password_resynced event")
+	}
+	if !events.hasType("admin.hosts.password_resync_triggered") {
+		t.Error("expected admin.hosts.password_resync_triggered event")
+	}
+	if strings.Contains(rec.Body.String(), samplePassword) {
+		t.Error("response body must not contain the entry_password sample")
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if v, _ := body["succeeded"].(float64); v != 1 {
+		t.Errorf("succeeded=%v, want 1", v)
+	}
+	if v, _ := body["total"].(float64); v != 1 {
+		t.Errorf("total=%v, want 1", v)
 	}
 }

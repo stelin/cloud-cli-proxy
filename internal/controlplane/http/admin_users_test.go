@@ -78,11 +78,22 @@ func (s *stubUserStore) UpdateUserExpiry(_ context.Context, _ string, _ *time.Ti
 
 type stubEventRecorder struct {
 	called bool
+	events []repository.RecordEventParams
 }
 
-func (s *stubEventRecorder) RecordEvent(_ context.Context, _ repository.RecordEventParams) (repository.Event, error) {
+func (s *stubEventRecorder) RecordEvent(_ context.Context, p repository.RecordEventParams) (repository.Event, error) {
 	s.called = true
+	s.events = append(s.events, p)
 	return repository.Event{}, nil
+}
+
+func (s *stubEventRecorder) hasType(t string) bool {
+	for _, ev := range s.events {
+		if ev.Type == t {
+			return true
+		}
+	}
+	return false
 }
 
 var testJWTSecret = []byte("test-jwt-secret-for-admin-api")
