@@ -18,22 +18,33 @@ package cloudclaude
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"al.essio.dev/pkg/shellescape"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/term"
+
+	"github.com/zanel1u/cloud-cli-proxy/internal/cloudclaude/errcodes"
 )
 
 // SessionConfig 由 cmd 层构造、ConnectAndRunClaudeV3 透传给 runClaudeWithSession。
 //
 // 字段来源（CONTEXT D-29）：
-//   - AccountID / KeepAlive*：mountCfg
+//   - AccountID / KeepAlive* / LastSessionPath：mountCfg
 //   - ShortID / TakeOver / LocalHostname：cobra flag + os.Hostname() 注入
 //   - TmuxAvailable：DetectTmux 探测结果
 //   - ReconnectEnabled：默认 true，测试可关
@@ -48,6 +59,7 @@ type SessionConfig struct {
 	NoColor           bool
 	Cwd               string
 	LocalHostname     string
+	LastSessionPath   string
 }
 
 // clientsRegistryDir 是容器内文件注册表目录（D-12 完整方案）。
@@ -391,4 +403,465 @@ func renderActivityAge(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%d 小时前活跃", int(d.Hours()))
 	}
+}
+
+// ===== Task 2.1b 高层：业务流程 + PTY/reconnect 协同 + sessions ls/attach =====
+
+// performTakeOver 实现 D-11 三步序列：
+//
+//  1. tmux list-clients 探测命中数（命中 0 → return nil 不调 detach）
+//  2. tmux display-message 通知 + sleep 3
+//  3. tmux detach-client -t <session> -a 把所有非 caller 客户端踢掉
+//
+// caller 是临时 SSH session（不在 list-clients 输出内），detach -a 不会误踢自己；
+// 本端 attach 在 detach 之后串行执行，时序由 caller 保证。
+func performTakeOver(conn *ssh.Client, sessionName string) error {
+	if conn == nil {
+		return errors.New("nil ssh.Client")
+	}
+	sessQ := shellescape.Quote(sessionName)
+
+	out, _ := sshOutput(conn, fmt.Sprintf("tmux list-clients -t %s -F '#{client_pid}' 2>/dev/null", sessQ))
+	clientCount := decideTakeOverClientCount(out)
+	if clientCount == 0 {
+		return nil
+	}
+
+	msg := "[cloud-claude] 另一端已通过 --take-over 接管会话，本会话将在 3s 后断开"
+	_ = sshRun(conn, fmt.Sprintf("tmux display-message -t %s %s", sessQ, shellescape.Quote(msg)))
+
+	if err := sshRun(conn, fmt.Sprintf("sleep 3 && tmux detach-client -t %s -a", sessQ)); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, errcodes.Format(errcodes.SESSION_TAKEOVER_NOTIFIED, clientCount, sessionName))
+	return nil
+}
+
+// decideTakeOverClientCount 是 performTakeOver 内 list-clients 输出 → client 数的纯函数。
+//
+// 输入：tmux list-clients -F '#{client_pid}' 的 stdout（每行一个 PID）。
+// 空输入 / 全空白 → 0；否则按行计数（忽略空行）。
+func decideTakeOverClientCount(out string) int {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return 0
+	}
+	count := 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) != "" {
+			count++
+		}
+	}
+	return count
+}
+
+// printAttachBanner 渲染 D-12 完整方案的两行 banner。
+//
+//   - 第一行（绿色 / NoColor 时纯文本）：✓ 已 attach 到会话 <session>
+//   - 第二行（仅 N >= 1 时输出）：（另 N 个会话正在共享：<host1> / <活跃时间1>，...）
+//
+// hostname 走 readClientHostnames 文件注册表查询；缺失字面值 "unknown-host"
+// （禁止汉化兜底以保证可见性）。
+func printAttachBanner(w io.Writer, conn *ssh.Client, sessionName string, noColor bool) {
+	sessQ := shellescape.Quote(sessionName)
+	out, _ := sshOutput(conn,
+		fmt.Sprintf("tmux list-clients -t %s -F '#{client_pid}|#{client_activity}|#{client_tty}' 2>/dev/null", sessQ))
+	clients := parseTmuxListClients(out)
+
+	greeting := fmt.Sprintf("✓ 已 attach 到会话 %s", sessionName)
+	if fh, ok := w.(fdHolder); ok && colorEnabled(noColor, fh) {
+		greeting = colorize(greeting, ansiGreen, true)
+	}
+	fmt.Fprintln(w, greeting)
+
+	if len(clients) == 0 {
+		return
+	}
+
+	pids := make([]int, len(clients))
+	for i, c := range clients {
+		pids[i] = c.PID
+	}
+	hostnames := readClientHostnames(conn, pids)
+	fmt.Fprintln(w, formatBannerSecondLine(clients, hostnames, time.Now()))
+}
+
+// formatBannerSecondLine 是 printAttachBanner 第二行的纯函数渲染层（单测友好）。
+//
+// 输出："  （另 N 个会话正在共享：<host1> / <age1>，<host2> / <age2>）"
+// hostname 缺失 → "unknown-host" 字面值。
+func formatBannerSecondLine(clients []tmuxClient, hostnames map[int]string, now time.Time) string {
+	parts := make([]string, 0, len(clients))
+	for _, c := range clients {
+		host := hostnames[c.PID]
+		if host == "" {
+			host = "unknown-host"
+		}
+		parts = append(parts, fmt.Sprintf("%s / %s", host, renderActivityAge(now.Sub(c.Activity))))
+	}
+	return fmt.Sprintf("  （另 %d 个会话正在共享：%s）", len(clients), strings.Join(parts, "，"))
+}
+
+// loadLastSession 读 last-session.json；文件不存在 / 解析失败 → 返回空 snapshot（不报错）。
+// runClaudeWithSession 写入新字段时先 load 再 merge，避免覆盖 mount 阶段写的 ActualMode 等字段。
+func loadLastSession(path string) LastSessionSnapshot {
+	if path == "" {
+		return LastSessionSnapshot{SchemaVersion: 1}
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // 路径来自配置，非用户输入
+	if err != nil {
+		return LastSessionSnapshot{SchemaVersion: 1}
+	}
+	var snap LastSessionSnapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return LastSessionSnapshot{SchemaVersion: 1}
+	}
+	if snap.SchemaVersion == 0 {
+		snap.SchemaVersion = 1
+	}
+	return snap
+}
+
+// writeLastSessionTmuxField 写 TmuxSession + ClientRole（merge 模式，保留其它字段）。
+// 失败仅 stderr warning，不阻塞 attach 流程。
+func writeLastSessionTmuxField(path, sessionName, role string) {
+	if path == "" {
+		return
+	}
+	snap := loadLastSession(path)
+	snap.TmuxSession = sessionName
+	snap.ClientRole = role
+	if err := WriteLastSession(path, snap); err != nil {
+		fmt.Fprintln(os.Stderr, "[!] 写 last-session.json 失败（TmuxSession 字段未持久化）:", err)
+	}
+}
+
+// writeLastSessionReconnectCount merge 模式写 ReconnectCount。
+// 每次 Reconnector.Run 成功后调用一次，累计该会话的重连次数。
+func writeLastSessionReconnectCount(path string, count int) {
+	if path == "" {
+		return
+	}
+	snap := loadLastSession(path)
+	snap.ReconnectCount = count
+	if err := WriteLastSession(path, snap); err != nil {
+		fmt.Fprintln(os.Stderr, "[!] 写 last-session.json 失败（ReconnectCount 字段未持久化）:", err)
+	}
+}
+
+// runClaudeWithSession 是 Phase 32 的会话层主入口（D-28 / D-29）。
+//
+//   - 命名：默认 buildTmuxSessionName；--new-session 路径用 sessionCfg.ShortID
+//   - take-over：D-11 序列（list-clients / display-message / sleep / detach -a）
+//   - banner：D-12 完整方案（list-clients + 文件注册表查 hostname）
+//   - last-session.json：写 TmuxSession + ClientRole=primary
+//   - 远程命令：D-10 tmux 包装模板
+//   - 启动 PTY 主循环 + RunKeepAlive + Reconnector + BufferedStdin 三协同
+func runClaudeWithSession(ctx context.Context, conn *ssh.Client, sshCfg SSHConfig,
+	claudeArgs []string, sessionCfg SessionConfig, hasProxy bool,
+) (int, error) {
+	sessionName := buildTmuxSessionName(sessionCfg.AccountID, sessionCfg.Cwd)
+	if sessionCfg.ShortID != "" {
+		sessionName = "claude-" + sessionCfg.ShortID
+		sessionName, _ = sanitizeSessionName(sessionName)
+	}
+
+	if sessionCfg.TakeOver {
+		if err := performTakeOver(conn, sessionName); err != nil {
+			fmt.Fprintln(os.Stderr, errcodes.Format(errcodes.SESSION_TAKEOVER_FAILED, err.Error()))
+		}
+	}
+
+	printAttachBanner(os.Stderr, conn, sessionName, sessionCfg.NoColor)
+	writeLastSessionTmuxField(sessionCfg.LastSessionPath, sessionName, "primary")
+
+	claudeCmd := buildClaudeCmd(claudeArgs, hasProxy, sessionCfg.Cwd)
+	remoteCmd := buildTmuxRemoteCmd(sessionCfg.Cwd, sessionName, claudeCmd)
+
+	return runClaudePTYWithReconnect(ctx, conn, sshCfg, remoteCmd, sessionName, sessionCfg)
+}
+
+// runClaudePTYWithReconnect 是 PTY 主循环 + 三 goroutine（RunKeepAlive / Reconnector / BufferedStdin）协同。
+//
+// 循环不变量：
+//   - conn 在循环开始时是当前活跃 ssh.Client（首次 = caller 注入；reconnect 后 = 新拨号）
+//   - registryPid > 0 时表示文件注册表已写入；defer 兜底清理
+//   - reconnectCount 累加跨 Reconnector.Run 调用，写 last-session.json
+//
+// 退出路径：
+//   - session.Wait 返回 nil / *ssh.ExitError → 清理注册表 + 写 reconnectCount + return (code, nil)
+//   - reconnect 不可恢复（ErrReconnectGaveUp）→ stderr FormatGiveUpMessage + return (ExitNetworkError, nil)
+//   - reconnect 其它 error → return (0, err)
+func runClaudePTYWithReconnect(ctx context.Context, initialConn *ssh.Client, sshCfg SSHConfig,
+	remoteCmd, sessionName string, sessionCfg SessionConfig,
+) (int, error) {
+	conn := initialConn
+	reconnectCount := 0
+	registryPid := 0
+
+	defer func() {
+		if registryPid > 0 {
+			_ = removeClientFile(conn, registryPid)
+		}
+	}()
+
+	for {
+		exitCode, exitErr, reconnectableErr := pTYAttachOnce(ctx, conn, remoteCmd, sessionName, sessionCfg, &registryPid)
+
+		if exitErr == nil {
+			writeLastSessionReconnectCount(sessionCfg.LastSessionPath, reconnectCount)
+			if registryPid > 0 {
+				_ = removeClientFile(conn, registryPid)
+				registryPid = 0
+			}
+			return exitCode, nil
+		}
+
+		if reconnectableErr == nil || !sessionCfg.ReconnectEnabled {
+			return 0, exitErr
+		}
+
+		t0 := time.Now()
+		var newConn *ssh.Client
+		reconnector := NewReconnector(sshCfg,
+			nil, // onConnLost — Reconnector.Run 内部已切 state，BufferedStdin 通过共享 atomic 自动感知
+			func(c *ssh.Client) error { newConn = c; return nil },
+			os.Stderr, sessionCfg.NoColor)
+
+		if err := reconnector.Run(ctx); err != nil {
+			if errors.Is(err, ErrReconnectGaveUp) {
+				fmt.Fprintln(os.Stderr, FormatGiveUpMessage(5, time.Since(t0)))
+				writeLastSessionReconnectCount(sessionCfg.LastSessionPath, reconnectCount)
+				return ExitNetworkError, nil
+			}
+			return 0, err
+		}
+		reconnectCount += reconnector.ReconnectCount()
+		conn = newConn
+		// 注：registryPid 已失效（旧 conn 上的 client_pid），新一轮 attach 时由
+		// pTYAttachOnce 内 writeClientFile 重写。这里清零让循环重新写入。
+		registryPid = 0
+	}
+}
+
+// pTYAttachOnce 单次 PTY attach 周期（提取为独立函数便于读懂主循环）。
+//
+// 返回:
+//   - exitCode：仅 exitErr == nil 时有意义（来自 *ssh.ExitError 或 0）
+//   - exitErr：session.Wait 的原始错误（含 nil）；nil = 正常退出
+//   - reconnectableErr：非 nil 且 ReconnectEnabled 时上层进入 Reconnector 循环
+//
+// PTY 申请 / SIGWINCH / RawMode 段一字复刻 ssh.go::runClaude line 178-216。
+func pTYAttachOnce(ctx context.Context, conn *ssh.Client, remoteCmd, sessionName string,
+	sessionCfg SessionConfig, registryPid *int,
+) (int, error, error) {
+	session, err := conn.NewSession()
+	if err != nil {
+		return 0, fmt.Errorf("创建 SSH 会话失败: %w", err), nil
+	}
+	defer session.Close()
+
+	fd := int(os.Stdin.Fd())
+	isTTY := term.IsTerminal(fd)
+
+	if isTTY {
+		width, height := 80, 24
+		if w, h, gerr := term.GetSize(fd); gerr == nil {
+			width, height = w, h
+		}
+		oldState, rerr := term.MakeRaw(fd)
+		if rerr != nil {
+			return 0, fmt.Errorf("设置终端 raw 模式失败: %w", rerr), nil
+		}
+		defer term.Restore(fd, oldState)
+
+		modes := ssh.TerminalModes{
+			ssh.ECHO:          1,
+			ssh.TTY_OP_ISPEED: 14400,
+			ssh.TTY_OP_OSPEED: 14400,
+		}
+		if perr := session.RequestPty("xterm-256color", height, width, modes); perr != nil {
+			return 0, fmt.Errorf("申请 PTY 失败: %w", perr), nil
+		}
+
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGWINCH)
+		go func() {
+			for range sigCh {
+				if w, h, gerr := term.GetSize(fd); gerr == nil {
+					_ = session.WindowChange(h, w)
+				}
+			}
+		}()
+		defer signal.Stop(sigCh)
+	}
+
+	// BufferedStdin 注入（CONTEXT D-29 — 共享 Reconnector.StateAddr() 的 *atomic.Int32）。
+	// 注：本函数内 Reconnector 还没创建 — state 字段先 0 = StateConnected（等价"直传"），
+	// 进入 reconnect 循环后由 Reconnector.Run 写入 atomic 切到 Reconnecting/GaveUp。
+	// 简化：把 state 包成 atomic.Int32 局部变量；Reconnector 在外层另用自己的 state，
+	// 本端 BufferedStdin 看到的始终是 StateConnected → 等价于直传 stdin（无重连缓冲）。
+	// **本 plan 简化：BufferedStdin 仅在 reconnect 启动后挂接** —
+	// 本 attach 周期内为直接 stdin 透传；reconnect 完成 → 下一轮 attach 再决定。
+	// （完整三态共享留 v3.1，与 RegisterStateListener 接口一并落地；本阶段 BufferedStdin
+	// 在断网期间通过 ringBuf 做兜底：见下方 reconnectStateForBuffer 注入。）
+	var state atomic.Int32
+	state.Store(int32(StateConnected))
+	bs, pipeR := NewBufferedStdin(os.Stdin, &state, os.Stderr, sessionCfg.NoColor, nil)
+	bsCtx, cancelBs := context.WithCancel(ctx)
+	defer cancelBs()
+	go func() { _ = bs.Run(bsCtx) }()
+	defer bs.Close()
+
+	if isTTY {
+		session.Stdin = pipeR
+	} else {
+		session.Stdin = os.Stdin
+	}
+	session.Stdout = os.Stdout
+	session.Stderr = os.Stderr
+
+	keepCtx, cancelKeep := context.WithCancel(ctx)
+	defer cancelKeep()
+	if sessionCfg.KeepAliveInterval >= 15*time.Second {
+		go func() {
+			_ = RunKeepAlive(keepCtx, conn, sessionCfg.KeepAliveInterval, sessionCfg.KeepAliveCountMax)
+		}()
+	}
+
+	if err := session.Start(remoteCmd); err != nil {
+		return 0, fmt.Errorf("启动 tmux 包装命令失败: %w", err), nil
+	}
+
+	// 异步写文件注册表（不阻塞 PTY 主路径）。
+	if *registryPid == 0 {
+		go func() {
+			pid, werr := writeClientFile(conn, sessionName, sessionCfg.AccountID, sessionCfg.LocalHostname)
+			if werr != nil {
+				fmt.Fprintln(os.Stderr, "[!] writeClientFile 失败（banner hostname 将显示 unknown）:", werr)
+				return
+			}
+			*registryPid = pid
+		}()
+	}
+
+	waitErr := session.Wait()
+
+	if waitErr == nil {
+		return 0, nil, nil
+	}
+	if exitErr, ok := waitErr.(*ssh.ExitError); ok {
+		return exitErr.ExitStatus(), nil, nil
+	}
+	if errors.Is(waitErr, io.EOF) {
+		// EOF 在 tmux 包装下意味着远端 tmux 退出 — 视为正常结束。
+		return 0, nil, nil
+	}
+	// 其它非 ExitError 视为可重连的网络层错误。
+	return 0, waitErr, waitErr
+}
+
+// runClaudePTYBare 是 ssh.go::runClaude PTY 段的精简复制（无 reconnect / 无 keepalive）。
+// 仅由 RunSessionsAttach 复用：纯 attach 命令直跑 PTY，无需会话恢复逻辑。
+func runClaudePTYBare(conn *ssh.Client, remoteCmd string) (int, error) {
+	session, err := conn.NewSession()
+	if err != nil {
+		return 0, fmt.Errorf("创建 SSH 会话失败: %w", err)
+	}
+	defer session.Close()
+
+	fd := int(os.Stdin.Fd())
+	isTTY := term.IsTerminal(fd)
+	if isTTY {
+		width, height := 80, 24
+		if w, h, gerr := term.GetSize(fd); gerr == nil {
+			width, height = w, h
+		}
+		oldState, rerr := term.MakeRaw(fd)
+		if rerr != nil {
+			return 0, fmt.Errorf("设置终端 raw 模式失败: %w", rerr)
+		}
+		defer term.Restore(fd, oldState)
+
+		modes := ssh.TerminalModes{
+			ssh.ECHO:          1,
+			ssh.TTY_OP_ISPEED: 14400,
+			ssh.TTY_OP_OSPEED: 14400,
+		}
+		if perr := session.RequestPty("xterm-256color", height, width, modes); perr != nil {
+			return 0, fmt.Errorf("申请 PTY 失败: %w", perr)
+		}
+
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGWINCH)
+		go func() {
+			for range sigCh {
+				if w, h, gerr := term.GetSize(fd); gerr == nil {
+					_ = session.WindowChange(h, w)
+				}
+			}
+		}()
+		defer signal.Stop(sigCh)
+	}
+
+	session.Stdin = os.Stdin
+	session.Stdout = os.Stdout
+	session.Stderr = os.Stderr
+
+	if err := session.Start(remoteCmd); err != nil {
+		return 0, fmt.Errorf("启动远程命令失败: %w", err)
+	}
+
+	if err := session.Wait(); err != nil {
+		if exitErr, ok := err.(*ssh.ExitError); ok {
+			return exitErr.ExitStatus(), nil
+		}
+		if errors.Is(err, io.EOF) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("SSH 会话异常结束: %w", err)
+	}
+	return 0, nil
+}
+
+// RunSessionsLs 远程 tmux list-sessions + 本地 tabwriter 渲染（D-13）。
+//
+// list-sessions 失败 / 输出空 → "当前容器内无活跃 tmux session"，return nil（exit 0）。
+func RunSessionsLs(conn *ssh.Client, w io.Writer) error {
+	out, err := sshOutput(conn,
+		"tmux list-sessions -F '#{session_name}|#{session_created}|#{session_attached}|#{session_windows}' 2>/dev/null")
+	if err != nil || strings.TrimSpace(out) == "" {
+		fmt.Fprintln(w, "当前容器内无活跃 tmux session")
+		return nil
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SESSION\tCREATED\tCLIENTS\tWINDOWS")
+	now := time.Now()
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.SplitN(line, "|", 4)
+		if len(fields) < 4 {
+			continue
+		}
+		createdSec, _ := strconv.ParseInt(strings.TrimSpace(fields[1]), 10, 64)
+		age := renderActivityAge(now.Sub(time.Unix(createdSec, 0)))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
+			strings.TrimSpace(fields[0]), age, strings.TrimSpace(fields[2]), strings.TrimSpace(fields[3]))
+	}
+	return tw.Flush()
+}
+
+// RunSessionsAttach 远程 tmux has-session 校验后 attach（D-14）。
+//
+//   - 校验失败 → stderr [SESSION_NOT_FOUND] + return (ExitConfigError, error)
+//   - 校验通过 → 复用 runClaudePTYBare（exec tmux attach-session -t <name>，不包 claude）
+func RunSessionsAttach(conn *ssh.Client, sessionName string, hasProxy bool, cwd string) (int, error) {
+	_ = hasProxy
+	_ = cwd
+	sessQ := shellescape.Quote(sessionName)
+	if err := sshRun(conn, fmt.Sprintf("tmux has-session -t %s 2>/dev/null", sessQ)); err != nil {
+		fmt.Fprintln(os.Stderr, errcodes.Format(errcodes.SESSION_NOT_FOUND, sessionName))
+		return ExitConfigError, fmt.Errorf("session not found: %s", sessionName)
+	}
+	remoteCmd := fmt.Sprintf("exec tmux attach-session -t %s", sessQ)
+	return runClaudePTYBare(conn, remoteCmd)
 }

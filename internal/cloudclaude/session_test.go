@@ -203,3 +203,127 @@ func TestParseClientRegistryDump_MissingFile(t *testing.T) {
 		t.Errorf("pid 4444 应正确解析；got %+v", got)
 	}
 }
+
+// ===== Task 2.1b 集成边界单测（纯函数提取，无网络依赖）=====
+
+// --- decideTakeOverClientCount ---
+
+func TestDecideTakeOverClientCount_Zero(t *testing.T) {
+	cases := []string{"", "   ", "\n\n", "  \n  \n"}
+	for _, in := range cases {
+		if got := decideTakeOverClientCount(in); got != 0 {
+			t.Errorf("decideTakeOverClientCount(%q) = %d, want 0", in, got)
+		}
+	}
+}
+
+func TestDecideTakeOverClientCount_NonZero(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+	}{
+		{"1234\n", 1},
+		{"1234\n5678\n", 2},
+		{"1\n2\n3\n4\n", 4},
+		{"100\n\n200\n", 2}, // 空行被忽略
+	}
+	for _, tc := range cases {
+		if got := decideTakeOverClientCount(tc.in); got != tc.want {
+			t.Errorf("decideTakeOverClientCount(%q) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
+
+// --- formatBannerSecondLine ---
+
+func TestFormatBannerSecondLine_NoOtherClients(t *testing.T) {
+	got := formatBannerSecondLine(nil, nil, time.Now())
+	if !strings.Contains(got, "另 0 个会话") {
+		t.Errorf("空 clients 应输出 '另 0 个'；得 %q", got)
+	}
+}
+
+func TestFormatBannerSecondLine_WithRegistry(t *testing.T) {
+	now := time.Now()
+	clients := []tmuxClient{
+		{PID: 1111, Activity: now.Add(-10 * time.Second), TTY: "/dev/pts/0"},
+		{PID: 2222, Activity: now.Add(-5 * time.Minute), TTY: "/dev/pts/1"},
+	}
+	hostnames := map[int]string{1111: "alice-mbp", 2222: "bob-laptop"}
+	got := formatBannerSecondLine(clients, hostnames, now)
+	mustContain := []string{
+		"另 2 个会话正在共享",
+		"alice-mbp / 刚刚活跃",
+		"bob-laptop / 5 分钟前活跃",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(got, s) {
+			t.Errorf("formatBannerSecondLine 缺少片段 %q\nfull: %s", s, got)
+		}
+	}
+}
+
+func TestFormatBannerSecondLine_MissingHostnameUnknown(t *testing.T) {
+	now := time.Now()
+	clients := []tmuxClient{{PID: 9999, Activity: now, TTY: "/dev/pts/3"}}
+	hostnames := map[int]string{} // 空 map → 兜底 unknown-host
+	got := formatBannerSecondLine(clients, hostnames, now)
+	if !strings.Contains(got, "unknown-host / 刚刚活跃") {
+		t.Errorf("缺失 hostname 应字面值 unknown-host；得 %q", got)
+	}
+}
+
+// --- loadLastSession + writeLastSessionTmuxField ---
+
+func TestLoadLastSession_MissingFileReturnsEmpty(t *testing.T) {
+	tmp := t.TempDir() + "/no-such-file.json"
+	snap := loadLastSession(tmp)
+	if snap.SchemaVersion != 1 {
+		t.Errorf("缺失文件应返回 SchemaVersion=1（防御写回时被强制设 0）；得 %d", snap.SchemaVersion)
+	}
+	if snap.TmuxSession != "" {
+		t.Errorf("缺失文件不应返回任何 TmuxSession；得 %q", snap.TmuxSession)
+	}
+}
+
+func TestWriteLastSessionTmuxField_PreservesExistingFields(t *testing.T) {
+	tmp := t.TempDir() + "/last.json"
+	// 先写一个 mount 阶段产物（含 ActualMode + ConflictCount）
+	prev := LastSessionSnapshot{
+		SchemaVersion:   1,
+		IntendedMode:    "auto",
+		ActualMode:      "full",
+		ConflictCount:   3,
+		ClaudeAccountID: "uuid-x",
+	}
+	if err := WriteLastSession(tmp, prev); err != nil {
+		t.Fatalf("准备失败: %v", err)
+	}
+
+	// session 层覆盖 TmuxSession + ClientRole
+	writeLastSessionTmuxField(tmp, "claude-abcdef12", "primary")
+
+	// 读回应保留 mount 阶段字段
+	got := loadLastSession(tmp)
+	if got.ActualMode != "full" || got.ConflictCount != 3 || got.ClaudeAccountID != "uuid-x" {
+		t.Errorf("merge 写入应保留 mount 字段；got %+v", got)
+	}
+	if got.TmuxSession != "claude-abcdef12" || got.ClientRole != "primary" {
+		t.Errorf("session 字段未正确写入；got TmuxSession=%q ClientRole=%q",
+			got.TmuxSession, got.ClientRole)
+	}
+}
+
+func TestWriteLastSessionReconnectCount_MergeMode(t *testing.T) {
+	tmp := t.TempDir() + "/last.json"
+	writeLastSessionTmuxField(tmp, "claude-x", "primary")
+	writeLastSessionReconnectCount(tmp, 5)
+
+	got := loadLastSession(tmp)
+	if got.TmuxSession != "claude-x" {
+		t.Errorf("ReconnectCount 写入应保留 TmuxSession；got %q", got.TmuxSession)
+	}
+	if got.ReconnectCount != 5 {
+		t.Errorf("ReconnectCount = %d, want 5", got.ReconnectCount)
+	}
+}
