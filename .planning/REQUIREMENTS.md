@@ -44,7 +44,7 @@
 - [ ] **REQ-F5-A**：默认行为为多端共享 attach 同一 session，不踢人不报错
 - [ ] **REQ-F5-B**：第二端 attach 成功后必须在 banner 显示其它 client 的来源与活跃时间（中文），例：`✓ 已 attach 到会话 claude-proj（另 1 个会话正在共享：mac-home / 5 分钟前活跃）`
 - [ ] **REQ-F5-C**：CLI 提供 `--new-session` 创建独立 session（命名 `claude-<short_id>`）；提供 `--take-over` 强制独占并通知其它端；冲突时返回明确中文提示
-- [ ] **REQ-F5-D**：同一 claude_account 在任意时刻最多只允许 1 个活跃 Mutagen sync session；后连端只 attach tmux 与观察文件，不参与文件同步
+- [x] **REQ-F5-D**：同一 claude_account 在任意时刻最多只允许 1 个活跃 Mutagen sync session；后连端只 attach tmux 与观察文件，不参与文件同步
 
 ### C1 · `cloud-claude doctor` 全面升级（F6）
 
@@ -185,7 +185,7 @@
 | REQ-F5-A | Phase 32 | Pending | 多端默认共享 attach |
 | REQ-F5-B | Phase 32 | Pending | 第二端 banner 中文显示来源 + 活跃时间 |
 | REQ-F5-C | Phase 32 | Pending | `--new-session` / `--take-over` |
-| REQ-F5-D | Phase 32 | Pending | 账号级 Mutagen 单例锁 |
+| REQ-F5-D | Phase 32 | Complete | 账号级 Mutagen 单例锁 |
 | REQ-F6-A | Phase 34 | Pending | doctor 5 维度覆盖 |
 | REQ-F6-B | Phase 34 | Pending | doctor 输出四要素 |
 | REQ-F6-C | Phase 34 | Pending | doctor `--fix` 至少 5 类 |
