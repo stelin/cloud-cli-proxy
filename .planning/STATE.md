@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: 远端开发体验升级
 status: executing
-stopped_at: Phase 32 context gathered
-last_updated: "2026-04-20T08:16:37.068Z"
-last_activity: 2026-04-20 -- Phase 32 planning complete
+stopped_at: "Completed 32-01-net-resilience PLAN.md"
+last_updated: "2026-04-20T09:00:00.000Z"
+last_activity: 2026-04-20 -- Phase 32 Plan 01 (net-resilience) completed
 progress:
   total_phases: 8
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 1
+  completed_plans: 1
   percent: 0
 ---
 
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-17)
 
 **Core value:** 给每个用户提供一台开箱即用的 SSH 云主机，并且严格保证其所有出网流量都走受控的指定出口 IP
-**Current focus:** Phase 31 — cli
+**Current focus:** Phase 32 — ssh-tmux
 
 ## Current Position
 
 Milestone: v3.0 远端开发体验升级
-Phase: 31 (cli) — EXECUTING
-Plan: 3 of 3
-Status: Ready to execute
-Last activity: 2026-04-20 -- Phase 32 planning complete
+Phase: 32 (ssh-tmux) — EXECUTING
+Plan: 2 of 3（Plan 01 net-resilience 已完成 ✓）
+Status: Executing Phase 32 — Plan 01 ✓ / Plan 02 / Plan 03 待执行
+Last activity: 2026-04-20 -- Phase 32 Plan 01 (net-resilience) 完成；3 个 atomic commits + SUMMARY.md
 
 Progress: [░░░░░░░░░░░░░░░░░░░░] 0%（v3.0；Phase 29 待执行）
 
@@ -56,6 +56,7 @@ v3.0 关键方向已定：
 - [Phase 31-cli]: Plan 03：OAuth 三态检查接入 ConnectAndRunClaudeV3 (mount ready 后、claude 前)，Expired→ExitOAuthExpired(7) / NotFound→ExitOAuthNotFound(6)，ExpiringSoon 仅警告
 - [Phase 31-cli]: Plan 03：MutagenSyncStatus{SessionName,ConflictCount,LastError} 引入，mountMutagen 第二返回值 int→struct，sync list --template 解析 conflict count（v0.18.1 不支持 --json）
 - [Phase 31-cli]: Plan 03：6 个 TestIntegration_* + docker compose fixture 脚本就位，未引入 testcontainers-go；C3 netem 场景 t.Skip 留 Phase 35 真机
+- [Phase 32-ssh-tmux]: Plan 01 net-resilience：keepalive (RunKeepAlive + ConfigureTCPKeepAlive 跨 linux/darwin/other build tag) + reconnect (Reconnector 退避 1/2/4/8/30s + Trigger drop + fastRetry 60s 5 次封顶 + 三态 UX) + input_buffer (BufferedStdin 4KB ringBuf + 灰色 echo + Flush) + 10 条 SESSION_*/NET_* 错误码 + last_session 三新字段 (TmuxSession/ClientRole/ReconnectCount, omitempty schema_version 仍 1) + colors.ansiGray 全部就位；ssh.go::sshConnect 仅 4 行 best-effort TCP keepalive 接入（未碰 ConnectAndRunClaudeV3 / runClaude，留 Plan 02）；windows build 因既有 syscall.SIGWINCH 失败为 out-of-scope 入 deferred
 
 ### Pending Todos
 
@@ -83,6 +84,6 @@ None — 等待 REQUIREMENTS.md 与 ROADMAP.md 产出后进入 phase 执行。
 
 ## Session Continuity
 
-Last session: 2026-04-20T07:12:43.181Z
-Stopped at: Phase 32 context gathered
-Resume file: .planning/phases/32-ssh-tmux/32-CONTEXT.md
+Last session: 2026-04-20T09:00:00.000Z
+Stopped at: Completed 32-01-net-resilience PLAN.md
+Resume file: .planning/phases/32-ssh-tmux/plans/02-tmux-multiclient/PLAN.md

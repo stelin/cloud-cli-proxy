@@ -81,7 +81,11 @@
   - [ ] `.planning/phases/31-cli/plans/01-errcodes-mutagen-embed/PLAN.md` — errcodes 注册表雏形（15 条）+ Mutagen v0.18.1 4 平台 go:embed + 跨平台 case-insensitive Go probe（Wave 1）
   - [ ] `.planning/phases/31-cli/plans/02-mount-three-layer/PLAN.md` — mount.go 拆 4 文件 + `--mount-mode` 状态机 + 安全门 + 50MB 拒绝 + askpass / sshfs 抖动 watcher / last-session.json + `ConnectAndRunClaudeV3` + cobra flag（Wave 2）
   - [ ] `.planning/phases/31-cli/plans/03-oauth-conflicts-integration/PLAN.md` — OAuth 三态检查 + Mutagen conflict 冒泡（--template）+ `cloud-claude sync conflicts` 子命令 + 6 个集成测试 + docker compose fixture（Wave 3）
-- [ ] **Phase 32: SSH 会话可靠性 + tmux 包装 + 多端** — `session.go` tmux 决策、KeepAlive + 退避重连、`--new-session`/`--take-over`、多端 banner、账号级 Mutagen 单例锁 (0/3 plans)
+- [ ] **Phase 32: SSH 会话可靠性 + tmux 包装 + 多端** — `session.go` tmux 决策、KeepAlive + 退避重连、`--new-session`/`--take-over`、多端 banner、账号级 Mutagen 单例锁 (0/3 plans，已规划见下)
+  Plans:
+  - [x] `.planning/phases/32-ssh-tmux/plans/01-net-resilience/PLAN.md` — KeepAlive 应用层 + TCP 平台特化 + reconnect 退避状态机 + input_buffer 灰色未确认 + 10 条新错误码 + colors/last_session 字段（Wave 1）
+  - [ ] `.planning/phases/32-ssh-tmux/plans/02-tmux-multiclient/PLAN.md` — session.go tmux 包装 + take-over + 多端 banner + sessions ls/attach 子命令 + ConnectAndRunClaudeV3 路由 + cmd flag 剥离与 KeepAlive 校验（Wave 2）
+  - [ ] `.planning/phases/32-ssh-tmux/plans/03-sync-lock-integration/PLAN.md` — 账号级 flock 单例锁 + ssh.go 注入 + secondary 标志 + 6 个 TestIntegration_Phase32_* + C3/C7 回归（Wave 3）
 - [ ] **Phase 33: Claude Code 状态持久化（CLI + 镜像 + admin GC）** — entrypoint symlink `/var/lib/claude-persist`、Worker `docker volume create` 幂等、admin DELETE 事务联动 `volume rm` (0/2 plans)
 - [ ] **Phase 34: cloud-claude doctor v3 + 错误码统一** — `doctor` 5 维度子命令 + `--fix`/`--json`、统一错误码 `<DOMAIN>_<KIND>_<NUM>`、`cloud-claude explain` (0/3 plans)
 - [ ] **Phase 35: E2E 稳定化 + 性能验收** — `rg`/`ls -R` 10k 文件基准、拔网 10s/30s/2min UAT、首连 ≤ 8s 验收、APFS + Ubuntu 25.04 真机、image ≤ 700MB CI gate、运维手册更新 (0/2 plans)
@@ -148,6 +152,16 @@
   6. CI 镜像构建产物 `docker image inspect --format='{{.Size}}'` < 700×1024×1024（BASE-04）
   7. `host-preflight.sh` 在 Ubuntu 25.04 检测到缺失 AppArmor override 时退出码 = 1 并输出修复命令（C6）
 **Open questions to resolve**: Q10（mergerfs branch 是 2 路还是 3 路 — 本阶段先实现 2 路，但 entrypoint 编排需为 3 路保留扩展点）
+
+### Phase 29.1: 修复 GetHost 缺失 entry_password 字段导致容器密码退化为 workspace (INSERTED)
+
+**Goal:** [Urgent work - to be planned]
+**Requirements**: TBD
+**Depends on:** Phase 29
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 29.1 to break down)
 
 ### Phase 30: 控制面数据模型 + Entry API 扩展
 **Goal**: 为 v3.0 体验所需的"客户端动态能力探测"打开控制面通道——`claude_accounts.persistent_volume_name` 字段就绪、`HostActionRequest` 在 API 契约层接收 `ClaudeAccountID + Volumes`、`Entry API` 在现有 `/v1/entry/{id}/auth` 响应里追加 `image_version` / `supports_mutagen` / `supports_mergerfs` / `claude_account_id` 字段（向后兼容，旧 client 不破）。本阶段不交付任何 user-facing REQ-F*，但 Phase 31/33 全部依赖它。
