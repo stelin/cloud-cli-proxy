@@ -19,7 +19,8 @@ v2.0 交付了 `cloud-claude` Go 二进制文件，用户 `alias claude=cloud-cl
 **v3.0 In-flight progress:**
 - Phase 31 (mount-strategy + OAuth + sync-status) — ✓ Complete
 - Phase 32 (ssh-tmux：F3 弱网容忍 + F4 tmux 包装 + F5 多端 + 账号级 Mutagen 单例锁) — ✓ Complete (2026-04-20, code-level passed 8/12; 5 项 docker UAT 留 Phase 35 真机)
-- Next: Phase 33 (Claude Code 状态持久化：CLI + 镜像 + admin GC)
+- Phase 33 (Claude Code 状态持久化：CLI + 镜像 + admin GC) — ✓ Complete (2026-04-21, 6/6 SC verified, REQ-F7-A/B/D satisfied; 含 3 个 post-execution patches: pullImage 5min timeout / dispatcher 注入 ClaudeAccountID / EmbeddedDispatcher RunHostAction 适配)
+- Next: Phase 34 (cloud-claude doctor v3 + 错误码统一)
 
 ## Current Milestone: v3.0 远端开发体验升级
 
