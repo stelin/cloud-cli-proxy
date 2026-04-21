@@ -72,9 +72,18 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if fix && !anyFixerRegistered() {
-		// Plan 02 占位：FixerRegistry 尚未实现（Plan 03 落）
-		fmt.Fprintln(os.Stdout, "[!] --fix 自动修复将在 doctor.fix.go 实现（Plan 03）")
+	// Plan 03：--fix 后跑 FixerRegistry，结果写回 Check.FixApplied/FixFailed
+	// （Status 不降级 / CONTEXT D-16；退出码仍按 Summary.Fail/Warn 计）
+	if fix && anyFixerRegistered() {
+		var totalApplied, totalFailed int
+		report.Checks = doctor.ApplyFixes(ctx, opts, report.Checks)
+		for _, c := range report.Checks {
+			totalApplied += len(c.FixApplied)
+			totalFailed += len(c.FixFailed)
+		}
+		if totalApplied+totalFailed > 0 && !jsonOut {
+			fmt.Fprintf(os.Stdout, "[fix] %d 项已修复 / %d 项修复失败\n\n", totalApplied, totalFailed)
+		}
 	}
 
 	if jsonOut {
@@ -109,5 +118,7 @@ func contextWithDoctorTimeout(parent context.Context, verbose bool) (context.Con
 	return context.WithTimeout(parent, 60*time.Second)
 }
 
-// anyFixerRegistered 是 Plan 03 完成前的占位（恒 false）。Plan 03 会改为检查 doctor.FixerRegistry 长度。
-func anyFixerRegistered() bool { return false }
+// anyFixerRegistered 检查 doctor.FixerRegistry 是否已注册任何 Fixer（Plan 03 完成后恒 true）。
+func anyFixerRegistered() bool {
+	return len(doctor.FixerRegistry) > 0
+}
