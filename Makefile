@@ -129,3 +129,19 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' Makefile | sed 's/:.*## /: /' | awk 'BEGIN {FS = ": "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 .DEFAULT_GOAL := help
+
+# ── Phase 34 Plan 03: cloud-claude doctor M14 终验闸门 ────────────────
+# (ROADMAP §Phase 34 SC#3 / Plan 03 Task 3.7)
+
+.PHONY: cloud-claude
+cloud-claude: ## Build cloud-claude binary at repo root (used by ci-doctor-grep)
+	go build -o ./cloud-claude ./cmd/cloud-claude
+
+.PHONY: ci-doctor-grep
+ci-doctor-grep: cloud-claude ## Run scripts/ci-doctor-grep.sh against built cloud-claude
+	bash scripts/ci-doctor-grep.sh ./cloud-claude
+
+.PHONY: ci-gate
+ci-gate: ## CI gate: short go test + ci-doctor-grep
+	go test ./... -count=1 -short
+	$(MAKE) ci-doctor-grep
