@@ -20,7 +20,8 @@ v2.0 交付了 `cloud-claude` Go 二进制文件，用户 `alias claude=cloud-cl
 - Phase 31 (mount-strategy + OAuth + sync-status) — ✓ Complete
 - Phase 32 (ssh-tmux：F3 弱网容忍 + F4 tmux 包装 + F5 多端 + 账号级 Mutagen 单例锁) — ✓ Complete (2026-04-20, code-level passed 8/12; 5 项 docker UAT 留 Phase 35 真机)
 - Phase 33 (Claude Code 状态持久化：CLI + 镜像 + admin GC) — ✓ Complete (2026-04-21, 6/6 SC verified, REQ-F7-A/B/D satisfied; 含 3 个 post-execution patches: pullImage 5min timeout / dispatcher 注入 ClaudeAccountID / EmbeddedDispatcher RunHostAction 适配)
-- Next: Phase 34 (cloud-claude doctor v3 + 错误码统一)
+- Phase 34 (cloud-claude doctor v3 + 错误码统一) — ✓ Complete (2026-04-21, 8/8 SC verified, REQ-F6-A/B/C/D + REQ-F8-A/B/C satisfied; 42 errcodes 8 域 Registry + 38 条 ExtendedExplanations + 18 doctor checks 5 维度 + 6 Fixer + `cloud-claude explain <code>` 子命令 + `scripts/ci-doctor-grep.sh` M14 闸门；C2/C4/C6/C8/M13/M14 Critical Pitfalls 全守住；8 Warning 并发/ctx 工程性改进入 backlog)
+- Next: Phase 35 (e2e-稳定化 + 性能验收)
 
 ## Current Milestone: v3.0 远端开发体验升级
 
@@ -99,6 +100,9 @@ v2.0 已交付，新增：
 - ✓ 容器镜像预装 sshfs + FUSE，创建时带 --device /dev/fuse + --cap-add SYS_ADMIN — v2.0
 - ✓ 支持私有部署：用户可配置自有网关地址 — v2.0
 - ✓ 生产环境 FUSE + AppArmor 兼容性验证通过 — v2.0
+- ✓ `cloud-claude doctor` 覆盖 network/auth/ssh/mount（mutagen+sshfs+mergerfs 三层）/disk 五个维度 — Phase 34 (2026-04-21)
+- ✓ `doctor` 每项检查支持一键修复或给出明确下一步指引（6 Fixer + 每条 `[符号] 原因（建议: ... \| 错误码: ...）` 四要素 + M14 CI grep 闸门）— Phase 34 (2026-04-21)
+- ✓ 新架构所有错误路径统一纳入错误码体系，每条带"下一步该做什么"（42 条 8 域 Registry + 38 条 ExtendedExplanations + `cloud-claude explain <code>` 子命令）— Phase 34 (2026-04-21)
 
 ### Active (v3.0 远端开发体验升级)
 
@@ -116,11 +120,11 @@ v2.0 已交付，新增：
 - [ ] 多端 attach 冲突时返回明确的中文提示和决策选项
 
 主线 C · 运维与体验配套
-- [ ] `cloud-claude doctor` 覆盖 network/auth/ssh/mount（mutagen+sshfs+mergerfs 三层）/disk 五个维度
-- [ ] `doctor` 每项检查支持一键修复或给出明确下一步指引
-- [ ] Claude Code 登录态/缓存目录（`~/.claude/`、`~/.cache/claude`）通过独立 Docker volume 持久化
-- [ ] 持久化 volume 以 claude_account 为粒度，容器重建后用户无需重新登录 Claude
-- [ ] 新架构所有错误路径（mutagen sync failed / mergerfs mount failed / session attach conflict 等）统一纳入错误码体系，每条带"下一步该做什么"
+- [x] `cloud-claude doctor` 覆盖 network/auth/ssh/mount（mutagen+sshfs+mergerfs 三层）/disk 五个维度 — Phase 34
+- [x] `doctor` 每项检查支持一键修复或给出明确下一步指引 — Phase 34
+- [x] Claude Code 登录态/缓存目录（`~/.claude/`、`~/.cache/claude`）通过独立 Docker volume 持久化 — Phase 33
+- [x] 持久化 volume 以 claude_account 为粒度，容器重建后用户无需重新登录 Claude — Phase 33
+- [x] 新架构所有错误路径统一纳入错误码体系，每条带"下一步该做什么" — Phase 34
 
 ### Paused (v1.3 claude-shell)
 
@@ -197,6 +201,9 @@ v2.0 已交付，新增：
 | shellescape.QuoteCommand 构建远程命令行 | POSIX 单引号规则成熟，防止 shell 注入 | ✓ Good — 安全可靠 |
 | apparmor=unconfined 而非自定义 AppArmor profile | 安全边界已由 nftables + namespace 覆盖 | ✓ Good — 降低运维复杂度 |
 | 退出码通过返回值上浮，禁止 os.Exit | 保证 defer term.Restore 始终执行 | ✓ Good — 修复终端恢复 |
+| doctor 纯本地 + SSH 实现，不给 host-agent 加 endpoint | 保持特权边界清晰，避免 control/data plane 混淆 | ✓ Good — Phase 34 SC#9 守恒（`rg "agentapi\." internal/cloudclaude/doctor/` 命中 0） |
+| 错误码命名统一 `<DOMAIN>_<KIND>_<NUM>` 4 段，正则 `^[A-Z]+_[A-Z]+_[A-Z0-9]+(_[A-Z0-9]+)*$` | v2.0 原 3 段正则与实际使用的 4 段 code 冲突；放宽而非裁剪 code | ✓ Good — Phase 31 起沿用，Phase 34 收口 42 条 8 域无重复 |
+| `cloud-claude explain <code>` 对标 `rustc --explain` | 为非研发用户（运维、客服）提供错误码反查能力，不需要读源码 | ✓ Good — Phase 34 落 38 条 ≥200 字符长说明，exit 0/4 两态 |
 
 ## Evolution
 
@@ -218,4 +225,4 @@ v2.0 已交付，新增：
 4. 用当前产品状态更新"背景"
 
 ---
-*Last updated: 2026-04-20 — Phase 32 ssh-tmux complete (code-level passed 8/12; 5 docker UAT 留 Phase 35)*
+*Last updated: 2026-04-21 — Phase 34 cloud-claude doctor v3 + 错误码统一 complete (8/8 SC verified, REQ-F6-A/B/C/D + REQ-F8-A/B/C satisfied)*
