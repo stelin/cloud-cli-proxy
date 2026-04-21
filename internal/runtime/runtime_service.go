@@ -29,14 +29,22 @@ type RuntimeSpec struct {
 	RebuildModeDefault string
 }
 
+// QueueHostActionRepo 是 Service 在排队 host 操作时需要的仓储接口。
+// 抽出独立类型避免 struct 字段 + 构造器形参两处重复声明（Phase 33 后置消化 Plan 01 carry-over）。
+type QueueHostActionRepo interface {
+	GetHost(context.Context, string) (repository.Host, error)
+	GetUser(context.Context, string) (repository.User, error)
+	CreateTask(context.Context, repository.CreateTaskParams) (repository.Task, error)
+	ListSSHKeysByUser(context.Context, string) ([]repository.SSHKey, error)
+	RecordEvent(context.Context, repository.RecordEventParams) (repository.Event, error)
+	// ResolveClaudeAccountIDForEntry 按 Phase 30 D-05 的两阶段规则返回 claude_account_id：
+	// 优先匹配 host 显式绑定，否则回退到 user 未绑定 host 的最早账号。
+	// 用于 Phase 33 D-04..D-06：让 worker.createHost 在该字段非空时自动补 claude-state-<id> volume。
+	ResolveClaudeAccountIDForEntry(ctx context.Context, userID, hostID string) (string, bool, error)
+}
+
 type Service struct {
-	repo interface {
-		GetHost(context.Context, string) (repository.Host, error)
-		GetUser(context.Context, string) (repository.User, error)
-		CreateTask(context.Context, repository.CreateTaskParams) (repository.Task, error)
-		ListSSHKeysByUser(context.Context, string) ([]repository.SSHKey, error)
-		RecordEvent(context.Context, repository.RecordEventParams) (repository.Event, error)
-	}
+	repo QueueHostActionRepo
 	dispatcher interface {
 		Dispatch(context.Context, agentapi.HostActionRequest) (agentapi.HostActionResponse, error)
 	}
@@ -45,13 +53,7 @@ type Service struct {
 }
 
 func NewService(
-	repo interface {
-		GetHost(context.Context, string) (repository.Host, error)
-		GetUser(context.Context, string) (repository.User, error)
-		CreateTask(context.Context, repository.CreateTaskParams) (repository.Task, error)
-		ListSSHKeysByUser(context.Context, string) ([]repository.SSHKey, error)
-		RecordEvent(context.Context, repository.RecordEventParams) (repository.Event, error)
-	},
+	repo QueueHostActionRepo,
 	dispatcher interface {
 		Dispatch(context.Context, agentapi.HostActionRequest) (agentapi.HostActionResponse, error)
 	},
@@ -94,6 +96,16 @@ func (s *Service) QueueHostAction(ctx context.Context, hostID string, action age
 			return repository.Task{}, fmt.Errorf("host owner user %s not found: %w", host.UserID, err)
 		}
 		return repository.Task{}, fmt.Errorf("load host owner user: %w", err)
+	}
+
+	// Phase 33 D-04/D-07：解析 claude_account_id 注入 request，供 worker.createHost 自动补
+	// claude-state-<id> named volume（D-04）+ upsert persistent_volume_name（D-06）。
+	// 解析失败或未命中时走 D-07 fallback：claudeAccountID 留空，createHost 跳过自动补 volume，
+	// 不阻塞容器启动（v2.0 旧 host 重建路径）。
+	claudeAccountID, _, claudeErr := s.repo.ResolveClaudeAccountIDForEntry(ctx, host.UserID, host.ID)
+	if claudeErr != nil {
+		slog.Warn("resolve claude_account_id failed, will skip volume auto-attach (D-07 fallback)",
+			"host_id", host.ID, "user_id", host.UserID, "error", claudeErr)
 	}
 
 	task, err := s.repo.CreateTask(ctx, repository.CreateTaskParams{
@@ -141,11 +153,12 @@ func (s *Service) QueueHostAction(ctx context.Context, hostID string, action age
 		Hostname:      host.Hostname,
 		MemoryLimitMB: defaultIntIfZero(host.MemoryLimitMB, 4096),
 		CPULimit:      defaultFloatIfZero(host.CPULimit, 2.0),
-		Username:      owner.Username,
-		EntryPassword: host.EntryPassword,
-		SSHPublicKey:  "",
-		SSHPrivateKey: "",
-		SSHKeys:       keyEntries,
+		Username:        owner.Username,
+		EntryPassword:   host.EntryPassword,
+		SSHPublicKey:    "",
+		SSHPrivateKey:   "",
+		SSHKeys:         keyEntries,
+		ClaudeAccountID: claudeAccountID,
 	}
 
 	if request.EntryPassword == "" {
