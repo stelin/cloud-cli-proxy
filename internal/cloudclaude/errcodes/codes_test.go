@@ -10,8 +10,9 @@ import (
 func TestErrcodesRegistry(t *testing.T) {
 	reg := Registry()
 
-	if len(reg) < 15 {
-		t.Fatalf("注册表条目不足：want >= 15, got %d", len(reg))
+	// Phase 34 D-21：17 条新 + 25 条既有 = ≥ 42 条；下限放宽到 30 留余量。
+	if len(reg) < 30 {
+		t.Fatalf("注册表条目不足：want >= 30, got %d", len(reg))
 	}
 
 	// PLAN 原表达式 ^[A-Z]+_[A-Z]+_[A-Z0-9]+$ 仅允许 3 段，
