@@ -196,3 +196,44 @@ func TestBuildCreateArgs_InvalidVolumeMount(t *testing.T) {
 		t.Fatal("expected error for empty volume name")
 	}
 }
+
+// TestHostActionRequest_VolumeRemove_RoundTrip 守护 D-13/D-25.4：
+// Action=volume_remove + Volumes 字段必须完整 round-trip，供 Plan 02 admin handler 触发 host-agent 删 volume。
+func TestHostActionRequest_VolumeRemove_RoundTrip(t *testing.T) {
+	req := agentapi.HostActionRequest{
+		TaskID: "t1", HostID: "h1", Action: agentapi.ActionVolumeRemove,
+		Volumes: []agentapi.VolumeMount{{Name: "claude-state-abc"}},
+		Labels:  map[string]string{"force": "true"},
+	}
+	buf, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(buf), `"action":"volume_remove"`) {
+		t.Fatalf("ActionVolumeRemove must serialize as volume_remove, got: %s", buf)
+	}
+	if !strings.Contains(string(buf), `"name":"claude-state-abc"`) {
+		t.Fatalf("VolumeMount.Name must round-trip, got: %s", buf)
+	}
+
+	var parsed agentapi.HostActionRequest
+	if err := json.Unmarshal(buf, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if parsed.Action != agentapi.ActionVolumeRemove {
+		t.Fatalf("Action lost: got %q, want %q", parsed.Action, agentapi.ActionVolumeRemove)
+	}
+	if len(parsed.Volumes) != 1 || parsed.Volumes[0].Name != "claude-state-abc" {
+		t.Fatalf("Volumes lost: got %+v", parsed.Volumes)
+	}
+	if parsed.Labels["force"] != "true" {
+		t.Fatalf("Labels[force] lost: got %q", parsed.Labels["force"])
+	}
+}
+
+// TestActionVolumeRemove_StringValue 守护协议契约（host-agent 端用字符串 switch 比较）。
+func TestActionVolumeRemove_StringValue(t *testing.T) {
+	if string(agentapi.ActionVolumeRemove) != "volume_remove" {
+		t.Fatalf("ActionVolumeRemove must equal \"volume_remove\", got %q", agentapi.ActionVolumeRemove)
+	}
+}

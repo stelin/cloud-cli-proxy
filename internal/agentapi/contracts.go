@@ -3,11 +3,12 @@ package agentapi
 type HostAction string
 
 const (
-	ActionCreateHost  HostAction = "create_host"
-	ActionStartHost   HostAction = "start_host"
-	ActionStopHost    HostAction = "stop_host"
-	ActionRebuildHost HostAction = "rebuild_host"
-	ActionPrepareHost HostAction = "prepare_host"
+	ActionCreateHost   HostAction = "create_host"
+	ActionStartHost    HostAction = "start_host"
+	ActionStopHost     HostAction = "stop_host"
+	ActionRebuildHost  HostAction = "rebuild_host"
+	ActionPrepareHost  HostAction = "prepare_host"
+	ActionVolumeRemove HostAction = "volume_remove" // Phase 33 D-13
 )
 
 type SSHKeyEntry struct {
