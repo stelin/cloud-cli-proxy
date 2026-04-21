@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: 远端开发体验升级
 status: executing
-stopped_at: Phase 33 context gathered (auto)
-last_updated: "2026-04-21T04:15:21.456Z"
-last_activity: 2026-04-20
+stopped_at: Completed 33-01-PLAN.md
+last_updated: "2026-04-21T05:21:28Z"
+last_activity: 2026-04-21 -- Phase 33 Plan 01 complete (image+worker+agentapi+repo)
 progress:
   total_phases: 8
   completed_phases: 5
-  total_plans: 20
-  completed_plans: 20
-  percent: 100
+  total_plans: 22
+  completed_plans: 21
+  percent: 95
 ---
 
 # Project State
@@ -21,19 +21,19 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-17)
 
 **Core value:** 给每个用户提供一台开箱即用的 SSH 云主机，并且严格保证其所有出网流量都走受控的指定出口 IP
-**Current focus:** Phase 29.1 — 修复 GetHost 缺失 entry_password 字段导致容器密码退化为 workspace
+**Current focus:** Phase 33 — claude-code-cli-admin-gc
 
 ## Current Position
 
 Milestone: v3.0 远端开发体验升级
-Phase: 29.1 (修复 GetHost 缺失 entry_password 字段导致容器密码退化为 workspace) — EXECUTING
-Plan: 4 of 4
-Status: Ready to execute
-Last activity: 2026-04-20
+Phase: 33 (claude-code-cli-admin-gc) — EXECUTING
+Plan: 2 of 2 (Plan 01 ✅ Complete 2026-04-21)
+Status: Executing Phase 33
+Last activity: 2026-04-21 -- Phase 33 Plan 01 complete
 
-Progress: [░░░░░░░░░░░░░░░░░░░░] 0%（v3.0；Phase 32 全部 plan 完成，待 verifier 通过后进 Phase 33）
+Progress: [██████████░░░░░░░░░░] 50%（Phase 33；Plan 01 image+worker+agentapi+repo 闭环，Plan 02 admin DELETE+host detail+UAT 待启动）
 
-下一步：`/gsd-verify-phase 32-ssh-tmux` 验证 Phase 32 全部 12 条 SC 闭环；其中 mount_strategy.MountWorkspace 未实际调用 SyncSessionLock 闭包（Phase 31 D-31 落地缺口）+ Plan 02 BufferedStdin 未真接入 Reconnector 共享状态（REQ-F3-B 端到端集成缺失）两项 carry-over 由 verifier 识别后走 gap-closure。完成后进入 Phase 33。
+下一步：`/gsd-execute-phase 33` 执行 Plan 02 admin DELETE + host detail + UAT。Plan 01 carry-over：(a) ClaudeAccountID dispatcher 在 Phase 29 RuntimeService 与 Phase 32 attach 链路均未注入，导致 createHost 自动补 volume 走 D-07 fallback 不激活 — Plan 02 admin DELETE 走显式 Volumes 不依赖 ClaudeAccountID，但 v3.0 SC1 端到端 (容器重建 OAuth 保留) 须由 Plan 02 UAT D-26 兜底识别并补齐。(b) ensureDockerVolume 不解析 inspect JSON 比对 label —— 推迟 v3.1 backlog（RESEARCH §6.6）。
 
 ## Accumulated Context
 
@@ -68,6 +68,7 @@ v3.0 关键方向已定：
 - [Phase 29.1]: Plan 03：FATAL 消息只回显 RUN_USER + passwd -S 第 2 列状态字串，绝不写入 CONTAINER_PASSWORD / CONTAINER_SSH_PASSWORD 任一密码值（T-29.1-05-log-entrypoint mitigation）
 - [Phase 29.1]: Plan 03：自检失败 entrypoint 不做 retry，重启交给外层 docker restart policy / host-agent（T-29.1-04 accept disposition）；passwd -S 解析用 awk + 命令链 || echo UNSET 兜底，避免解析失败被当 P 通过
 - [Phase 29.1]: Wave 1 集成门禁：`go build ./...` PASS；`go test ./internal/store/repository/... ./internal/runtime/...` 全 PASS；`go test ./internal/controlplane/http/...` 在本机 hang，根因为既有 `getDockerStatuses()` (admin_hosts.go:73) 直接 `exec.Command("docker", "ps", ...)` 而本机 docker daemon 不可用 — 已用 `git checkout ec1e841` 复跑确认是 Phase 29.1 之前就存在的测试基础设施依赖问题；不是本 phase 引入。Plan 04 自身的 3 条 `TestResyncPasswords_*` 通过 syncContainerPassword var 化绕开 docker，不会被该问题阻塞；后续应另起 backlog 修复 List handler 的 docker 调用（注入 var 或 context timeout）。
+- [Phase 33-01]: 镜像层 entrypoint 追加 `prepare_persistent_state` v3 stage（位于 `prepare_v3_dirs → prepare_mutagen_agent` 之间），通过 `cp -an` 幂等 seed + `ln -sfn` 把 `/home/claude/.claude` 与 `.cache/claude` 重定向到 `/var/lib/claude-persist`；agentapi 增 `ActionVolumeRemove = "volume_remove"` 协议常量（D-13）；worker 新增 `BuildClaudeStateVolumeName / dockerVolumeRunner / ensureDockerVolume / removeDockerVolume / removeVolumes`（包级 var 注入 mock 模式），Execute switch 增 `case ActionVolumeRemove` + `volume_in_use` 错误码映射；`createHost` 在 `ClaudeAccountID != ""` 时自动 ensure volume + 追加 mount + upsert 写库 + 失败写 audit；WorkerRepo 接口扩展 `UpsertClaudeAccountPersistentVolumeName`（Repository 三态语义实现 NULL→写入 / 一致跳过 / 冲突错误，SQL 提升包级 const）。fakeWorkerRepo 同步实现新方法以闭环包测试编译。Audit event metadata 严守白名单 `account_id/volume_name/force/host_id`，`grep Metadata:.*"(email|entry_password|credentials|oauth_token)"` 命中 0。新增 12 条单测全 PASS（2 协议 round-trip + 7 lifecycle + 3 SQL/边界），既有 `internal/runtime/tasks/` + `internal/store/repository/` 全包无回归；`go build ./...` PASS。Carry-over：(a) dispatcher 链路 `ClaudeAccountID:` 字段在生产代码全无注入，目前 createHost 走 D-07 fallback 不激活自动 volume — Plan 02 admin handler 走显式 Volumes 不依赖此字段，但 SC1 端到端激活责任移交后续 phase；(b) `ensureDockerVolume` label 一致性比对推迟 v3.1 backlog。Commits: 7acf3d6 (entrypoint) + 235d969 (agentapi) + 2d0bc22 (worker) + 208df5f (repo)。
 
 ### Pending Todos
 
@@ -95,6 +96,6 @@ None — 等待 REQUIREMENTS.md 与 ROADMAP.md 产出后进入 phase 执行。
 
 ## Session Continuity
 
-Last session: 2026-04-21T04:15:21.443Z
-Stopped at: Phase 33 context gathered (auto)
-Resume file: .planning/phases/33-claude-code-cli-admin-gc/33-CONTEXT.md
+Last session: 2026-04-21T05:21:28Z
+Stopped at: Completed 33-01-PLAN.md
+Resume file: .planning/phases/33-claude-code-cli-admin-gc/33-02-admin-delete-host-detail-uat-PLAN.md
