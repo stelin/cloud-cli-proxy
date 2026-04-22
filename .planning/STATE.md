@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: 远端开发体验升级
-status: ready_to_plan
-stopped_at: Phase 34 complete, ready to discuss Phase 35
-last_updated: "2026-04-21T12:00:00.000Z"
-last_activity: 2026-04-21 -- Phase 34 cloud-claude-doctor-v3 complete (8/8 SC, 7 REQ IDs satisfied)
+status: executing
+stopped_at: Phase 34 complete — ready to discuss Phase 35 (E2E 稳定化 + 性能验收)
+last_updated: "2026-04-22T10:29:29.731Z"
+last_activity: 2026-04-22 -- Phase 35 execution started
 progress:
   total_phases: 8
   completed_phases: 7
-  total_plans: 28
-  completed_plans: 28
-  percent: 100
+  total_plans: 30
+  completed_plans: 25
+  percent: 83
 ---
 
 # Project State
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-21)
 
 **Core value:** 给每个用户提供一台开箱即用的 SSH 云主机，并且严格保证其所有出网流量都走受控的指定出口 IP
-**Current focus:** Phase 35 — E2E 稳定化 + 性能验收（BASE-01/02/03 三条性能基线 + macOS APFS + Ubuntu AppArmor 真机回归）
+**Current focus:** Phase 35 — e2e
 
 ## Current Position
 
 Milestone: v3.0 远端开发体验升级
-Phase: 35
-Plan: Not started
-Status: Ready to discuss / plan
-Last activity: 2026-04-21 -- Phase 34 cloud-claude-doctor-v3 complete
+Phase: 35 (e2e) — EXECUTING
+Plan: 1 of 5
+Status: Executing Phase 35
+Last activity: 2026-04-22 -- Phase 35 execution started
 
 Progress: [███████████████████░] 87%（7/8 phases complete；Phase 35 未开始，无 CONTEXT.md）
 
