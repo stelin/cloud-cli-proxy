@@ -149,3 +149,51 @@ func TestLastSessionSnapshot_OmitemptyForEmpty(t *testing.T) {
 		}
 	}
 }
+
+// Phase 36 D-09: OversizedFiles 序列化 round-trip。
+func TestLastSession_OversizedFiles_Roundtrip(t *testing.T) {
+	snap := LastSessionSnapshot{
+		SchemaVersion: 1,
+		OversizedFiles: []OversizedFile{
+			{Path: "assets/video.mp4", SizeBytes: 60 * 1024 * 1024},
+		},
+	}
+	data, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("Marshal 失败: %v", err)
+	}
+	var got LastSessionSnapshot
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal 失败: %v", err)
+	}
+	if got.SchemaVersion != 1 {
+		t.Errorf("schema_version 应为 1，got %d", got.SchemaVersion)
+	}
+	if len(got.OversizedFiles) != 1 {
+		t.Fatalf("OversizedFiles 长度应为 1，got %d", len(got.OversizedFiles))
+	}
+	if got.OversizedFiles[0].Path != "assets/video.mp4" {
+		t.Errorf("Path 不匹配: %q", got.OversizedFiles[0].Path)
+	}
+	if got.OversizedFiles[0].SizeBytes != 60*1024*1024 {
+		t.Errorf("SizeBytes 不匹配: %d", got.OversizedFiles[0].SizeBytes)
+	}
+}
+
+// Phase 36 D-09: 空 OversizedFiles 应被 omitempty 省略。
+func TestLastSession_OversizedFiles_OmitemptyEmpty(t *testing.T) {
+	snap := LastSessionSnapshot{SchemaVersion: 1}
+	data, _ := json.Marshal(snap)
+	if strings.Contains(string(data), "oversized_files") {
+		t.Error("空 OversizedFiles 应被 omitempty 省略，但 JSON 中出现了 oversized_files 键")
+	}
+}
+
+// Phase 36 D-09: nil OversizedFiles 应被 omitempty 省略。
+func TestLastSession_OversizedFiles_OmitemptyNil(t *testing.T) {
+	snap := LastSessionSnapshot{SchemaVersion: 1, OversizedFiles: nil}
+	data, _ := json.Marshal(snap)
+	if strings.Contains(string(data), "oversized_files") {
+		t.Error("nil OversizedFiles 应被 omitempty 省略")
+	}
+}
