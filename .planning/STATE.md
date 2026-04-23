@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: 映射语义补齐与懒加载
-status: Ready to start Phase 36
-stopped_at: Phase 36 context gathered
-last_updated: "2026-04-23T10:25:43.039Z"
-last_activity: 2026-04-23 — Milestone v3.1 roadmap committed (2 phases, 16 REQ)
+status: executing
+stopped_at: Completed 36-01-PLAN.md
+last_updated: "2026-04-23T11:17:48.315Z"
+last_activity: 2026-04-23
 progress:
   total_phases: 2
   completed_phases: 0
   total_plans: 6
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 17
 ---
 
 # Project State
@@ -21,17 +21,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-23 — v3.1 milestone started)
 
 **Core value:** 给每个用户提供一台开箱即用的 SSH 云主机，并且严格保证其所有出网流量都走受控的指定出口 IP
-**Current focus:** v3.1 映射语义补齐与懒加载 — Phase 36（前置约束 + FUSE 缓存）→ Phase 37（冷文件读触发晋升 + e2e UAT）
+**Current focus:** Phase 36 — sshfs
 
 ## Current Position
 
 Milestone: v3.1 映射语义补齐与懒加载 — 🟡 IN PROGRESS (roadmap ready)
-Phase: Not started (Phase 36 next — 映射前置约束 + sshfs 内核缓存)
-Plan: —
-Status: Ready to start Phase 36
-Last activity: 2026-04-23 — Milestone v3.1 roadmap committed (2 phases, 16 REQ)
+Phase: 36 (sshfs) — EXECUTING
+Plan: 2 of 6
+Status: Ready to execute
+Last activity: 2026-04-23
 
-Progress: [░░░░░░░░░░░░░░░░░░░░] 0%（0/2 phases）
+Progress: [██░░░░░░░░] 17%
 
 下一步选项：
 
@@ -81,6 +81,8 @@ v3.0 关键方向已定：
 - [Phase 35-e2e]: Plan 02 双脚本就位 (35-02 / commits 1926981 / 3a2a2cd)：uat-network-resilience.sh (594 行) BASE-03 三场景 UAT — tc(netem loss 100%) → iptables(OUTPUT DROP) 两级 fallback + 双重 trap disrupt_stop EXIT/INT/TERM + 起始幂等清理 + 三大无感知锚点 (pgrep -f claude 5s 间隔存活循环 + tmux capture-pane diff==0 字符级一致 + token 完整回放) + 30s 场景 60s 内自动重连成功断言 + 2min 场景退避序列 1/2/4/8/30s ≥3 档命中 + REQ-F3-C 失败提示 grep '(按 Enter 重试|cloud-claude doctor)' + REQ-F4-A 进程存活；degradation-regression.sh (534 行) M13 三层静默降级回归 — pkill -9 mergerfs / fusermount3 -u /mnt/cold / pkill -9 mutagen-agent 三层 → docker exec cloud-claude doctor --json → jq -e select(.code==X) 命中期望 MOUNT_* (5 个码与 errcodes/mount.go 注册表交叉一致) + warn/fail check next_action 非空守恒 (M13 等价口径) + 错误码命名正则 ^[A-Z]+_[A-Z]+_[A-Z0-9]+(_[A-Z0-9]+)*$；T-35-02 威胁矩阵 6 条全落地：双重 trap (T-01) + CTR_NAME_REGEX 命令注入守卫 (T-02) + sudo -n 检测无 prompt (T-03) + --dry-run + --confirm-destructive 双闸门默认全闭 + 中文 opt-in 提示 (T-04) + sed 脱敏 token/key/secret + JSON 只数值不内容 (T-05) + .network-disrupt.log/.degradation-destruct.log 留痕 (T-06)；deviations 2 条均为验证侧 Rule 1 — dry-run+SKIP 路径 stderr 补 disrupt 命令预览 + PLAN acceptance 第 16 条 grep -oE 多文件应改 -hoE，脚本侧 5 个 MOUNT_* 全在注册表语义正确
 - [Phase 35-e2e]: Plan 03 runbooks: 5 章 docs/runbooks/v3-*.md 落地（升级指南 + AppArmor 部署 + doctor 5 维度排障 + 持久卷顶层导航 + 43 条错误码索引）；按 Pattern G 头部 + ≥5 ## 章节 + ### 快速诊断命令 小节统一风格；AppArmor 锁定 D-23 三条字面量与 host-preflight.sh::check_apparmor_fusermount3 L51-68 一字不差；错误码索引反向 diff (registry vs 手册) 输出空 — 注册表 43 条 Code 全在手册中；持久卷手册严守 PATTERNS Pattern J 仅作顶层导航，OAuth 持久化跳转 v3-claude-state-volumes.md 不复制
 - [Phase 35]: [Phase 35-04] ci.yml 追加 perf-benchmark (本地档 only, hyperfine+ripgrep+jq, --seed=42 --runs=10 --warmup=1) + image-size-regression (image.lock 解析 → docker build → verify-managed-image.sh → 700 * 1024 * 1024 字面量阈值) 两个 job；复用顶部 on/concurrency 不加 job 级 if:；零破坏 go-test/web-build；commit 998c32d
+- Phase 36-01: MOUNT_REQUIRE_GIT_REPO 与 MOUNT_OVERSIZED_FILE_SKIPPED 不加入 ExplainExempt，必须提供完整长说明
+- Phase 36-01: explain 子进程测试改为每个 go test 进程编译独立临时二进制，避免陈旧 /tmp 缓存
 
 ### Pending Todos
 
@@ -111,9 +113,9 @@ v3.1 milestone 已启动；等待 ROADMAP.md 写入后进入 Phase 36 执行：
 
 ## Session Continuity
 
-Last session: --stopped-at
-Stopped at: Phase 36 context gathered
-Resume file: --resume-file
+Last session: 2026-04-23T11:17:48.311Z
+Stopped at: Completed 36-01-PLAN.md
+Resume file: None
 
 ## Deferred Items
 
