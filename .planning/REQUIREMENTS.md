@@ -18,8 +18,8 @@
 
 ### A2 · 单文件大小熔断（F2）
 
-- [ ] **REQ-MOUNT-V31-02**：单文件大小 ≥ `hot_sync_max_file_mb`（默认 50MB，可在 `~/.cloud-claude/config.yaml` 配置）且未被 ignore 命中时，**不进入热同步**，由 cold sshfs 兜底；首次扫描时 stderr 一次性输出 `[!] 跳过大文件 <rel> (XX MB)，由 cold 兜底`；不阻断 mount、不写入 hot 分支
-- [ ] **REQ-MOUNT-V31-03**：`last-session.json` 新增 `oversized_files: [{path, size_bytes}]` 数组，记录本次会话被熔断的所有文件；schema_version 不变（保持向后兼容，新字段 omitempty）
+- [x] **REQ-MOUNT-V31-02**：单文件大小 ≥ `hot_sync_max_file_mb`（默认 50MB，可在 `~/.cloud-claude/config.yaml` 配置）且未被 ignore 命中时，**不进入热同步**，由 cold sshfs 兜底；首次扫描时 stderr 一次性输出 `[!] 跳过大文件 <rel> (XX MB)，由 cold 兜底`；不阻断 mount、不写入 hot 分支
+- [x] **REQ-MOUNT-V31-03**：`last-session.json` 新增 `oversized_files: [{path, size_bytes}]` 数组，记录本次会话被熔断的所有文件；schema_version 不变（保持向后兼容，新字段 omitempty）
 
 ### A3 · sshfs FUSE page cache（F3）
 
@@ -76,8 +76,8 @@
 | REQ-ID | Phase | Status |
 |--------|-------|--------|
 | REQ-MOUNT-V31-01 | 36 | pending |
-| REQ-MOUNT-V31-02 | 36 | pending |
-| REQ-MOUNT-V31-03 | 36 | pending |
+| REQ-MOUNT-V31-02 | 36 | completed |
+| REQ-MOUNT-V31-03 | 36 | completed |
 | REQ-MOUNT-V31-04 | 36 | pending |
 | REQ-MOUNT-V31-05 | 36 | pending |
 | REQ-MOUNT-V31-06 | 36 | completed |

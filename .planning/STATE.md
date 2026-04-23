@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: 映射语义补齐与懒加载
 status: executing
-stopped_at: Completed 36-01-PLAN.md
-last_updated: "2026-04-23T11:17:48.315Z"
+stopped_at: Completed 36-02-PLAN.md
+last_updated: "2026-04-23T11:27:37.740Z"
 last_activity: 2026-04-23
 progress:
   total_phases: 2
   completed_phases: 0
   total_plans: 6
-  completed_plans: 1
-  percent: 17
+  completed_plans: 2
+  percent: 33
 ---
 
 # Project State
@@ -27,11 +27,11 @@ See: .planning/PROJECT.md (updated 2026-04-23 — v3.1 milestone started)
 
 Milestone: v3.1 映射语义补齐与懒加载 — 🟡 IN PROGRESS (roadmap ready)
 Phase: 36 (sshfs) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-04-23
 
-Progress: [██░░░░░░░░] 17%
+Progress: [███░░░░░░░] 33%
 
 下一步选项：
 
@@ -83,6 +83,7 @@ v3.0 关键方向已定：
 - [Phase 35]: [Phase 35-04] ci.yml 追加 perf-benchmark (本地档 only, hyperfine+ripgrep+jq, --seed=42 --runs=10 --warmup=1) + image-size-regression (image.lock 解析 → docker build → verify-managed-image.sh → 700 * 1024 * 1024 字面量阈值) 两个 job；复用顶部 on/concurrency 不加 job 级 if:；零破坏 go-test/web-build；commit 998c32d
 - Phase 36-01: MOUNT_REQUIRE_GIT_REPO 与 MOUNT_OVERSIZED_FILE_SKIPPED 不加入 ExplainExempt，必须提供完整长说明
 - Phase 36-01: explain 子进程测试改为每个 go test 进程编译独立临时二进制，避免陈旧 /tmp 缓存
+- [Phase 36-02]: Config.HotSyncMaxFileMB int yaml hot_sync_max_file_mb,omitempty + EffectiveHotSyncMaxFileMB() 默认 50MB（D-04 不在 Validate 强校验上限）；LastSessionSnapshot 末尾追加 OversizedFiles []OversizedFile omitempty + 新增 OversizedFile struct (Path string + SizeBytes int64) schema_version=1 不变；3 条序列化测试 PASS（Roundtrip/OmitemptyEmpty/OmitemptyNil），既有 Phase 32 D-27 测试零回归；Plan 03 可直接 cfg.EffectiveHotSyncMaxFileMB()*1024*1024 注入 HotSyncConfig.MaxFileBytes，并把扫描结果以 cwd 相对路径形式赋给 snapshot.OversizedFiles（T-36-02-02 Path 相对路径 mitigate 落在 Plan 03 写端）；commits a8c3cb5 (feat config) + cdeebb5 (test RED) + b1bdbdd (feat GREEN)
 
 ### Pending Todos
 
@@ -113,8 +114,8 @@ v3.1 milestone 已启动；等待 ROADMAP.md 写入后进入 Phase 36 执行：
 
 ## Session Continuity
 
-Last session: 2026-04-23T11:17:48.311Z
-Stopped at: Completed 36-01-PLAN.md
+Last session: 2026-04-23T11:27:26.431Z
+Stopped at: Completed 36-02-PLAN.md
 Resume file: None
 
 ## Deferred Items
