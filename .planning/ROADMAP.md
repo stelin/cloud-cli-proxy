@@ -94,6 +94,16 @@
 
 **Requirements:** REQ-MOUNT-V31-01 / 02 / 03 / 04 / 05 / 06
 
+**Plans:** 6 plans
+
+Plans:
+- [ ] 36-01-PLAN.md — errcodes 注册 2 条 + explain 长说明（REQ-06，Wave 1）
+- [ ] 36-02-PLAN.md — Config.HotSyncMaxFileMB + LastSessionSnapshot.OversizedFiles schema（REQ-02/03，Wave 1）
+- [ ] 36-03-PLAN.md — hot_sync 单文件熔断 + mount_strategy 持久化（REQ-02/03，Wave 2）
+- [ ] 36-04-PLAN.md — git 仓库前置约束 + main.go os.Getwd() 时序修正（REQ-01，Wave 2）
+- [ ] 36-05-PLAN.md — sshfs FUSE page cache 参数 + counting SFTP 单测（REQ-04，Wave 2）
+- [ ] 36-06-PLAN.md — doctor mount +5 项 check + CI 闸门验证（REQ-05，Wave 3）
+
 **Success Criteria:**
 1. `cd /tmp && cloud-claude` 立即拒绝挂载，stderr 含 `MOUNT_REQUIRE_GIT_REPO` + 中文 next_action，退出码 = `exitConfigError`
 2. 60MB fixture 不出现在 hot tree（ssh `find` 验证），cold 视图能 `stat`，`last-session.json::oversized_files` 命中
@@ -140,7 +150,7 @@
 | 17-23. claude-shell 本地代理 | v1.3 | — | Paused | — |
 | 24-28. v2.0 cloud-claude 全部 | v2.0 | 7/7 | Complete | 2026-04-15 |
 | 29-35. v3.0 远端开发体验升级 | v3.0 | 30/30 | Complete | 2026-04-23 |
-| 36. 映射前置约束 + sshfs 内核缓存 | v3.1 | 0/0 | Not started | — |
+| 36. 映射前置约束 + sshfs 内核缓存 | v3.1 | 0/6 | Planned | — |
 | 37. 冷文件读触发晋升 + e2e UAT | v3.1 | 0/0 | Not started | — |
 
 ---
