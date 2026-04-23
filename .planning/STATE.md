@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: 远端开发体验升级
-status: milestone_complete
-stopped_at: "Phase 35 完成（5/5 plans）；v3.0 milestone 8/8 phases 全部完成；3 项真机签字延后到 ship 前补完，跟踪在 .planning/phases/35-e2e/35-HUMAN-UAT.md"
-last_updated: "2026-04-23T07:08:19Z"
+status: shipped
+stopped_at: "v3.0 milestone shipped 2026-04-23 — 8/8 phases archived to milestones/v3.0-phases/，33/34 REQ satisfied，BASE-02 + 3 项真机签字 deferred-to-ship；ready for /gsd-new-milestone v3.1"
+last_updated: "2026-04-23T08:50:00Z"
 last_activity: 2026-04-23
 progress:
   total_phases: 8
@@ -18,22 +18,24 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-21)
+See: .planning/PROJECT.md (updated 2026-04-23 after v3.0 milestone)
 
 **Core value:** 给每个用户提供一台开箱即用的 SSH 云主机，并且严格保证其所有出网流量都走受控的指定出口 IP
-**Current focus:** Phase 35 — e2e
+**Current focus:** v3.0 已 shipped；准备 `/gsd-new-milestone` 进入 v3.1 增量优化或继续走 ship 闸门补 3 项真机签字
 
 ## Current Position
 
-Milestone: v3.0 远端开发体验升级
-Phase: 35
-Plan: Not started
-Status: Milestone complete
+Milestone: v3.0 远端开发体验升级 — ✅ SHIPPED 2026-04-23
+Phase: —（all 8 phases archived）
+Plan: —
+Status: Milestone shipped, ready for next
 Last activity: 2026-04-23
 
-Progress: [███████████████████░] 87%（7/8 phases complete；Phase 35 未开始，无 CONTEXT.md）
+Progress: [████████████████████] 100%（8/8 phases complete + archived）
 
-下一步：`/gsd-discuss-phase 35 --auto` 进入 Phase 35 上下文收集（auto-chain 已开启），或 `/gsd-progress` 查看更新后的 ROADMAP。Phase 35 承担 BASE-01/02/03 三条性能基线真机验收，外加 macOS APFS + Ubuntu 25.04 AppArmor 双真机矩阵。
+下一步选项：
+- `/gsd-new-milestone` — 进入 v3.1 增量优化（容器预热、metrics 上报、Mutagen mono-repo 优化等）
+- `/gsd-ship` — 补完 3 项真机签字（M5 APFS / BASE-03 2min / C6 Ubuntu 25.04），跟踪在 milestones/v3.0-phases/35-e2e/35-HUMAN-UAT.md
 
 ## Accumulated Context
 
@@ -108,3 +110,39 @@ None — 等待 REQUIREMENTS.md 与 ROADMAP.md 产出后进入 phase 执行。
 Last session: 2026-04-22T11:23:59.275Z
 Stopped at: Plan 35-05 in_progress at T3 (checkpoint:human-verify, gate=blocking) — T1 b4b22cc + T2 5923288 done; awaiting 真机三项签字 (M5 APFS / BASE-03 2min / C6 Ubuntu 25.04)
 Resume file: None
+
+## Deferred Items
+
+Items acknowledged and deferred at v3.0 milestone close on 2026-04-23:
+
+| Category | Item | Status | 处置路径 |
+|----------|------|--------|----------|
+| uat_gap | Phase 32 — 5 项 docker UAT (30s 抖动 / pkill -SIGHUP sshd / 多端 banner / 账号级单例锁 / sshfs 抖动 30s) | partial | 已转入 Phase 35 真机签字队列；跟踪在 32-HUMAN-UAT.md |
+| uat_gap | Phase 35 — 3 项真机签字 (M5 APFS / BASE-03 2min / C6 Ubuntu 25.04) | partial | deferred-to-ship；跟踪在 35-HUMAN-UAT.md，ship 前补签 |
+| verification_gap | Phase 11 — 11-VERIFICATION.md (gaps_found) | gaps_found | v1.2 历史残留（v1.2 partial close），与 v3.0 无关 |
+| verification_gap | Phase 12 — 12-VERIFICATION.md (human_needed) | human_needed | v1.2 历史残留；用户自助面板 pending human verification |
+| verification_gap | Phase 31 — 缺 31-VERIFICATION.md | doc_only | 代码 + 测试齐全（mount_strategy_test.go / oauth_check_test.go / integration_test.go），仅缺结构化档案；可选 /gsd-verify-phase 31 补 |
+| verification_gap | Phase 35 — 缺 35-VERIFICATION.md | doc_only | 5 plan SUMMARY 完整 + 35-HUMAN-UAT.md 跟踪；可选 /gsd-verify-phase 35 补 |
+| verification_gap | Phase 29.1 — 缺 29.1-VERIFICATION.md | doc_only | P0 hotfix；4 plan SUMMARY 完整；线上修复已生效 |
+| quick_task | 260328-trs-cpu | missing | 与 v3.0 milestone goal 无直接绑定 |
+| quick_task | 260328-u4q-readme-vitepress-github-pages | missing | 同上 |
+| quick_task | 260405-h13-root-claude-settings-claude-claude-code | missing | 同上 |
+| quick_task | 260405-hai-claude-api-pid | missing | 同上 |
+| quick_task | 260405-hio-claude-code-settings | missing | 同上 |
+| quick_task | 260405-jji-image-version-mgmt | missing | 同上 |
+| quick_task | 260405-qk2-ssh | missing | 同上 |
+| quick_task | 260416-wvu-make-injectsshkeys-idempotent-so-user-ge | missing | 同上 |
+| quick_task | 260417-0w4-cloud-claude-cli-ssh-doctor-workspace-ss | missing | 同上 |
+| tech_debt | Phase 32 — WR-01 SIGWINCH goroutine 泄漏 | warning | v3.1 backlog 批次处理 |
+| tech_debt | Phase 32 — WR-02 *registryPid data race | warning | v3.1 backlog |
+| tech_debt | Phase 32 — WR-05 cd builtin fallback 路径不可用 | warning | v3.1 backlog |
+| tech_debt | Phase 33 — HR-01 actionToHostStatus default → "stopped" 隐式正确性 | warning | Phase 34 / v3.1 backlog 加 explicit no-op marker |
+| tech_debt | Phase 33 — HR-02 EmbeddedDispatcher UpdateTaskStatus TaskID="" 落 ERROR 日志 | warning | v3.1 backlog 加短路 |
+| tech_debt | Phase 33 — MR-04 strict 路径 Commit 失败数据漂移无 audit | warning | v3.1 backlog |
+| tech_debt | Phase 33 — MR-02 / IR-01 pullImage 错误未落 audit | info | v3.1 backlog |
+| tech_debt | Phase 33 — MR-01/03/05 + LR-01..03 + IR-02..05 (rollback ctx / force 路径 logger / agentClient nil 等) | low_medium | v3.1 backlog 批次清理 |
+| tech_debt | Phase 34 — integration_test.go CI workflow 接入 | info | make ci-gate 已就绪，待 CI 配置 |
+| tech_debt | Phase 35 — M13 destructive 测试需 --confirm-destructive 默认 SKIP | accepted | T-35-05-03 mitigation |
+| tech_debt | cross-cutting — Spec/code 数字漂移 (Registry 43 vs spec 42, ExtendedExplanations 39 vs 38, FixerRegistry 6 vs 5) | doc_only | 均 ≥ 需求最小值；建议 ship 前对齐 spec |
+| tech_debt | cross-cutting — ROADMAP 未记 SupportsMutagen 字段省略的设计变更 | doc_only | Phase 31 用自研 hot-sync 替换 Mutagen，留 SupportsMergerfs 等价；v3.1 spec 修订 |
+

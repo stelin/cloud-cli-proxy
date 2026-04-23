@@ -136,6 +136,75 @@
 
 ---
 
+## Milestone: v3.0 — 远端开发体验升级
+
+**Shipped:** 2026-04-23
+**Phases:** 8 (含 1 P0 hotfix decimal Phase 29.1) | **Plans:** 30 | **Timeline:** 5 active days (2026-04-18 → 2026-04-23)
+
+### What Was Built
+
+- 三层文件系统架构：Mutagen 热同步白名单（≤50MB + ignore） + sshfs 冷兜底全量懒拉 + mergerfs 单一 `/workspace` 视图，替换 v2.0 sshfs 性能天花板
+- `--mount-mode=auto|full|mutagen-only|sshfs-only` 四档降级状态机：12 降级矩阵单测覆盖 + last-session.json downgrade_chain 留痕 + banner 彩色 mount 模式标签
+- SSH 弱网容忍：KeepAlive 15s/4 强制下限校验 + Reconnector 退避 1/2/4/8/30s + token 复用 + BufferedStdin 灰色未确认本地 echo + ringBuf 按序回放（Plan 04/05 gap-closure 闭合 SC5/SC11）
+- tmux 默认包装 + 多端共享 attach + `cloud-claude sessions ls/attach` + `--new-session`/`--take-over` + 账号级 Mutagen 单例锁（远程 flock + ErrSyncLocked 降级 sshfs-only + IsSecondaryClient=true）
+- Claude Code OAuth 持久化：单 Docker named volume `claude-state-{claude_account_id}` + label + entrypoint symlink + chown 1000:1000 兜底；admin DELETE 双路径（强一致 10s + force 30s）+ 错误码 STATE_VOLUME_IN_USE_001 + 6 类 audit 事件
+- `cloud-claude doctor` 5 维度 18 项 check + 6 类自动 fix + JSON schema_v1 + 退出码 0/1/2 + 第一屏降级历史 banner + scripts/ci-doctor-grep.sh M14 闸门
+- 错误码统一 `<DOMAIN>_<KIND>_<NUM>` 4 段：42 条 8 域 Registry + 38 条 ≥200 字符 ExtendedExplanations + `cloud-claude explain <code>` rustc 风格
+- 受管镜像 v3.0.0：mergerfs 2.41.1（GitHub static `.deb`） + mutagen-agent v0.18.1 tarball + tmux 3.6a + libfuse3 3.18.x + image.lock + CI ≤ 700MB gate
+- 5 章 docs/runbooks/v3-* 升级手册（升级 / AppArmor / doctor 排障 / 持久卷 / 错误码索引）+ scripts/v3-acceptance-checklist.sh 聚合脚本
+- v2.0 GetHost entry_password P0 hotfix（Phase 29.1 INSERTED）：仓储 6 个 Host 读 SQL 全补 entry_password + runtime fail-fast + entrypoint passwd -S 自检 + admin batch resync 端点
+
+### What Worked
+
+- **Critical Pitfalls 前置研究 + phase-level 防御任务**：研究阶段识别 C1-C8 + M13/M14 共 10 个陷阱，每个 phase PLAN.md 显式列出"防御任务"+ verification 段验证手段；最终全部覆盖且无生产事故
+- **Mutagen 二进制 go:embed 集成（Q1 (a)）**：用户体验"一条命令" — 4 平台二进制 ~49MB 嵌入 cloud-claude，CI build-images workflow 拉取真实文件；首次冷启动 ≤8s 验收（除真机签字外）
+- **后置 gap-closure plans（Phase 32 Plan 04/05）**：第一轮 verify 发现 Gap #1 (SC5) + Gap #2 (SC11) 后通过追加 Plan 04/05 精准补漏，避免重写整个 mount/session 模块；TestPTYReconnect_BufferedInputFlush + TestMountWorkspace_SyncLocked 三测试 PASS
+- **Phase 33 post-execution patches**：UAT 过程发现 dispatcher 漏注 ClaudeAccountID + EmbeddedDispatcher 漏 wire 后追加 3 个 commit (3e2ba6b/27ab2d7/c09a4d0) 闭合，未触发新一轮 phase；Plan 02 ship + 用户 "成了" 双闸门
+- **gsd-integration-checker 在 audit 阶段补强**：4 条 E2E flow 全闭环验证（cloud-claude 启动 / 网络抖动重连 / admin DELETE volume rm / doctor + ApplyFixes），暴露 SupportsMutagen 字段 spec 漂移
+- **Plan-level wave 化 + 依赖注入测试 hooks**：mountMutagenDeps + strategyHooks + EmbeddedDispatcher 接口适配让 12 降级矩阵 + 6 admin handler 用例全部纯单测覆盖
+- **Phase 35 skip-real-hardware 路径**：自动化 PASS 即可走 ship 闸门，3 项真机签字降级为 ship 前补签，避免被物理环境阻塞
+- **TDD RED→GREEN 双 commit 模式**：Phase 31 exitcodes / Phase 34 errcodes / Phase 32 reconnect 退避序列均先证伪后实现，commit 历史清晰
+
+### What Was Inefficient
+
+- **Phase 31/35 缺 phase-level VERIFICATION.md**：plan-level SUMMARY 完整 + 测试覆盖足够 ship 信心，但 audit 阶段 3-source 交叉对账多花了 30+ 分钟；应在每个 phase 完成时强制走 `/gsd-verify-phase`
+- **REQUIREMENTS.md traceability 表 9 条 REQ drift**：phase VERIFICATION.md 已 ✓ SATISFIED 但 traceability 表仍标 Pending，audit 时手动修订；应在 verifier 内置 REQUIREMENTS.md 同步动作
+- **SUMMARY frontmatter `requirements-completed:` 字段缺失**：Phase 31 三个 plan 的 SUMMARY 完全缺这个 field；其它 phase 也部分缺；audit 阶段 3-source 交叉对账时变成空白行
+- **Phase 32 第一轮 verifier 漏 Gap #1 / #2**：BufferedStdin 与 Reconnector 共享 atomic.Int32 在 PLAN 中标了"占位"但执行时被忽略，第二轮 verify 才发现；verifier 应对每个 PLAN 中标"占位/postpone"的 hook 显式询问"已闭合？"
+- **mutagen 二进制 stub 提交占位**：Plan 31-01 提交了 PENDING-FETCH × 4 的占位 stub，依赖 CI build-images workflow 拉真实二进制；本地 test fixture 可能跑不起来，但通过 //go:build integration 隔离规避
+- **spec/code 数字漂移**：Registry 43 vs spec 42 / ExtendedExplanations 39 vs 38 / FixerRegistry 6 vs 5 — 实现超出最小值无害，但 release notes 一致性需要后期对齐
+- **Phase 35 自动化基准跑 PASS / 真机签字 deferred**：BASE-02 真机签字依赖物理拔网与多种 OS，CI 无法替代；ship 流程必须包含真机签字闸门
+
+### Patterns Established
+
+- **Critical Pitfalls 前置 + phase-level 防御任务**：研究阶段识别 N 个陷阱，每个 phase PLAN.md 显式列出防御任务 + verification 段验证手段
+- **Gap-closure plan**：verifier 发现 SC 不达标时追加 plan-level closure（Plan 04/05）而非整体重写
+- **Post-execution patch 三件套**：UAT 发现 wiring 缺口时追加 ≤3 commit 闭合，不触发新一轮 phase；以 Plan SUMMARY 的 deviation 章节追溯
+- **错误码 4 段统一 + 4 域闭合**：`<DOMAIN>_<KIND>_<NUM>` 格式 + CI 单测遍历 + ExtendedExplanations 长说明 + `explain <code>` 子命令；适用于多 phase 横切关注点
+- **doctor 5 维度 18 项 check + 4 要素输出**：每条 `[符号] 原因（建议: ... | 错误码: ...）` + JSON schema_v1 锁死 + `--fix` 串行 60s timeout + Status 不降级；CI grep 闸门防 PASS/FAIL only 退化
+- **HUMAN-UAT 跟踪文件三段式**：status (partial/resolved) + 多 test 块（expected/how-to-verify/result/why_human）+ Summary 计数 + Resolution Path 闭环
+- **gsd-integration-checker 在 audit 阶段补强**：通过 cross-phase exports/consumers 映射 + E2E flow 验证暴露 spec/code 漂移与文档侧 gap
+
+### Key Lessons
+
+1. **每个 phase 完成时必走 `/gsd-verify-phase`** — Phase 31/35/29.1 缺 VERIFICATION.md 让 audit 阶段 3-source 交叉对账多花 30+ 分钟；plan-level SUMMARY 不能完全替代 phase-level verifier 报告
+2. **PLAN 中"占位/postpone"的 hook 必须在 verifier 中显式追问** — Phase 32 Gap #1/#2 都是 PLAN 标占位但执行时未追加 carry-over plan；verifier checklist 应包含"PLAN 中标占位的 hook 是否已闭合"
+3. **REQUIREMENTS.md traceability 表应由 verifier 自动维护** — 9 条 drift REQ 在 audit 阶段才发现，verifier 跑完后应自动 PR 同步 traceability 状态
+4. **Critical Pitfalls 在研究阶段识别 + phase-level 防御任务是 v3.0 最大收益** — C1-C8 + M13/M14 全部覆盖且无生产事故，证明 ROADMAP 中显式列出 pitfall 防御 phase 的做法值得复用
+5. **Gap-closure plan + post-execution patch 比整体重做更经济** — Phase 32 Plan 04/05 + Phase 33 三个 post-fix 都是"小改 + 精准 verify"模式，避免触发新一轮 phase
+6. **真机签字闸门必须独立于 phase 完成** — Phase 35 选择 skip-real-hardware 让 phase 不被物理环境阻塞，但 ship 流程必须强制 3 项真机签字（M5/BASE-03 2min/C6）
+7. **gsd-integration-checker 在 audit 阶段补强 cross-phase wiring** — 单 phase verification 看不到 export/consumer 链路，integration check 是 audit 阶段必跑步骤
+8. **spec/code 数字漂移要在 ship 前对齐** — Registry 43 vs 42 / FixerRegistry 6 vs 5 等差异虽不影响功能，但 release notes 与运维手册的一致性需要 ship 前统一修订
+
+### Cost Observations
+
+- **Model mix**: balanced profile（model_profile = "balanced"）；planning/research 用默认 + Opus 多模型组合，execution 用 fast model
+- **Sessions**: 约 30+ 次会话完成全部 8 个 phase + audit；Phase 32/33 各占 ~6-8 次（gap-closure + post-fix 多轮迭代）
+- **Notable**: Phase 33 是最复杂 phase（control plane + image + admin GC 三层联动 + UAT 用户 "成了" 双闸门），耗时 2 天；Phase 35 自动化部分 5 plan 在 1 天内完成
+- **Mutagen go:embed 增加 binary size**：cloud-claude 二进制从 ~15MB 涨到 ~64MB（4 平台 ~49MB），用户分发体积较大但消除 brew install 依赖
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -145,6 +214,7 @@
 | v1.0 | 3 days | 6 | 19 | 首个里程碑 — 建立了完整的 GSD 工作流 |
 | v1.1 | 3 days | 4 | 11 | 审计驱动的技术债务修复 — 审计发现问题后立即创建修复阶段 |
 | v2.0 | 1 day | 5 | 7 | 最高效里程碑 — 平均每个计划 2.1 分钟，复用现有基础设施 |
+| v3.0 | 5 days | 8 (含 1 hotfix) | 30 | 最复杂里程碑 — Critical Pitfalls 前置研究 + Gap-closure plan + post-execution patch + integration-checker audit |
 
 ### Cumulative Quality
 
@@ -153,13 +223,18 @@
 | v1.0 | 76 | ~14,272 | 19 | — |
 | v1.1 | 76+ | ~16,958 | 11 | — |
 | v2.0 | 76+ | ~28,877 | 7 | ~2.1 min |
+| v3.0 | 200+ | ~45,766 | 30 | ~10-30 min（含 gap-closure / post-fix）|
 
 ### Top Lessons (Verified Across Milestones)
 
-1. 验证流程应覆盖所有阶段，不跳过早期阶段
-2. 横切关注点（如事件记录）引入时应立即全量扫描覆盖范围
-3. 错误码的定义端和消费端应同步建立映射
-4. 对称设计（如 Provider 工厂 + 流水线对称结构）能大幅降低新功能的实现成本
+1. 验证流程应覆盖所有阶段，不跳过早期阶段（v1.0 → v3.0 反复印证：Phase 1 / 11/12 / 31/35/29.1 都因缺 VERIFICATION.md 在 audit 阶段付额外成本）
+2. 横切关注点（如事件记录、错误码）引入时应立即全量扫描覆盖范围
+3. 错误码的定义端和消费端应同步建立映射（v1.0 worker bootstrap_errors 漏映射 → v3.0 Phase 34 用 4 段 Registry 闭合）
+4. 对称设计（Provider 工厂 / 流水线对称 / Wave 化依赖注入 hooks）能大幅降低新功能的实现成本
 5. 审计应在里程碑末期立即执行，发现的问题当天修复，避免跨里程碑遗留
-6. 零改造验证应尽早做——确认现有组件能否复用，是后续阶段最大的风险消除
-7. 基础设施复用是提速关键——v2.0 复用了 SSH Proxy、Entry API、受管镜像等 v1.x 基础设施，开发效率倍增
+6. 零改造验证应尽早做（v2.0 Phase 24 SSH Proxy 零改造 = 后续 4 phase 最大风险消除）
+7. 基础设施复用是提速关键（v2.0 → v3.0 复用 Entry API / 受管镜像 / SSH Proxy / 退出码透传）
+8. **Critical Pitfalls 前置研究 + phase-level 防御任务（v3.0 新）** — C1-C8 + M13/M14 全部覆盖且无生产事故
+9. **Gap-closure plan + post-execution patch 比整体重做更经济（v3.0 新）** — Plan 04/05 + Phase 33 三个 post-fix 都验证了"小改 + 精准 verify"模式
+10. **REQUIREMENTS.md traceability 应由 verifier 自动同步（v3.0 新发现）** — 9 条 drift REQ 在 audit 阶段才发现，verifier 跑完后应自动同步状态
+11. **真机签字闸门必须独立于 phase 完成（v3.0 新）** — skip-real-hardware 路径让 phase 不被物理环境阻塞，但 ship 流程强制真机签字

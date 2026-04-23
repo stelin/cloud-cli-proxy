@@ -1,5 +1,51 @@
 # Milestones
 
+## v3.0 远端开发体验升级 (Shipped: 2026-04-23)
+
+**Phases completed:** 8 phases (含 1 P0 hotfix decimal Phase 29.1), 30 plans, ~75 tasks
+**Git range:** 2f6c041 (2026-04-18) → 3a86bad (2026-04-23) — 208 commits, 255 files (+72,879/-335 lines, 含 Mutagen 4 平台 ~49MB go:embed 二进制)
+**Codebase LOC:** Go 29,535 / TS+TSX 11,772 / Shell 4,459 = 45,766 total
+
+**Key accomplishments:**
+
+- 三层文件系统架构：Mutagen 热同步白名单（≤50MB + ignore）+ sshfs 冷兜底全量懒拉 + mergerfs 单一 `/workspace` 视图，替换 v2.0 纯 sshfs 性能天花板
+- `--mount-mode=auto|full|mutagen-only|sshfs-only` 四档降级状态机：任一层失败 ≤2s 降级 + 禁止静默降级 + last-session.json downgrade_chain 留痕 + banner 彩色 mount 模式标签（NO_COLOR 尊重）
+- SSH 弱网容忍：KeepAlive 15s/4 强制下限 + Reconnector 退避 1/2/4/8/30s + token 复用不弹密码 + BufferedStdin 灰色未确认本地 echo + ringBuf 按序回放
+- tmux 默认包装 + 多端共享 attach：`exec tmux new-session -A -s claude-<account_id>` + `cloud-claude sessions ls/attach` + `--new-session`/`--take-over` + 第二端 banner 显示其它会话来源 + 活跃时间
+- 账号级 Mutagen 单例锁：远程 flock + ErrSyncLocked 降级 ModeSSHFSOnly + IsSecondaryClient=true + last-session.json client_role=secondary
+- Claude Code OAuth 持久化：单 Docker named volume `claude-state-{claude_account_id}` + label `com.cloud-cli-proxy.account_id` + entrypoint symlink + chown 1000:1000 兜底；admin DELETE claude_account 事务性联动 `volume rm`（强一致 10s + force 30s 双路径，错误码 STATE_VOLUME_IN_USE_001 + 6 类 audit 事件）
+- `cloud-claude doctor` 5 维度 18 项 check（network/auth/ssh/mount=mutagen+sshfs+mergerfs/disk）+ 6 类自动 fix（mutagen agent / FUSE 残留 / known_hosts / token / OAuth refresh / DNS）+ JSON schema_v1 + 退出码 0/1/2 brew 对齐 + 第一屏降级历史 banner + scripts/ci-doctor-grep.sh M14 闸门
+- 错误码统一：42 条 Code 8 域闭合（MOUNT/SESSION/NET/STATE/SYSTEM/SSH/AUTH/DISK + 既有），格式 `<DOMAIN>_<KIND>_<NUM>`，三要素强制（Code + 中文 message + 中文 next_action），CI 单测遍历 + `cloud-claude explain <code>` 子命令对每个码给 ≥200 字符长说明（rustc 风格）
+- 镜像 v3 基线：mergerfs 2.41.1（GitHub static `.deb` 反 PITFALLS M3）+ mutagen-agent v0.18.1 tarball 预放 + tmux 3.6a 核对 + libfuse3 3.18.x；entrypoint 串行 prepare-fuse → chown → mutagen-agent → mergerfs → wait → exec sshd（防 PITFALLS M4）；image.lock v3.0.0 + CI 镜像 ≤ 700MB gate
+- Worker 容器参数扩展：`HostActionRequest.Volumes []VolumeMount` + `ClaudeAccountID` 字段；`createHost` 在 ClaudeAccountID 非空时自动 `ensureDockerVolume` 幂等创建 + 追加 mount + Upsert 写库
+- 控制面数据模型：migration 0014 `claude_accounts.persistent_volume_name`；Entry API `/v1/entry/{id}/auth` 追加 `image_version` / `supports_mutagen` / `supports_mergerfs` / `claude_account_id`（向后兼容，旧 v2 client 不破）
+- v3 受管镜像 + 部署文档：Ubuntu 25.04 AppArmor `local override`（防御 PITFALLS C6）+ `host-preflight.sh` 检测脚本 + 5 章 docs/runbooks/v3-* 升级手册（升级 / AppArmor / doctor 排障 / 持久卷 / 错误码索引）
+- E2E 验收脚本：scripts/perf-benchmark.sh + cold-start-benchmark.sh + uat-network-resilience.sh + degradation-regression.sh + v3-acceptance-checklist.sh 聚合；CI ci.yml 加 perf-benchmark + image-size-regression jobs
+- v2.0 GetHost entry_password 全链路密码退化 P0 hotfix（Phase 29.1 INSERTED）：仓储 6 个 Host 读 SQL 全补 entry_password + runtime/worker fail-fast + entrypoint passwd -S 自检 + admin batch resync 端点
+
+**Coverage:**
+
+- Requirements: **33/34 satisfied** — 30 functional + 3 baselines（BASE-01/03/04）satisfied；BASE-02 自动化 PASS / 真机签字 deferred-to-ship
+- Cross-phase integration: 4 条核心 E2E flow 全闭环（cloud-claude 启动 / 网络抖动重连 / admin DELETE volume rm / doctor + ApplyFixes）；零 orphan export，零 broken wiring
+- Critical Pitfalls 防御：C1/C2/C3/C4/C5/C6/C7/C8 + M13/M14 全部覆盖（验证手段见 v3.0-MILESTONE-AUDIT.md）
+
+**Known deferred items at close:** 23 (see STATE.md `## Deferred Items`)
+- 3 真机签字（M5 APFS / BASE-03 2min / C6 Ubuntu 25.04）— ship 前补签
+- 2 v1.2 历史 verification gap（Phase 11/12，与 v3.0 无关）
+- 5 docker UAT（Phase 32 → Phase 35 真机 UAT 队列）
+- 9 quick_tasks（与 v3.0 milestone goal 无直接绑定）
+- 14 项 tech debt（WR/HR/MR 系列 + spec/code 数字漂移）
+
+**Audit:** `.planning/milestones/v3.0-MILESTONE-AUDIT.md` (status: tech_debt — 0 实现 gap，4 E2E flow WIRED)
+**Tag:** v3.0
+**Archive:**
+- `.planning/milestones/v3.0-ROADMAP.md`
+- `.planning/milestones/v3.0-REQUIREMENTS.md`
+- `.planning/milestones/v3.0-MILESTONE-AUDIT.md`
+- `.planning/milestones/v3.0-phases/` (8 phase directories)
+
+---
+
 ## v2.0 cloud-claude 透明远程 CLI (Shipped: 2026-04-15)
 
 **Phases completed:** 5 phases, 7 plans, 16 tasks
