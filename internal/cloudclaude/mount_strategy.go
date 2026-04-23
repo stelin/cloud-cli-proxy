@@ -95,9 +95,29 @@ type MountConfig struct {
 	// last-session.json 的 ClientRole 写为 "secondary"（默认 "primary"）。
 	IsSecondaryClient bool
 
+	// [Phase 36 D-04] 单文件热同步大小上限（MB）。
+	// 由调用方从 cfg.EffectiveHotSyncMaxFileMB() 注入；零值/负值时
+	// effectiveHotSyncMaxFileMB() 兜底为 mountDefaultHotSyncMaxFileMB=50，
+	// 与 Config.EffectiveHotSyncMaxFileMB() 保持同一默认。
+	HotSyncMaxFileMB int
+
 	// 测试 hook：仅用于单测注入；生产路径 nil 时走真实实现。
 	overrideCaseInsensitive *bool
 	hooks                   *strategyHooks
+}
+
+// mountDefaultHotSyncMaxFileMB 与 Config.defaultHotSyncMaxFileMB 同步默认。
+// 调用方未注入 MountConfig.HotSyncMaxFileMB 时（零值或负值），
+// effectiveHotSyncMaxFileMB() 返回该常量，与 Config 层兜底保持一致。
+const mountDefaultHotSyncMaxFileMB = 50
+
+// effectiveHotSyncMaxFileMB 把 MountConfig.HotSyncMaxFileMB 兜底为
+// mountDefaultHotSyncMaxFileMB，避免调用方未注入字段时静默关闭单文件熔断。
+func (c *MountConfig) effectiveHotSyncMaxFileMB() int {
+	if c.HotSyncMaxFileMB <= 0 {
+		return mountDefaultHotSyncMaxFileMB
+	}
+	return c.HotSyncMaxFileMB
 }
 
 // strategyHooks 让 mount_strategy_test.go 注入三层 mount 的 mock 实现，
@@ -221,6 +241,28 @@ func MountWorkspace(connA, connB *ssh.Client, cfg MountConfig) (cleanup func(), 
 		if mErr == nil {
 			snapshot.ActualMode = mode.String()
 			snapshot.ConflictCount = hotStatus.ConflictCount
+			// [Phase 36 D-09] 把 hot 层熔断结果透传到 last-session.json，
+			// 让 doctor (Plan 06 mount/oversized_files_count) 与下一次启动可读。
+			snapshot.OversizedFiles = hotStatus.OversizedFiles
+
+			// [Phase 36 D-08] 一次性 stderr 提示（在 printBanner 之前，避免刷屏）。
+			// 仅展示前 5 条，剩余条目引导用户去看 last-session.json。
+			// 注意：cfg.HotSyncMaxFileMB 走 effectiveHotSyncMaxFileMB() 兜底为 50，
+			// 与 hot 层实际熔断阈值保持一致（避免显示 0MB 的歧义）。
+			if n := len(hotStatus.OversizedFiles); n > 0 {
+				limit := n
+				if limit > 5 {
+					limit = 5
+				}
+				fmt.Fprintf(cfg.Logger, "[!] 跳过大文件 %d 个（>%dMB），由 cold 兜底:\n",
+					n, cfg.effectiveHotSyncMaxFileMB())
+				for _, f := range hotStatus.OversizedFiles[:limit] {
+					fmt.Fprintf(cfg.Logger, "  %s (%dMB)\n", f.Path, f.SizeBytes/1024/1024)
+				}
+				if n > 5 {
+					fmt.Fprintf(cfg.Logger, "  ... 还有 %d 个，见 ~/.cloud-claude/last-session.json\n", n-5)
+				}
+			}
 
 			printBanner(cfg.Logger, mode, cfg.NoColor)
 			if hotStatus.ConflictCount > 0 {
@@ -373,6 +415,9 @@ func tryModeReal(connA, connB *ssh.Client, mode Mode, cfg MountConfig) (cleanup 
 	}
 
 	ignorePatterns := LoadMountIgnorePatterns(cfg.Cwd)
+	// [Phase 36 D-05] 单文件熔断阈值，从 MountConfig 透传到 HotSyncConfig.MaxFileBytes。
+	// 零值/负值在 effectiveHotSyncMaxFileMB() 内已兜底为 mountDefaultHotSyncMaxFileMB=50。
+	maxFileBytes := int64(cfg.effectiveHotSyncMaxFileMB()) * 1024 * 1024
 
 	// HotOnly：不启冷层、不做合并，直接把热同步目标设为 cfg.Cwd。
 	if mode == ModeHotOnly {
@@ -382,6 +427,7 @@ func tryModeReal(connA, connB *ssh.Client, mode Mode, cfg MountConfig) (cleanup 
 			ResetRemote:    false,
 			IgnorePatterns: ignorePatterns,
 			Logger:         cfg.Logger,
+			MaxFileBytes:   maxFileBytes,
 		})
 	}
 
@@ -394,6 +440,7 @@ func tryModeReal(connA, connB *ssh.Client, mode Mode, cfg MountConfig) (cleanup 
 		ResetRemote:    true,
 		IgnorePatterns: ignorePatterns,
 		Logger:         cfg.Logger,
+		MaxFileBytes:   maxFileBytes,
 	})
 	if hErr != nil {
 		return nil, HotSyncStatus{}, hErr
