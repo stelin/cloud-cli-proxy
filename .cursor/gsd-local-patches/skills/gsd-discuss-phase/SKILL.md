@@ -1,6 +1,6 @@
 ---
 name: gsd-discuss-phase
-description: "Gather phase context through adaptive questioning before planning. Use --auto to skip interactive questions (Claude picks recommended defaults)."
+description: "Gather phase context through adaptive questioning before planning. Use --all to skip area selection and discuss all gray areas interactively. Use --auto to skip interactive ques..."
 ---
 
 <cursor_skill_adapter>
@@ -42,10 +42,15 @@ Extract implementation decisions that downstream agents need — researcher and 
 </objective>
 
 <execution_context>
-@.cursor/get-shit-done/workflows/discuss-phase.md
-@.cursor/get-shit-done/workflows/discuss-phase-assumptions.md
-@.cursor/get-shit-done/templates/context.md
+@/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/workflows/discuss-phase.md
+@/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/workflows/discuss-phase-assumptions.md
+@/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/workflows/discuss-phase-power.md
+@/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/templates/context.md
 </execution_context>
+
+<runtime_note>
+**Copilot (VS Code):** Use `vscode_askquestions` wherever this workflow calls `conversational prompting`. They are equivalent — `vscode_askquestions` is the VS Code Copilot implementation of the same interactive question API.
+</runtime_note>
 
 <context>
 Phase number: {{GSD_ARGS}} (required)
@@ -56,12 +61,12 @@ Context files are resolved in-workflow using `init phase-op` and roadmap/state t
 <process>
 **Mode routing:**
 ```bash
-DISCUSS_MODE=$(node ".cursor/get-shit-done/bin/gsd-tools.cjs" config-get workflow.discuss_mode 2>/dev/null || echo "discuss")
+DISCUSS_MODE=$(gsd-sdk query config-get workflow.discuss_mode 2>/dev/null || echo "discuss")
 ```
 
-If `DISCUSS_MODE` is `"assumptions"`: Read and execute @.cursor/get-shit-done/workflows/discuss-phase-assumptions.md end-to-end.
+If `DISCUSS_MODE` is `"assumptions"`: Read and execute @/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/workflows/discuss-phase-assumptions.md end-to-end.
 
-If `DISCUSS_MODE` is `"discuss"` (or unset, or any other value): Read and execute @.cursor/get-shit-done/workflows/discuss-phase.md end-to-end.
+If `DISCUSS_MODE` is `"discuss"` (or unset, or any other value): Read and execute @/Users/zaneliu/Projects/open-source/cloud-cli-proxy/.cursor/get-shit-done/workflows/discuss-phase.md end-to-end.
 
 **MANDATORY:** The execution_context files listed above ARE the instructions. Read the workflow file BEFORE taking any action. The objective and success_criteria sections in this command file are summaries — the workflow file contains the complete step-by-step process with all required behaviors, config checks, and interaction patterns. Do not improvise from the summary.
 </process>

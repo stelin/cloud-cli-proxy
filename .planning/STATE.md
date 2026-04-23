@@ -4,12 +4,12 @@ milestone: v3.1
 milestone_name: 映射语义补齐与懒加载
 status: Ready to start Phase 36
 stopped_at: Phase 36 context gathered
-last_updated: "2026-04-23T08:42:52.104Z"
+last_updated: "2026-04-23T10:25:43.039Z"
 last_activity: 2026-04-23 — Milestone v3.1 roadmap committed (2 phases, 16 REQ)
 progress:
   total_phases: 2
   completed_phases: 0
-  total_plans: 0
+  total_plans: 6
   completed_plans: 0
   percent: 0
 ---
@@ -149,3 +149,5 @@ Items acknowledged and deferred at v3.0 milestone close on 2026-04-23:
 | tech_debt | Phase 35 — M13 destructive 测试需 --confirm-destructive 默认 SKIP | accepted | T-35-05-03 mitigation |
 | tech_debt | cross-cutting — Spec/code 数字漂移 (Registry 43 vs spec 42, ExtendedExplanations 39 vs 38, FixerRegistry 6 vs 5) | doc_only | 均 ≥ 需求最小值；建议 ship 前对齐 spec |
 | tech_debt | cross-cutting — ROADMAP 未记 SupportsMutagen 字段省略的设计变更 | doc_only | Phase 31 用自研 hot-sync 替换 Mutagen，留 SupportsMergerfs 等价；v3.1 spec 修订 |
+
+**Planned Phase:** 36 (映射前置约束 + sshfs 内核缓存) — 6 plans — 2026-04-23T10:25:43.029Z
