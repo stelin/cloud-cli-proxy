@@ -169,7 +169,7 @@ func (e *HotSyncEngine) initialSync() error {
 	// 注意：scanLocalSyncFiles 内部的 IgnoreMatcher 已经第一层过滤掉 ignore 命中文件；
 	// Phase 31 D-11 整目录级 SkipDir（在 scanLocalSyncFiles 内部）保持不动，
 	// 与本处单文件级熔断互补，executor 不得删除或合并。
-	e.applyOversizedFilter(localFiles, true)
+	oversizedSet := e.applyOversizedFilter(localFiles, true)
 
 	// 隐藏 staging 路径允许重置；直接映射到 cfg.Cwd 的 hot-only 路径则必须保守，
 	// 不能清空用户可见目录。
@@ -192,6 +192,12 @@ func (e *HotSyncEngine) initialSync() error {
 	remoteFiles, err := scanRemoteSyncFiles(e.client, e.remoteDir, e.matcher)
 	if err != nil {
 		return newHotSyncErr("扫描远端目录失败: " + err.Error())
+	}
+	// CR-01 修复：从 remoteFiles 中剔除 oversized 集合，避免 chooseConflictWinner
+	// 在「本地被 filter 删除 + 远端有旧版本」场景命中 "remote" 分支后
+	// applyRemote → copyRemoteToLocal 反向覆盖本地大文件。
+	for rel := range oversizedSet {
+		delete(remoteFiles, rel)
 	}
 	paths := make(map[string]struct{}, len(localFiles)+len(remoteFiles))
 	for p := range localFiles {
@@ -247,10 +253,16 @@ func (e *HotSyncEngine) syncOnce(logConflicts bool) error {
 	// [Phase 36 L3] syncOnce 也跳过大文件，防止用户中途新增大文件被推到 hot。
 	// 仅静默跳过，不更新 e.oversized：初始扫描列表已写入 last-session.json，
 	// 轮询阶段不刷屏（D-22）。
-	e.applyOversizedFilter(localFiles, false)
+	oversizedSet := e.applyOversizedFilter(localFiles, false)
 	remoteFiles, err := scanRemoteSyncFiles(e.client, e.remoteDir, e.matcher)
 	if err != nil {
 		return fmt.Errorf("扫描远端目录失败: %w", err)
+	}
+	// CR-01 修复：syncOnce 也要把 oversized 从 remoteFiles 中剔除，
+	// 防止 paths union 命中「本地不存在 + 远端存在 + base 不存在」分支后
+	// applyRemote → copyRemoteToLocal 把远端旧版本写回本地。
+	for rel := range oversizedSet {
+		delete(remoteFiles, rel)
 	}
 
 	paths := make(map[string]struct{}, len(e.last)+len(localFiles)+len(remoteFiles))
@@ -418,18 +430,29 @@ func (e *HotSyncEngine) deleteLocal(rel string) error {
 // recordOversized=false 时仅静默 delete（syncOnce 路径，避免刷屏）。
 //
 // MaxFileBytes <= 0 时整段为 no-op，等价于 Phase 36 之前行为（不熔断）。
-func (e *HotSyncEngine) applyOversizedFilter(localFiles map[string]syncFileState, recordOversized bool) {
+//
+// CR-01 修复：除了 delete(localFiles, rel)，还必须 delete(e.last, rel)，
+// 否则 HotOnly 模式（resetRemote=false）下，syncOnce 会把「本地不存在 +
+// base 中存在」误判为本地删除 → applyLocal({},false) → deleteRemote → 远端
+// 大文件被静默删除。同时返回 oversizedSet 给调用方，让 paths union 与
+// remoteFiles 都跳过这些 rel，避免 initialSync 阶段的 chooseConflictWinner
+// 把 remote 旧版本反向覆盖到本地。
+func (e *HotSyncEngine) applyOversizedFilter(localFiles map[string]syncFileState, recordOversized bool) map[string]struct{} {
 	if e.maxFileBytes <= 0 {
-		return
+		return nil
 	}
+	oversizedSet := make(map[string]struct{})
 	for rel, state := range localFiles {
 		if state.Size >= e.maxFileBytes {
 			if recordOversized {
 				e.oversized = append(e.oversized, OversizedFile{Path: rel, SizeBytes: state.Size})
 			}
 			delete(localFiles, rel)
+			delete(e.last, rel)
+			oversizedSet[rel] = struct{}{}
 		}
 	}
+	return oversizedSet
 }
 
 func scanLocalSyncFiles(root string, matcher *IgnoreMatcher) (map[string]syncFileState, error) {
