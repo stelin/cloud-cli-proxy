@@ -47,6 +47,9 @@ secrets/
 # Dev data
 .data/
 
+# Planning runtime outputs
+.planning/phases/*/benchmarks/
+
 host-agent
 web/admin/.tanstack/
 
