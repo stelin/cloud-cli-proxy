@@ -36,7 +36,7 @@
 ### B1 · 冷分支 inotify watcher（F5）
 
 - [x] **REQ-MOUNT-V31-07**：Full 模式 mount 就绪后，在容器内 cold 分支根目录长驻 `cold-promoter` 进程，使用 inotify（`IN_OPEN` / `IN_ACCESS`）监听冷文件读事件；启动失败必须 stderr 输出 `MOUNT_PROMOTER_FAILED` 但**不阻断**主路径（降级为"无晋升"模式，cold 仍可读）
-- [ ] **REQ-MOUNT-V31-08**：watcher 进程在 mount cleanup（LIFO）时被回收：`mountStrategy.cleanup` 触发 → cancel watcher ctx → wait 进程退出 → fusermount → rmdirChain；异常退出场景（panic / SSH 断连）下次 mount 启动前必须能清理上一次残留进程（`pkill -f cold-promoter --pidfile`）
+- [x] **REQ-MOUNT-V31-08**：watcher 进程在 mount cleanup（LIFO）时被回收：`mountStrategy.cleanup` 触发 → cancel watcher ctx → wait 进程退出 → fusermount → rmdirChain；异常退出场景（panic / SSH 断连）下次 mount 启动前必须能清理上一次残留进程（`pkill -f cold-promoter --pidfile`）
 
 ### B2 · 异步 SFTP 晋升 + 防抖熔断（F6）
 
@@ -46,8 +46,8 @@
 ### B3 · mergerfs 自然命中 hot + 关闭开关（F7）
 
 - [ ] **REQ-MOUNT-V31-11**：晋升完成后，下次对该文件的 `cat` 必须直接走 hot 分支（mergerfs `category.create=ff` 行为天然命中 hot）；e2e 验证：首次读一个 PNG → SFTP read count +N，第二次读 → SFTP read count 不变
-- [ ] **REQ-MOUNT-V31-12**：`last-session.json` 新增 `promotion_count` / `promotion_bytes` / `promotion_failed_count` 三字段；schema_version 不变（omitempty）
-- [ ] **REQ-MOUNT-V31-13**：环境变量 `CLOUD_CLAUDE_NO_PROMOTION=1` 完全关闭晋升机制（watcher 不启动、PromotionEngine 不构造）；用户主动触发的晋升**不被 ignore 二次过滤**（已主动读 = 用户意图明确，即使是 `.gitignore` 命中的 `.png` 也允许晋升）
+- [x] **REQ-MOUNT-V31-12**：`last-session.json` 新增 `promotion_count` / `promotion_bytes` / `promotion_failed_count` 三字段；schema_version 不变（omitempty）
+- [x] **REQ-MOUNT-V31-13**：环境变量 `CLOUD_CLAUDE_NO_PROMOTION=1` 完全关闭晋升机制（watcher 不启动、PromotionEngine 不构造）；用户主动触发的晋升**不被 ignore 二次过滤**（已主动读 = 用户意图明确，即使是 `.gitignore` 命中的 `.png` 也允许晋升）
 
 ### B4 · doctor 晋升可观测 + runbook + e2e UAT（F8）
 
@@ -85,12 +85,12 @@
 | REQ-MOUNT-V31-05 | 36 | pending |
 | REQ-MOUNT-V31-06 | 36 | completed |
 | REQ-MOUNT-V31-07 | 37 | Complete |
-| REQ-MOUNT-V31-08 | 37 | pending |
+| REQ-MOUNT-V31-08 | 37 | Complete |
 | REQ-MOUNT-V31-09 | 37 | Complete |
 | REQ-MOUNT-V31-10 | 37 | Complete |
 | REQ-MOUNT-V31-11 | 37 | pending |
-| REQ-MOUNT-V31-12 | 37 | pending |
-| REQ-MOUNT-V31-13 | 37 | pending |
+| REQ-MOUNT-V31-12 | 37 | Complete |
+| REQ-MOUNT-V31-13 | 37 | Complete |
 | REQ-MOUNT-V31-14 | 37 | pending |
 | REQ-MOUNT-V31-15 | 37 | Complete |
 | REQ-MOUNT-V31-16 | 37 | pending |
