@@ -337,8 +337,9 @@ func TestCheckGitProxyEnabled_Warn_NoGit(t *testing.T) {
 	if c.Status != StatusWarn {
 		t.Errorf("不含 git proxy 应 Warn，实际 %s (msg=%q)", c.Status, c.Message)
 	}
-	if c.Code != errcodes.AUTH_CONFIG_MISSING {
-		t.Errorf("Code 应为 AUTH_CONFIG_MISSING，实际 %q", c.Code)
+	// WR-01：从 AUTH_CONFIG_MISSING 改为专属 MOUNT_GIT_PROXY_DISABLED Code。
+	if c.Code != errcodes.MOUNT_GIT_PROXY_DISABLED {
+		t.Errorf("Code 应为 MOUNT_GIT_PROXY_DISABLED，实际 %q", c.Code)
 	}
 }
 
@@ -366,7 +367,8 @@ func TestCheckDefaultIgnoreLoaded_Warn_Set(t *testing.T) {
 	if c.Status != StatusWarn {
 		t.Errorf("env=1 应 Warn，实际 %s", c.Status)
 	}
-	if c.Code != errcodes.AUTH_CONFIG_MISSING {
-		t.Errorf("Code 应为 AUTH_CONFIG_MISSING，实际 %q", c.Code)
+	// WR-01：从 AUTH_CONFIG_MISSING 改为专属 MOUNT_DEFAULT_IGNORE_DISABLED Code。
+	if c.Code != errcodes.MOUNT_DEFAULT_IGNORE_DISABLED {
+		t.Errorf("Code 应为 MOUNT_DEFAULT_IGNORE_DISABLED，实际 %q", c.Code)
 	}
 }

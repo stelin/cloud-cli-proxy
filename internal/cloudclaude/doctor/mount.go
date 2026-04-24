@@ -243,15 +243,19 @@ func checkGitProxyEnabled(ctx context.Context) Check {
 			return newPass("mount", "git_proxy_enabled", "proxy_commands 包含 git")
 		}
 	}
-	return newWarn("mount", "git_proxy_enabled", errcodes.AUTH_CONFIG_MISSING,
-		"proxy_commands 未包含 git")
+	// WR-01：使用专属 MOUNT_GIT_PROXY_DISABLED Code（Severity=Warn，Message
+	// 不带占位符）。原本误用 AUTH_CONFIG_MISSING 会让 newWarn 渲染出
+	// 「~/.cloud-claude/config.yaml 不存在或解析失败: proxy_commands 未包含 git」
+	// 这种与真实场景相反的文案，且 NextAction 错误地建议「运行 cloud-claude init」。
+	return newWarn("mount", "git_proxy_enabled", errcodes.MOUNT_GIT_PROXY_DISABLED)
 }
 
 // checkDefaultIgnoreLoaded 检查默认二进制黑名单是否被 CLOUD_CLAUDE_NO_DEFAULT_IGNORE 禁用（D-13）。
 func checkDefaultIgnoreLoaded(ctx context.Context) Check {
 	if os.Getenv("CLOUD_CLAUDE_NO_DEFAULT_IGNORE") == "1" {
-		return newWarn("mount", "default_ignore_loaded", errcodes.AUTH_CONFIG_MISSING,
-			"CLOUD_CLAUDE_NO_DEFAULT_IGNORE=1，已禁用默认二进制黑名单")
+		// WR-01：同上，改用 MOUNT_DEFAULT_IGNORE_DISABLED 专属 Code，
+		// 避免误用 AUTH_CONFIG_MISSING 导致 sprintf 拼接出错乱文案与误导性 NextAction。
+		return newWarn("mount", "default_ignore_loaded", errcodes.MOUNT_DEFAULT_IGNORE_DISABLED)
 	}
 	return newPass("mount", "default_ignore_loaded", "默认二进制黑名单已加载")
 }

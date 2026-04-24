@@ -129,6 +129,18 @@ registerExplanation(MOUNT_FORCE_MODE_FAILED, `触发场景：用户通过 --moun
 修复路径：如果你确实希望它参与热同步，可以手动编辑 ~/.cloud-claude/config.yaml 调高 hot_sync_max_file_mb；如果它本就不需要同步，建议把路径加入 .gitignore 或 cloud-claude 的忽略列表，减少启动期提示噪音；如果只是偶尔读取，保持默认配置即可，因为 cold sshfs 仍会提供完整访问，且结合 page cache 后重复读取成本会明显下降。
 关联文档：.planning/REQUIREMENTS.md REQ-MOUNT-V31-02 / REQ-MOUNT-V31-03；.planning/milestones/v3.0-phases/31-cli/31-CONTEXT.md §D-11`)
 
+	registerExplanation(MOUNT_GIT_PROXY_DISABLED, `触发场景：cloud-claude doctor mount 在体检本地配置时发现 ~/.cloud-claude/config.yaml 中 proxy_commands 字段没有包含 "git" 字面量，意味着用户后续在 cloud-claude 会话内执行 git 子命令时不会自动走本地侧的命令代理转发，远端容器内的 git 调用将直接命中容器原生网络出口，可能拿不到本地 ssh-agent 凭证或本地 GPG 配置。
+根本原因：cloud-claude 默认通过 proxy_commands 列表把若干高频本地交互命令（典型为 git）通过宿主机侧的 socket 反向暴露给远端容器，让远端 git 命令复用本地 SSH 私钥与 GPG 签名能力。如果用户在 init 流程或后续手动编辑 config.yaml 时把 git 从该列表中删除，就只是禁用了这条便利通路，并不是配置文件本身损坏，所以 doctor 只给 Warn 级提示而不是 Fatal。
+复现方式：编辑 ~/.cloud-claude/config.yaml，把 proxy_commands 从 ["git"] 改成 ["curl"] 或 [] 后保存；运行 cloud-claude doctor mount 即可看到本条 Warn 出现在 mount 维度的输出中，且其 NextAction 直接指向编辑 proxy_commands 字段。
+修复路径：用任意编辑器打开 ~/.cloud-claude/config.yaml，把 proxy_commands 字段改回包含 "git" 的列表（例如 [git] 或 [git, curl]），保存后重启 cloud-claude，再跑一次 cloud-claude doctor mount 确认本条 check 变为 Pass；如果你刻意不想启用 git 代理，可以忽略本条 Warn，但要明白远端 git 子命令需要自带凭证。
+关联文档：.planning/phases/36-sshfs/36-REVIEW.md WR-01；internal/cloudclaude/config.go EffectiveProxyCommands；internal/cloudclaude/doctor/mount.go checkGitProxyEnabled`)
+
+	registerExplanation(MOUNT_DEFAULT_IGNORE_DISABLED, `触发场景：cloud-claude doctor mount 检查环境变量 CLOUD_CLAUDE_NO_DEFAULT_IGNORE 时发现其值为 "1"，意味着用户主动关闭了 cloud-claude 内置的默认二进制黑名单。该黑名单负责把常见的二进制文件（编译产物、模型权重、视频、压缩包、字体等）从热同步路径中剔除，关闭后这些文件会重新参与扫描和上传判定。
+根本原因：默认二进制黑名单是 Phase 36 引入的体验防御层，用于避免初次同步在大型仓库下被一堆显然不需要双向同步的二进制文件拖慢。少数排查场景下用户可能临时设置 CLOUD_CLAUDE_NO_DEFAULT_IGNORE=1 用来观察「如果不过滤会怎样」，但生产环境长期开启会显著拉升首次扫描时间、放大单文件熔断 oversized 提示数量，并让无意义的二进制变更触发热同步轮询。doctor 给 Warn 级提示提醒用户记得回滚。
+复现方式：在 shell 中执行 export CLOUD_CLAUDE_NO_DEFAULT_IGNORE=1，再运行 cloud-claude doctor mount，本条 Warn 会立即出现在 mount 维度输出；同 shell 启动 cloud-claude 时也会观察到原本被默认黑名单滤掉的二进制文件出现在热同步扫描或 oversized 列表中。
+修复路径：在 shell 中执行 unset CLOUD_CLAUDE_NO_DEFAULT_IGNORE 或在 ~/.zshrc / ~/.bashrc 里删除对应的 export 行后重启终端；如果确实需要长期保留某些被默认黑名单覆盖但又想同步的路径，建议改用 .gitignore + mount-ignore 的组合而不是关闭整个默认黑名单；最后再跑一次 cloud-claude doctor mount 确认本条 check 变回 Pass。
+关联文档：.planning/phases/36-sshfs/36-REVIEW.md WR-01；internal/cloudclaude/doctor/mount.go checkDefaultIgnoreLoaded；CLOUD_CLAUDE_NO_DEFAULT_IGNORE 默认黑名单设计`)
+
 	// ────────────────────────────────────────────────────────────────────
 	// NET_OAUTH_* 域 + NET_RECONNECT_* + NET_TCP_KEEPALIVE_*（Phase 31/32）
 	// ────────────────────────────────────────────────────────────────────

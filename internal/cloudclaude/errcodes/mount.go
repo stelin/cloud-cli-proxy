@@ -109,4 +109,22 @@ func init() {
 		Message:    "%s (%dMB) 超过 hot_sync_max_file_mb=%d 阈值，已跳过热同步，由 cold sshfs 兜底",
 		NextAction: "编辑 ~/.cloud-claude/config.yaml 调整 hot_sync_max_file_mb，或在 .gitignore 加入该路径",
 	})
+
+	// WR-01：doctor mount git_proxy_enabled / default_ignore_loaded 两条 check
+	// 之前误用 AUTH_CONFIG_MISSING（Severity=Fatal + Sprintf 占位符），
+	// 渲染出「~/.cloud-claude/config.yaml 不存在或解析失败: ...」误导文案。
+	// 注册下述两个 Warn 级专属 Code，Message 不带占位符。
+	MustRegister(Entry{
+		Code:       MOUNT_GIT_PROXY_DISABLED,
+		Severity:   SeverityWarn,
+		Message:    "proxy_commands 未包含 git，git 子命令不会走本地代理转发",
+		NextAction: "编辑 ~/.cloud-claude/config.yaml 的 proxy_commands 字段加入 git 后重启 cloud-claude",
+	})
+
+	MustRegister(Entry{
+		Code:       MOUNT_DEFAULT_IGNORE_DISABLED,
+		Severity:   SeverityWarn,
+		Message:    "CLOUD_CLAUDE_NO_DEFAULT_IGNORE=1，默认二进制黑名单已禁用，大文件可能进入热同步",
+		NextAction: "如非排查需要，请 unset CLOUD_CLAUDE_NO_DEFAULT_IGNORE 后重启 cloud-claude",
+	})
 }
