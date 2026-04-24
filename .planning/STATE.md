@@ -2,37 +2,37 @@
 gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: 映射语义补齐与懒加载
-status: unknown
-last_updated: "2026-04-24T05:34:22.364Z"
+status: shipped
+last_updated: "2026-04-24T16:47:05.934Z"
 progress:
-  total_phases: 5
-  completed_phases: 4
-  total_plans: 17
-  completed_plans: 16
+  total_phases: 2
+  completed_phases: 2
+  total_plans: 11
+  completed_plans: 11
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-23 — v3.1 milestone started)
+See: .planning/PROJECT.md (updated 2026-04-24 — v3.1 milestone shipped)
 
 **Core value:** 给每个用户提供一台开箱即用的 SSH 云主机，并且严格保证其所有出网流量都走受控的指定出口 IP
-**Current focus:** Phase 37 — cold promotion + e2e UAT
+**Current focus:** Planning next milestone
 
 ## Current Position
 
-Milestone: v3.1 映射语义补齐与懒加载 — 🟢 COMPLETE
+Milestone: v3.1 映射语义补齐与懒加载 — ✅ SHIPPED (2026-04-24)
 Phase: 37 (e2e-uat) — COMPLETE
 Plan: 5 of 5 (全部完成)
-Status: Phase 37 全部 5 个 plan 完成 — 37-01 至 37-05 全部落地
+Status: v3.1 归档完成，等待下一里程碑规划
 Last activity: 2026-04-24
 
-Progress: [██████████] 100% (17/17 plans across all phases)
+Progress: [██████████] 100% (11/11 plans across v3.1 phases)
 
 下一步选项：
 
-- `/gsd:execute-phase 37` — 继续执行 Phase 37 剩余计划
+- `/gsd:new-milestone` — 开始下一里程碑规划
 
 ## Accumulated Context
 

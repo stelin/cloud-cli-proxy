@@ -238,3 +238,108 @@
 9. **Gap-closure plan + post-execution patch 比整体重做更经济（v3.0 新）** — Plan 04/05 + Phase 33 三个 post-fix 都验证了"小改 + 精准 verify"模式
 10. **REQUIREMENTS.md traceability 应由 verifier 自动同步（v3.0 新发现）** — 9 条 drift REQ 在 audit 阶段才发现，verifier 跑完后应自动同步状态
 11. **真机签字闸门必须独立于 phase 完成（v3.0 新）** — skip-real-hardware 路径让 phase 不被物理环境阻塞，但 ship 流程强制真机签字
+
+---
+
+## Milestone: v3.1 — 映射语义补齐与懒加载
+
+**Shipped:** 2026-04-24
+**Phases:** 2 | **Plans:** 11 | **Timeline:** ~26 days span (2026-03-29 → 2026-04-24, Phase 36-37 active execution)
+
+### What Was Built
+
+- git 仓库强约束：`runRoot` 中 `os.Getwd()` + `git rev-parse --show-toplevel` 前置检查，`MOUNT_REQUIRE_GIT_REPO` + 中文 next_action + `exitConfigError`
+- 单文件 50MB 熔断：`Config.HotSyncMaxFileMB` / `MountConfig.effectiveHotSyncMaxFileMB()` 兜底 50MB；`HotSyncEngine.applyOversizedFilter` 双路径（initialSync 记录 + syncOnce 静默）；`last-session.json::oversized_files` + D-08 stderr 一次性提示
+- sshfs FUSE page cache：`mountSSHFS` 追加 `cache=yes,kernel_cache,auto_cache,cache_timeout=300`；`TestSSHFSCacheHitsKernelPageCache` fixture 计数器单测验证同会话二次 read count = 1
+- doctor mount 9 项 check：`checkRequireGitRepo` / `checkOversizedFilesCount` / `checkSSHFSCacheArgs` / `checkGitProxyEnabled` / `checkDefaultIgnoreLoaded`；13 条矩阵测试 + CI ci-doctor-grep 三段闸门继续 PASS
+- 2 条新错误码 + `explain` 长说明：`MOUNT_REQUIRE_GIT_REPO` / `MOUNT_OVERSIZED_FILE_SKIPPED`，rustc 风格 ≥200 字中文 ExtendedExplanation
+- ColdPromoter 核心引擎：`cold_promoter.go` inotify `IN_OPEN/IN_ACCESS` watcher + `PromotionEngine` 异步队列；5s `dedupWindow` + 1/2/4s 指数退避 + `circuitBreaker` 3 次熔断；`QueueDepth/Stats/Wait` 可观测 API；4 条核心单测（dedup/backoff/circuit/start-stop）含 -race PASS
+- tryModeReal Full 路径集成：mergerfs ready → `NewColdPromoter` → `go promoter.Run(ctx)`；cleanup LIFO：`promoterCancel → promoter.Wait → cancel watcher → merge → sshfs → hot_sync`
+- `CLOUD_CLAUDE_NO_PROMOTION=1` 全量关闭：promoter 保持 nil，cleanup guard 跳过，snapshot 字段零值 omitempty 不写入 JSON
+- promotion 统计持久化：`LastSessionSnapshot` 新增 `PromotionCount/PromotionBytes/PromotionFailedCount`；stats 在 writeLastSession 前刷入（mount 就绪时 = 0，plan 接受语义）
+- doctor 晋升 4 项可观测指标：`promoter_alive` / `promotion_queue_depth` / `promotion_total` / `promotion_failed_total`
+- 运维手册：`docs/runbooks/v31-cold-promotion.md` Pattern G（头部 + 6 章节 + 快速诊断命令），覆盖原理图 / env var / 故障排查 / mergerfs 边界 / 5 错误码反查
+- e2e UAT 脚本：`tests/scripts/uat-v31-promotion.sh` 619 行，6 场景（git_reject / oversized_skip / fuse_cache_hit / cold_promotion / no_promotion / json_report），`--dry-run` 默认安全 + `--confirm-destructive` 触发实际 mount；JSON schema_version=1；CI 接入 `make ci-gate`
+
+### What Worked
+
+- **Phase 36 零跨进程协议变更**：纯配置/校验/参数级改动，6 个 plan 全部独立可发，无新增依赖
+- **effective*() accessor 兜底模式**：`MountConfig.effectiveHotSyncMaxFileMB()` 私有 accessor 防止 main.go 未注入字段时静默关闭熔断；与 Config 层同一 50MB 默认值
+- **ColdPromoter 平台兼容分离**：Linux 真实 inotify / macOS stub 通过 `//go:build` 分离，`+linux` 文件 167 行 / `+darwin` stub 23 行；macOS 开发不阻塞
+- **测试隔离走 `t.Setenv` 而非 var 注入**：`checkGitProxyEnabled` / `checkOversizedFilesCount` / `git_check_test.go` 全部用 `t.Setenv("HOME", tempDir)` 或 `t.Setenv("PATH", "")` 隔离，生产代码零注入点
+- **PromotionEngine 单测聚焦核心语义**：dedup（100ms 内 50 次 enqueue → 1 次实际拉取）、backoff（1/2/4s 序列）、circuit（3 次失败 → 不再尝试）、start-stop（goroutine 生命周期）；不依赖真实 SFTP 服务器
+- **UAT 脚本 dry-run / confirm-destructive 双闸门**：默认安全，非 Linux 平台场景 3/4/5 自动 SKIP；与 v3.0 `uat-network-resilience.sh` / `degradation-regression.sh` 同一框架
+
+### What Was Inefficient
+
+- **Phase 36-06 4 个 Rule 1 / Rule 2 auto-fix**：plan 字面量与 helper 实际签名/语义对齐的局部修订（newFail 占位符双重 Sprintf / newWarn 缺 args 导致 `%s` 字面量 / mount.go 缺 cloudclaude import / mount_test.go 缺 4 个 import）；虽全部 auto-fixed 且行为契约不变，但说明 plan 中代码示例需要更严格的编译期验证
+- **Phase 36-03 `effectiveHotSyncMaxFileMB()` 是 plan 范围外兜底**：plan 字面量引用 `Config.EffectiveHotSyncMaxFileMB()` 但 `MountConfig` 无此方法；main.go 不在 plan 范围，必须新增 accessor 避免 SC#2 失效；plan 应在 action 段显式标注"若 cfg 为 MountConfig 需自有 accessor"
+- **Phase 37-02 promotion stats 刚启动 = 0 的语义需要 plan 显式接受**：mount 就绪时 promoter 刚启动，Stats() 返回 (0,0,0)；若用户期望"首次 mount 就有统计"会困惑；plan 明确记录此语义但文档侧未同步到 runbook
+- **Phase 37 5 项人工验证 deferred-to-ship**：与 v3.0 同样模式 — 自动化 PASS 后真机签字 ship 前补签；cold-promoter 需要 Linux 容器环境，macOS 开发机无法本地验证完整链路
+- **v3.1 与 v3.0 同跨度 26 天（Phase 36 实际 1 天执行）**：Phase 36 从 2026-03-29 定义到 2026-04-23 执行，中间有 v3.0 收尾和 quick task 穿插； milestones 的"跨度"不等于"专注执行时间"
+
+### Patterns Established
+
+- **`effective*()` 私有 accessor 兜底**：MountConfig / Config 层需要默认值的字段统一走 `(c *T) effectiveField()` 模式，防止零值静默关闭功能
+- **测试隔离 `t.Setenv` 优先于 var 注入**：生产代码零注入点，测试通过环境变量隔离真实代码路径
+- **ColdPromoter 5s dedup + 指数退避 + circuit 三件套**：inotify 事件风暴防护的标准模式；与 HTTP client retry 不同（非 429 感知，而是文件系统事件去重）
+- **UAT 脚本框架复用**：pass/fail/skip helper + dry-run 默认安全 + JSON schema_version=1 + `--confirm-destructive` 中文 opt-in；跨里程碑一致
+- **doctor 新增 check 三处对应**：mount.go 同文件追加函数 + doctor.go 维度 block append + mount_test.go 矩阵测试；三处一一对应，避免遗漏
+- **errcodes Entry.Message 含 `%s` 时直接传裸值**：`newFail(domain, name, code, args...)` 内部 `fmt.Sprintf(entry.Message, args...)`；plan 中不应预渲染字符串
+
+### Key Lessons
+
+1. **plan 中代码示例需编译期验证** — Phase 36-06 4 个 auto-fix 全部是 plan 代码示例与 helper 实际签名不对齐；plan-checker 应在 round 2 增加"代码示例是否可编译"检查
+2. **`effective*()` accessor 应在 plan 中显式标注** — Phase 36-03 的兜底 accessor 是执行时发现的，plan 应在 action 段注明"若字段可能在 main.go 未注入时调用，需新增 effective accessor"
+3. **mount 就绪时的零值统计语义需文档同步** — Phase 37-02 promotion stats (0,0,0) 在 plan 中接受但 runbook 未说明；用户可见行为必须在 runbook FAQ 中解释
+4. **macOS stub + Linux 真实实现的双平台模式有效** — ColdPromoter 167+23 行分离让 macOS 开发不阻塞，CI `make ci-gate` 在 macOS 上 dry-run PASS；真机验证留到 Linux 环境
+5. **Phase 36 纯配置/参数级改动的"独立可发"验证** — 零新增依赖、零跨进程协议变更、零 schema 变更；6 plan 在 1 天内完成，证明前期架构设计到位后增量功能可极快交付
+6. **UAT 脚本 dry-run 在 CI 中的价值** — macOS CI 跑 dry-run 可验证脚本框架/JSON schema/场景覆盖完整性，虽然无法验证真实 mount 行为，但已能 catch 脚本语法错误和场景遗漏
+
+### Cost Observations
+
+- **Model mix**: balanced profile；Phase 36 以 fast model 为主（配置/参数级改动），Phase 37 涉及并发 goroutine 和 inotify 用默认模型
+- **Sessions**: 约 8-10 次会话完成 2 个 phase（Phase 36: ~3 次，Phase 37: ~5-7 次含 e2e UAT）
+- **Notable**: Phase 36 是最高效的 phase 之一（6 plan ~1 天），得益于纯配置/校验级改动；Phase 37 ColdPromoter 并发逻辑 + e2e UAT 脚本耗时较多
+- **Code growth**: +2,568 Go LOC（32,103 vs 29,535），主要是 ColdPromoter（~170 行）+ doctor check（~115 行）+ 测试（~220 行）+ UAT 脚本（619 行）
+
+---
+
+## Cross-Milestone Trends
+
+### Process Evolution
+
+| Milestone | Timeline | Phases | Plans | Key Change |
+|-----------|----------|--------|-------|------------|
+| v1.0 | 3 days | 6 | 19 | 首个里程碑 — 建立了完整的 GSD 工作流 |
+| v1.1 | 3 days | 4 | 11 | 审计驱动的技术债务修复 — 审计发现问题后立即创建修复阶段 |
+| v2.0 | 1 day | 5 | 7 | 最高效里程碑 — 平均每个计划 2.1 分钟，复用现有基础设施 |
+| v3.0 | 5 days | 8 (含 1 hotfix) | 30 | Critical Pitfalls 前置 + Gap-closure + post-fix + integration-checker |
+| v3.1 | ~1 day active | 2 | 11 | 纯配置/参数级改动 + 并发引擎 + e2e UAT；effective accessor 兜底模式 |
+
+### Cumulative Quality
+
+| Milestone | Tests | LOC | Plans | Avg Plan Duration |
+|-----------|-------|-----|-------|-------------------|
+| v1.0 | 76 | ~14,272 | 19 | — |
+| v1.1 | 76+ | ~16,958 | 11 | — |
+| v2.0 | 76+ | ~28,877 | 7 | ~2.1 min |
+| v3.0 | 200+ | ~45,766 | 30 | ~10-30 min |
+| v3.1 | 230+ | ~48,953 | 11 | ~5-15 min |
+
+### Top Lessons (Verified Across Milestones)
+
+1. 验证流程应覆盖所有阶段，不跳过早期阶段（v1.0 → v3.1 反复印证）
+2. 横切关注点引入时应立即全量扫描覆盖范围
+3. 错误码的定义端和消费端应同步建立映射
+4. 对称设计能大幅降低新功能实现成本
+5. 审计应在里程碑末期立即执行，发现的问题当天修复
+6. 零改造验证应尽早做
+7. 基础设施复用是提速关键
+8. Critical Pitfalls 前置研究 + phase-level 防御任务
+9. Gap-closure plan + post-execution patch 比整体重做更经济
+10. REQUIREMENTS.md traceability 应由 verifier 自动同步
+11. 真机签字闸门必须独立于 phase 完成
+12. **`effective*()` accessor 兜底防止零值静默关闭功能（v3.1 新）** — MountConfig / Config 层统一模式
+13. **plan 中代码示例需编译期验证（v3.1 新）** — 4 个 auto-fix 说明 plan-checker 应增加可编译性检查
+14. **macOS stub + Linux 真实实现的双平台分离（v3.1 新）** — 开发不阻塞，真机验证留到目标平台

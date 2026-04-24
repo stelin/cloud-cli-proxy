@@ -1,5 +1,39 @@
 # Milestones
 
+## v3.1 映射语义补齐与懒加载 (Shipped: 2026-04-24)
+
+**Phases completed:** 2 phases, 11 plans, ~35 tasks
+**Git range:** 088b95f (2026-03-29) → 2511a33 (2026-04-24) — 14+ feat commits, 46 files (+6,984/-99 lines)
+**Codebase LOC:** Go 32,103 / TS+TSX 11,772 / Shell 5,078 = 48,953 total
+
+**Key accomplishments:**
+
+- git 仓库强约束挂载：非 git 目录立即拒绝挂载，stderr 输出 `MOUNT_REQUIRE_GIT_REPO` + 中文 next_action，退出码恒定 `exitConfigError`
+- 单文件 50MB 熔断（可配置 `hot_sync_max_file_mb`）：`HotSyncEngine` 超阈文件不进热同步，走 cold sshfs 兜底；`last-session.json` 记录熔断清单，stderr 一次性提示
+- sshfs FUSE page cache 命中：`cache=yes,kernel_cache,auto_cache,cache_timeout=300` 默认开启，同会话重复读零额外 RTT
+- doctor mount 9 项 check：从 v3.0 的 4 项扩展到 9 项（+git 仓库 / 大文件熔断 / sshfs 缓存 / git proxy / ignore 加载状态），13 条矩阵测试全 PASS
+- `cloud-claude explain` 新增 2 条错误码长说明：`MOUNT_REQUIRE_GIT_REPO` / `MOUNT_OVERSIZED_FILE_SKIPPED`，rustc 风格 ≥200 字中文说明
+- ColdPromoter 冷文件晋升引擎：容器内 inotify `IN_OPEN/IN_ACCESS` 监听 + 异步 SFTP 拉取到 hot 分支，5s 防抖去重 + 1/2/4s 指数退避 + 3 次熔断
+- 晋升机制完整集成：`tryModeReal` Full 路径 mergerfs ready 后启动，cleanup LIFO 回收；`CLOUD_CLAUDE_NO_PROMOTION=1` 全量关闭
+- 晋升可观测性：`last-session.json` 新增 `promotion_count/bytes/failed_count`；doctor 新增 4 项晋升指标（promoter_alive / queue_depth / total / failed）
+- 运维手册 + e2e UAT：`docs/runbooks/v31-cold-promotion.md` Pattern G 5 章手册；619 行 `uat-v31-promotion.sh` 覆盖 6 大场景，接入 `make ci-gate`
+
+**Coverage:**
+- Requirements: **16/16 satisfied** — Phase 36 全部 6 条 + Phase 37 全部 10 条
+- Cross-phase integration: Phase 36→37 4 条依赖链路全 VERIFIED
+- CI: `make ci-gate` PASS（go test + ci-doctor-grep + uat dry-run）
+
+**Known deferred items at close:** 5 项 Phase 37 人工验证（Linux 真机 UAT / pgrep 存活 / 端到端晋升 / 手册可读性 / 双平台签字），跟踪在 `v3.1-MILESTONE-AUDIT.md`
+
+**Audit:** `.planning/milestones/v3.1-MILESTONE-AUDIT.md` (status: tech_debt — 0 实现 gap)
+**Tag:** v3.1
+**Archive:**
+- `.planning/milestones/v3.1-ROADMAP.md`
+- `.planning/milestones/v3.1-REQUIREMENTS.md`
+- `.planning/milestones/v3.1-MILESTONE-AUDIT.md`
+
+---
+
 ## v3.0 远端开发体验升级 (Shipped: 2026-04-23)
 
 **Phases completed:** 8 phases (含 1 P0 hotfix decimal Phase 29.1), 30 plans, ~75 tasks
