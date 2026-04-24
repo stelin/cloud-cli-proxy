@@ -24,13 +24,13 @@ See: .planning/PROJECT.md (updated 2026-04-23 — v3.1 milestone started)
 
 ## Current Position
 
-Milestone: v3.1 映射语义补齐与懒加载 — 🟡 IN PROGRESS (roadmap ready)
-Phase: 37 (e2e-uat) — EXECUTING
-Plan: 3 of 5 (37-03 完成)
-Status: Phase 37 executing — plans 04, 01, 02, 03 完成，剩余 05
+Milestone: v3.1 映射语义补齐与懒加载 — 🟢 COMPLETE
+Phase: 37 (e2e-uat) — COMPLETE
+Plan: 5 of 5 (全部完成)
+Status: Phase 37 全部 5 个 plan 完成 — 37-01 至 37-05 全部落地
 Last activity: 2026-04-24
 
-Progress: [██████████] 88% (15/17 plans across all phases)
+Progress: [██████████] 100% (17/17 plans across all phases)
 
 下一步选项：
 
@@ -87,6 +87,7 @@ v3.0 关键方向已定：
 - [Phase 36-04] runRoot 中 git 检测固定在 LoadConfig 之后、NewEntryClient 之前；git 不可用与非 git 仓库共用 MOUNT_REQUIRE_GIT_REPO（D-03）；测试用 t.Setenv(PATH="") 而非包级 var 注入
 - [Phase 37-02]: ColdPromoter 集成到 tryModeReal Full 路径：mergerfs ready 后启动，cleanup LIFO（promoterCancel → promoter.Wait → cancel watcher → merge → sshfs → hot_sync），stats 在 writeLastSessionWarn 前刷入 snapshot；LastSessionSnapshot 新增 PromotionCount/PromotionBytes/PromotionFailedCount 三个 omitempty 字段；CLOUD_CLAUDE_NO_PROMOTION=1 时 promoter 保持 nil 完全跳过
 - [Phase 37-e2e-uat]: promotion stats 在 tryModeReal 返回前刷入 snapshot（writeLastSessionWarn 之前），此时 promoter 刚启动统计为 0——plan 明确接受此为 mount 就绪时的快照语义
+- [Phase 37-05]: uat-v31-promotion.sh (619 行) 6 场景全覆盖（git_reject / oversized_skip / fuse_cache_hit / cold_promotion / no_promotion / json_report），--dry-run 默认安全 + --confirm-destructive 触发实际操作；JSON 报告 schema_version=1 退出码 0/1/2；make ci-gate 追加 UAT dry-run；场景 3/4/5 在非 Linux 平台自动 SKIP；commits 2511a33 / bd06353
 
 ### Pending Todos
 
@@ -117,8 +118,8 @@ v3.1 milestone 已启动；等待 ROADMAP.md 写入后进入 Phase 36 执行：
 
 ## Session Continuity
 
-Last session: 2026-04-24T04:12:50.000Z
-Stopped at: Completed 37-04-PLAN.md
+Last session: 2026-04-24T05:09:00.000Z
+Stopped at: Completed 37-05-PLAN.md
 Resume file: None
 
 ## Deferred Items
@@ -162,6 +163,9 @@ Items acknowledged and deferred at v3.0 milestone close on 2026-04-23:
 
 - **37-04** (2026-04-24): 创建 docs/runbooks/v31-cold-promotion.md Pattern G 运维手册 — commit fc9d3ca
 - 覆盖原理图、启停、排障、协同、错误码反查 5 大方面，6 个章节，5 个错误码全部覆盖
+- **37-05** (2026-04-24): 编写 619 行 uat-v31-promotion.sh + CI 接入 make ci-gate — commits 2511a33 / bd06353
+- 6 大场景全覆盖（git_reject / oversized_skip / fuse_cache_hit / cold_promotion / no_promotion / json_report）
+- --dry-run 默认安全 + --confirm-destructive 触发实际操作；JSON 报告 schema_version=1 退出码 0/1/2
 - **37-01** (2026-04-24): 实现 ColdPromoter 核心引擎（inotify watcher + PromotionEngine）— commits dc0c86a / b9786af
 - ColdPromoter 完整实现：5s 去重窗口 + 1/2/4s 退避重试 + 熔断集合 + QueueDepth/Stats/Wait 可观测 API
 - 4 条核心单测全 PASS（含 -race）：dedup / retry-backoff / circuit-breaker / start-stop

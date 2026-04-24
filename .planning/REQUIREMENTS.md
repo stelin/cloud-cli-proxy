@@ -45,7 +45,7 @@
 
 ### B3 · mergerfs 自然命中 hot + 关闭开关（F7）
 
-- [ ] **REQ-MOUNT-V31-11**：晋升完成后，下次对该文件的 `cat` 必须直接走 hot 分支（mergerfs `category.create=ff` 行为天然命中 hot）；e2e 验证：首次读一个 PNG → SFTP read count +N，第二次读 → SFTP read count 不变
+- [x] **REQ-MOUNT-V31-11**：晋升完成后，下次对该文件的 `cat` 必须直接走 hot 分支（mergerfs `category.create=ff` 行为天然命中 hot）；e2e 验证：首次读一个 PNG → SFTP read count +N，第二次读 → SFTP read count 不变
 - [x] **REQ-MOUNT-V31-12**：`last-session.json` 新增 `promotion_count` / `promotion_bytes` / `promotion_failed_count` 三字段；schema_version 不变（omitempty）
 - [x] **REQ-MOUNT-V31-13**：环境变量 `CLOUD_CLAUDE_NO_PROMOTION=1` 完全关闭晋升机制（watcher 不启动、PromotionEngine 不构造）；用户主动触发的晋升**不被 ignore 二次过滤**（已主动读 = 用户意图明确，即使是 `.gitignore` 命中的 `.png` 也允许晋升）
 
@@ -53,7 +53,7 @@
 
 - [x] **REQ-MOUNT-V31-14**：`cloud-claude doctor mount` 新增 4 项晋升指标 check：`promoter_alive`（pgrep cold-promoter）/ `promotion_queue_depth`（PromotionEngine 内部队列深度）/ `promotion_total`（last-session.json 累计）/ `promotion_failed_total`（last-session.json 累计）；JSON 输出可被 `make ci-gate` grep 锁定
 - [x] **REQ-MOUNT-V31-15**：新增运维手册 `docs/runbooks/v31-cold-promotion.md`，遵循 PATTERNS Pattern G（头部 + ≥5 章节 + 快速诊断命令小节），覆盖：原理图（cold sshfs → inotify → SFTP → hot → mergerfs）、`CLOUD_CLAUDE_NO_PROMOTION` 关闭场景、晋升失败排障、与 mergerfs / hot_sync 协同的边界、5 个相关错误码反查
-- [ ] **REQ-MOUNT-V31-16**：新增 e2e UAT 脚本 `tests/scripts/uat-v31-promotion.sh`：构造 fixture（10 个二进制 + 1 个 60MB + git 仓库 / 非 git 目录）→ 全场景断言（拒绝挂载 / 大文件熔断 / FUSE cache 命中 / 冷文件晋升）→ 输出 JSON 报告（schema_version=1）；脚本 `--dry-run` 默认安全，`--confirm-destructive` 触发实际操作；CI 接入 `make ci-gate`
+- [x] **REQ-MOUNT-V31-16**：新增 e2e UAT 脚本 `tests/scripts/uat-v31-promotion.sh`：构造 fixture（10 个二进制 + 1 个 60MB + git 仓库 / 非 git 目录）→ 全场景断言（拒绝挂载 / 大文件熔断 / FUSE cache 命中 / 冷文件晋升）→ 输出 JSON 报告（schema_version=1）；脚本 `--dry-run` 默认安全，`--confirm-destructive` 触发实际操作；CI 接入 `make ci-gate`
 
 ---
 
@@ -88,12 +88,12 @@
 | REQ-MOUNT-V31-08 | 37 | Complete |
 | REQ-MOUNT-V31-09 | 37 | Complete |
 | REQ-MOUNT-V31-10 | 37 | Complete |
-| REQ-MOUNT-V31-11 | 37 | pending |
+| REQ-MOUNT-V31-11 | 37 | Complete |
 | REQ-MOUNT-V31-12 | 37 | Complete |
 | REQ-MOUNT-V31-13 | 37 | Complete |
 | REQ-MOUNT-V31-14 | 37 | Complete |
 | REQ-MOUNT-V31-15 | 37 | Complete |
-| REQ-MOUNT-V31-16 | 37 | pending |
+| REQ-MOUNT-V31-16 | 37 | Complete |
 
 > Coverage: 16/16 mapped to phases (100%)；ROADMAP.md 已写入完整映射；status 将随 phase 执行进度更新。
 
