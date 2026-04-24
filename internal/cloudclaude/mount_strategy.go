@@ -254,8 +254,16 @@ func MountWorkspace(connA, connB *ssh.Client, cfg MountConfig) (cleanup func(), 
 				if limit > 5 {
 					limit = 5
 				}
-				fmt.Fprintf(cfg.Logger, "[!] 跳过大文件 %d 个（>%dMB），由 cold 兜底:\n",
-					n, cfg.effectiveHotSyncMaxFileMB())
+				// WR-03 修复：HotOnly 模式没有 cold sshfs 层，提示文案不能再写
+				// 「由 cold 兜底」。tryModeReal 在 ModeHotOnly 分支只调一次
+				// StartHotSync 直接挂在 cfg.Cwd，被熔断的文件需用户手工 ssh 进
+				// 容器读取，与 Full / Auto 行为不一致。
+				fallback := "由 cold sshfs 兜底"
+				if mode == ModeHotOnly {
+					fallback = "未挂载 — 大文件需手工 ssh 进容器读取"
+				}
+				fmt.Fprintf(cfg.Logger, "[!] 跳过大文件 %d 个（>%dMB），%s:\n",
+					n, cfg.effectiveHotSyncMaxFileMB(), fallback)
 				for _, f := range hotStatus.OversizedFiles[:limit] {
 					fmt.Fprintf(cfg.Logger, "  %s (%dMB)\n", f.Path, f.SizeBytes/1024/1024)
 				}
