@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: 映射语义补齐与懒加载
-status: verifying
-stopped_at: Completed 36-06-PLAN.md
-last_updated: "2026-04-23T12:03:13.609Z"
-last_activity: 2026-04-23
+status: executing
+stopped_at: Completed 37-04-PLAN.md
+last_updated: "2026-04-24T04:12:50.000Z"
+last_activity: 2026-04-24
 progress:
   total_phases: 2
   completed_phases: 1
-  total_plans: 6
-  completed_plans: 6
-  percent: 100
+  total_plans: 11
+  completed_plans: 7
+  percent: 63
 ---
 
 # Project State
@@ -26,17 +26,16 @@ See: .planning/PROJECT.md (updated 2026-04-23 — v3.1 milestone started)
 ## Current Position
 
 Milestone: v3.1 映射语义补齐与懒加载 — 🟡 IN PROGRESS (roadmap ready)
-Phase: 36 (sshfs) — EXECUTING
-Plan: 6 of 6
-Status: Phase complete — ready for verification
-Last activity: 2026-04-23
+Phase: 37 (e2e-uat) — EXECUTING
+Plan: 4 of 5 (37-04 完成)
+Status: Phase 37 executing — plan 04 完成，剩余 01/02/03/05
+Last activity: 2026-04-24
 
-Progress: [██████████] 100%
+Progress: [██████░░░] 63% (7/11 plans across phases 36-37)
 
 下一步选项：
 
-- `/gsd-discuss-phase 36` — gather context for Phase 36（推荐）
-- `/gsd-plan-phase 36` — skip discussion, plan directly
+- `/gsd:execute-phase 37` — 继续执行 Phase 37 剩余计划
 
 ## Accumulated Context
 
@@ -118,8 +117,8 @@ v3.1 milestone 已启动；等待 ROADMAP.md 写入后进入 Phase 36 执行：
 
 ## Session Continuity
 
-Last session: 2026-04-23T12:03:01.564Z
-Stopped at: Completed 36-06-PLAN.md
+Last session: 2026-04-24T04:12:50.000Z
+Stopped at: Completed 37-04-PLAN.md
 Resume file: None
 
 ## Deferred Items
@@ -157,4 +156,10 @@ Items acknowledged and deferred at v3.0 milestone close on 2026-04-23:
 | tech_debt | cross-cutting — Spec/code 数字漂移 (Registry 43 vs spec 42, ExtendedExplanations 39 vs 38, FixerRegistry 6 vs 5) | doc_only | 均 ≥ 需求最小值；建议 ship 前对齐 spec |
 | tech_debt | cross-cutting — ROADMAP 未记 SupportsMutagen 字段省略的设计变更 | doc_only | Phase 31 用自研 hot-sync 替换 Mutagen，留 SupportsMergerfs 等价；v3.1 spec 修订 |
 
-**Planned Phase:** 36 (映射前置约束 + sshfs 内核缓存) — 6 plans — 2026-04-23T10:25:43.029Z
+**Planned Phase:** 37 (冷文件读触发晋升 + e2e UAT) — 5 plans — 2026-04-24
+
+### Phase 37 执行记录
+
+- **37-04** (2026-04-24): 创建 docs/runbooks/v31-cold-promotion.md Pattern G 运维手册 — commit fc9d3ca
+- 覆盖原理图、启停、排障、协同、错误码反查 5 大方面，6 个章节，5 个错误码全部覆盖
+- 剩余计划：37-01 / 37-02 / 37-03 / 37-05
