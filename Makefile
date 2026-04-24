@@ -142,6 +142,7 @@ ci-doctor-grep: cloud-claude ## Run scripts/ci-doctor-grep.sh against built clou
 	bash scripts/ci-doctor-grep.sh ./cloud-claude
 
 .PHONY: ci-gate
-ci-gate: ## CI gate: short go test + ci-doctor-grep
+ci-gate: ## CI gate: short go test + ci-doctor-grep + uat dry-run
 	go test ./... -count=1 -short
 	$(MAKE) ci-doctor-grep
+	bash tests/scripts/uat-v31-promotion.sh --dry-run
