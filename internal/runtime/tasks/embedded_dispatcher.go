@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/zanel1u/cloud-cli-proxy/internal/agentapi"
@@ -15,7 +16,27 @@ func NewEmbeddedDispatcher(worker *Worker) *EmbeddedDispatcher {
 	return &EmbeddedDispatcher{worker: worker}
 }
 
-func (d *EmbeddedDispatcher) Dispatch(ctx context.Context, request agentapi.HostActionRequest) (agentapi.HostActionResponse, error) {
+func (d *EmbeddedDispatcher) Dispatch(ctx context.Context, request agentapi.HostActionRequest) (resp agentapi.HostActionResponse, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("dispatcher panic recovered",
+				"task_id", request.TaskID,
+				"host_id", request.HostID,
+				"action", request.Action,
+				"panic", r,
+			)
+			fallback := agentapi.TaskStatusUpdate{
+				TaskID:       request.TaskID,
+				Status:       taskStateFailed,
+				ErrorCode:    "panic_recovered",
+				ErrorMessage: fmt.Sprintf("dispatcher panic: %v", r),
+			}
+			_ = d.worker.UpdateTaskStatus(ctx, fallback)
+			resp = agentapi.HostActionResponse{Update: fallback}
+			err = nil
+		}
+	}()
+
 	slog.Info("embedded: executing host action in-process",
 		"task_id", request.TaskID,
 		"host_id", request.HostID,
@@ -24,8 +45,8 @@ func (d *EmbeddedDispatcher) Dispatch(ctx context.Context, request agentapi.Host
 
 	update := d.worker.Execute(ctx, request)
 
-	if err := d.worker.UpdateTaskStatus(ctx, update); err != nil {
-		slog.Error("embedded: failed to update task status", "error", err)
+	if uerr := d.worker.UpdateTaskStatus(ctx, update); uerr != nil {
+		slog.Error("embedded: failed to update task status", "error", uerr)
 	}
 
 	return agentapi.HostActionResponse{Update: update}, nil
