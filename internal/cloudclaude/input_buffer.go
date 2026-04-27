@@ -129,13 +129,6 @@ func (b *BufferedStdin) handleReconnecting(c byte) {
 	}
 }
 
-// closeGrayIfOpen 对外 API，自己管锁；用于不在 echoMu 内调用的场景。
-func (b *BufferedStdin) closeGrayIfOpen() {
-	b.echoMu.Lock()
-	defer b.echoMu.Unlock()
-	b.closeGrayIfOpenLocked()
-}
-
 // closeGrayIfOpenLocked 调用方必须已持有 echoMu。
 func (b *BufferedStdin) closeGrayIfOpenLocked() {
 	if b.grayOpen && b.localEcho != nil && !b.noColor {

@@ -18,7 +18,6 @@ import (
 
 // mockWorkerRepo 是 WorkerRepo 的最小 mock 实现，用于 agent 层测试。
 type mockWorkerRepo struct {
-	updates      []repository.Task
 	hostStatuses map[string]string
 }
 

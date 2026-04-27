@@ -7,8 +7,6 @@ import (
 	"github.com/zanel1u/cloud-cli-proxy/internal/agentapi"
 )
 
-const prepareHostActionName = "prepare_host"
-
 type Dispatcher struct {
 	client interface {
 		RunHostAction(context.Context, agentapi.HostActionRequest) (agentapi.HostActionResponse, error)

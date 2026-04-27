@@ -446,67 +446,6 @@ func testEgressIP(ctx context.Context, client *nethttp.Client) EgressIPCheckResu
 	}
 }
 
-func testDNSLeak(ctx context.Context, client *nethttp.Client) DNSLeakCheckResult {
-	hostDNS := readHostDNSServers()
-
-	req, err := nethttp.NewRequestWithContext(ctx, "GET", "https://ipleak.net/json/", nil)
-	if err == nil {
-		resp, reqErr := client.Do(req)
-		if reqErr == nil {
-			var result map[string]any
-			decodeErr := json.NewDecoder(resp.Body).Decode(&result)
-			resp.Body.Close()
-			if decodeErr == nil {
-				return DNSLeakCheckResult{
-					Status:             "pass",
-					DNSServersDetected: hostDNS,
-					LocalDNSLeaked:     false,
-				}
-			}
-		}
-	}
-
-	fallbackReq, err := nethttp.NewRequestWithContext(ctx, "GET", "https://api.ipify.org", nil)
-	if err != nil {
-		return DNSLeakCheckResult{
-			Status: "error",
-			Error:  "cannot verify DNS path: " + err.Error(),
-		}
-	}
-	resp, err := client.Do(fallbackReq)
-	if err != nil {
-		return DNSLeakCheckResult{
-			Status: "error",
-			Error:  "cannot verify DNS path: " + err.Error(),
-		}
-	}
-	resp.Body.Close()
-
-	return DNSLeakCheckResult{
-		Status:             "pass",
-		DNSServersDetected: hostDNS,
-		LocalDNSLeaked:     false,
-	}
-}
-
-func readHostDNSServers() []string {
-	data, err := os.ReadFile("/etc/resolv.conf")
-	if err != nil {
-		return nil
-	}
-	var servers []string
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "nameserver") {
-			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				servers = append(servers, parts[1])
-			}
-		}
-	}
-	return servers
-}
-
 func (h *AdminEgressIPsHandler) TestProxy() nethttp.Handler {
 	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)

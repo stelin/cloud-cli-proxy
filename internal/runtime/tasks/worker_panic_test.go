@@ -6,23 +6,7 @@ import (
 	"testing"
 
 	"github.com/zanel1u/cloud-cli-proxy/internal/agentapi"
-	"github.com/zanel1u/cloud-cli-proxy/internal/store/repository"
 )
-
-// panicRepo 是一个在 UpdateHostStatus 中 panic 的 WorkerRepo，
-// 用于测试 Worker.Execute 的 panic recovery。
-type panicRepo struct {
-	fakeWorkerRepo
-	panicOnAction agentapi.HostAction
-}
-
-func (r *panicRepo) UpdateHostStatus(_ context.Context, _ string, _ string) error {
-	return nil
-}
-
-func (r *panicRepo) UpdateTaskStatus(_ context.Context, _ string, _ string, _ string, _ string, _ string) (repository.Task, error) {
-	return repository.Task{}, nil
-}
 
 func TestWorkerExecute_PanicRecovered(t *testing.T) {
 	// 临时注入 testPanicTrigger，让特定 action 触发 panic

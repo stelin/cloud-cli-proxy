@@ -37,7 +37,7 @@ func ValidateEgressBinding(ctx context.Context, v EgressValidator, hostID string
 }
 
 func validateProxyBinding(record EgressIPRecord, hostID string) (EgressConfig, error) {
-	if record.ProxyConfig == nil || len(record.ProxyConfig) == 0 {
+	if len(record.ProxyConfig) == 0 {
 		return EgressConfig{}, &NetworkError{
 			Type:    ErrTunnelSetupFailed,
 			Message: "proxy type requires non-empty proxy_config",

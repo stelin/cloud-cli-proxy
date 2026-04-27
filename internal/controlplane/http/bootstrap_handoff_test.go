@@ -1,7 +1,6 @@
 package http
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	nethttp "net/http"
@@ -172,11 +171,3 @@ func TestBootstrapErrorMapping(t *testing.T) {
 	}
 }
 
-type stubHandoffEventLister struct {
-	events []repository.Event
-	err    error
-}
-
-func (s *stubHandoffEventLister) ListEventsByTaskID(_ context.Context, _ string, _ int) ([]repository.Event, error) {
-	return s.events, s.err
-}

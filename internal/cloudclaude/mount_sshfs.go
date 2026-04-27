@@ -97,8 +97,3 @@ func mountSSHFS(conn *ssh.Client, localDir, remotePath string) (cleanup func(), 
 	return cleanup, nil
 }
 
-// mountWorkspace 是 v2.0 兼容入口，内部转 mountSSHFS。
-// ConnectAndRunClaude（v2.0 签名保留）仍通过此函数挂载。
-func mountWorkspace(conn *ssh.Client, localDir, remotePath string) (func(), error) {
-	return mountSSHFS(conn, localDir, remotePath)
-}

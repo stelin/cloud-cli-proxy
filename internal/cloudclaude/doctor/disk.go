@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -22,10 +21,6 @@ const (
 // 包级 var 注入点。
 var (
 	statfs = func(path string, buf *unix.Statfs_t) error { return unix.Statfs(path, buf) }
-	duLocal = func(path string) (string, error) {
-		out, err := exec.Command("du", "-sh", path).CombinedOutput()
-		return string(out), err
-	}
 	userHomeDir = os.UserHomeDir
 )
 

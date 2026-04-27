@@ -133,12 +133,6 @@ func buildTmuxSessionName(accountID, cwd string) string {
 	return sanitized
 }
 
-// buildSessionIDName 用于 --new-session（D-08）。
-// 与默认 8-hex 命名空间正交（base64url 含 '-' / '_'）。
-func buildSessionIDName() string {
-	return "claude-" + GenerateShortSessionID()
-}
-
 // GenerateShortSessionID 暴露给 cmd/cloud-claude/main.go 在 --new-session 触发时调用。
 // crypto/rand 6 字节 → base64url 8 字符（无填充）。
 //
