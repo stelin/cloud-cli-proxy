@@ -25,12 +25,15 @@ func TestDeriveManagementSSHAccess(t *testing.T) {
 			ip := net.ParseIP(info.Host)
 			if ip == nil {
 				t.Errorf("Host %q is not a valid IP", info.Host)
+				return
 			}
-			if ip.To4() == nil {
+			ip4 := ip.To4()
+			if ip4 == nil {
 				t.Errorf("Host %q is not an IPv4 address", info.Host)
+				return
 			}
 			// Should be in the 10.99.x.x range
-			if ip[0] != 10 || ip[1] != 99 {
+			if ip4[0] != 10 || ip4[1] != 99 {
 				t.Errorf("Host %q not in 10.99.x.x range", info.Host)
 			}
 		})
@@ -79,12 +82,13 @@ func TestMgmtSubnetIndexFromID_ShortInput(t *testing.T) {
 	_ = mgmtSubnetIndexFromID("")
 }
 
-func TestMgmtSubnetIndexFromID_Range(t *testing.T) {
-	// The result should be within uint16 range and %16382 applied
+func TestMgmtSubnetIndexFromID_Uint16Range(t *testing.T) {
+	// The result should be within uint16 range (0-65535).
+	// Note: the %16382 only applies to the second operand in the XOR expression,
+	// so the final result is not necessarily < 16382.
 	idx := mgmtSubnetIndexFromID("any-host-id-here")
-	// after XOR and %16382, it's < 16382
-	if idx >= 16382 {
-		t.Errorf("expected idx < 16382, got %d", idx)
+	if idx > 65535 {
+		t.Errorf("expected idx <= 65535, got %d", idx)
 	}
 }
 

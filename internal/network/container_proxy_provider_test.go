@@ -118,3 +118,14 @@ func TestGatewayImage_Default(t *testing.T) {
 		t.Errorf("gatewayImage = %q, want %q", got, want)
 	}
 }
+
+func TestNewContainerProxyProvider(t *testing.T) {
+	p := NewContainerProxyProvider(nil)
+	if p == nil {
+		t.Fatal("NewContainerProxyProvider returned nil")
+	}
+	if p.logger != nil {
+		t.Error("expected nil logger when passed nil")
+	}
+}
+

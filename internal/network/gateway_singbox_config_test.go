@@ -197,6 +197,84 @@ func TestBuildGatewayProxyOutbound_NoTLS(t *testing.T) {
 	}
 }
 
+func TestBuildGatewayProxyOutbound_ResolvedIPEmpty(t *testing.T) {
+	// When resolvedIP is empty, the original server should be kept
+	userConfig := json.RawMessage(`{"type":"socks","server":"proxy.example.com","server_port":1080}`)
+	out, err := buildGatewayProxyOutbound(userConfig, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	// Server should remain unchanged when resolvedIP is empty
+	if server, _ := parsed["server"].(string); server != "proxy.example.com" {
+		t.Errorf("server = %q, want %q", server, "proxy.example.com")
+	}
+}
+
+func TestBuildGatewayProxyOutbound_TLSNoReality(t *testing.T) {
+	// TLS without reality should not trigger utls addition
+	userConfig := json.RawMessage(`{
+		"type":"vless",
+		"server":"example.com",
+		"server_port":443,
+		"tls":{
+			"enabled":true,
+			"server_name":"example.com"
+		}
+	}`)
+
+	out, err := buildGatewayProxyOutbound(userConfig, "1.2.3.4")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+
+	tls, _ := parsed["tls"].(map[string]any)
+	// utls should NOT have been added since reality is not enabled
+	if _, ok := tls["utls"]; ok {
+		t.Error("utls should not have been added when reality is not present")
+	}
+}
+
+func TestBuildGatewayProxyOutbound_RealityDisabled(t *testing.T) {
+	// TLS with reality present but disabled should not trigger utls addition
+	userConfig := json.RawMessage(`{
+		"type":"vless",
+		"server":"example.com",
+		"server_port":443,
+		"tls":{
+			"enabled":true,
+			"reality":{
+				"enabled":false,
+				"public_key":"test-key"
+			}
+		}
+	}`)
+
+	out, err := buildGatewayProxyOutbound(userConfig, "1.2.3.4")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+
+	tls, _ := parsed["tls"].(map[string]any)
+	if _, ok := tls["utls"]; ok {
+		t.Error("utls should not have been added when reality is disabled")
+	}
+}
+
 func TestBuildGatewaySingBoxConfig_ProxyServerIPInRoute(t *testing.T) {
 	outbound := json.RawMessage(`{"type":"socks","server":"1.2.3.4","server_port":1080}`)
 	cfg, err := buildGatewaySingBoxConfig(outbound, "10.0.0.1", "1.2.3.4")
@@ -208,5 +286,14 @@ func TestBuildGatewaySingBoxConfig_ProxyServerIPInRoute(t *testing.T) {
 	cfgStr := string(cfg)
 	if !strings.Contains(cfgStr, "1.2.3.4/32") {
 		t.Error("route rules should contain proxy server IP /32 bypass")
+	}
+}
+
+func TestBuildGatewaySingBoxConfig_InvalidOutbound(t *testing.T) {
+	// Invalid JSON in outbound should cause buildGatewayProxyOutbound to fail
+	outbound := json.RawMessage(`{invalid`)
+	_, err := buildGatewaySingBoxConfig(outbound, "10.0.0.1", "1.2.3.4")
+	if err == nil {
+		t.Fatal("expected error for invalid outbound JSON")
 	}
 }
