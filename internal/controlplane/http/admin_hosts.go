@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
 	nethttp "net/http"
@@ -124,10 +125,7 @@ func (h *AdminHostsHandler) Get() nethttp.Handler {
 		resp.Host.EntryPassword = ""
 		resp.User.PasswordHash = ""
 		resp.User.EntryPassword = ""
-		sshTarget := detail.Host.ShortID
-		if sshTarget == "" {
-			sshTarget = detail.User.ShortID
-		}
+		sshTarget := detail.User.Username
 		if sshTarget != "" {
 			scheme := "https"
 			if r.TLS == nil {
@@ -139,12 +137,8 @@ func (h *AdminHostsHandler) Get() nethttp.Handler {
 			}
 			baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
 			vncPath := fmt.Sprintf("/v1/admin/hosts/%s/vnc/vnc.html", detail.Host.ID)
-			entryID := detail.Host.ShortID
-			if entryID == "" {
-				entryID = detail.User.ShortID
-			}
 			resp.ConnectionInfo = &repository.ConnectionInfo{
-				CurlCommand: fmt.Sprintf("curl -sSL %s/entry/%s | bash", baseURL, entryID),
+				CurlCommand: fmt.Sprintf("curl -sSL %s/entry/%s | bash", baseURL, sshTarget),
 				SSHCommand:  fmt.Sprintf("ssh %s@%s -p 2222", sshTarget, host),
 				SSHPort:     2222,
 				VNCURL:      fmt.Sprintf("%s%s", baseURL, vncPath),
@@ -696,6 +690,147 @@ func shortImageID(id string) string {
 		return id[:12]
 	}
 	return id
+}
+
+func (h *AdminHostsHandler) ExportConfig() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		hostID := r.PathValue("hostID")
+
+		host, err := h.store.GetHost(r.Context(), hostID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "host not found"})
+				return
+			}
+			h.logger.Error("get host for config export failed", "host_id", hostID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "get host failed"})
+			return
+		}
+		if host.Status != "running" {
+			writeJSON(w, nethttp.StatusConflict, map[string]string{"error": "host is not running"})
+			return
+		}
+
+		containerName := "cloudproxy-" + hostID
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, "docker", "exec", "-i", containerName,
+			"tar", "czf", "-",
+			"-C", "/workspace", ".claude", ".claude.json", ".chrome-data",
+			"-C", "/var/lib/claude-persist", ".", ".cache")
+
+		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"host-%s-config.tar.gz\"", hostID))
+		w.WriteHeader(nethttp.StatusOK)
+
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			h.logger.Error("docker exec stdout pipe failed", "host_id", hostID, "error", err)
+			return
+		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			h.logger.Error("docker exec stderr pipe failed", "host_id", hostID, "error", err)
+			return
+		}
+
+		if err := cmd.Start(); err != nil {
+			h.logger.Error("docker exec tar start failed", "host_id", hostID, "error", err)
+			return
+		}
+
+		go func() {
+			stderrBytes, _ := io.ReadAll(stderr)
+			if len(stderrBytes) > 0 {
+				h.logger.Warn("docker exec tar stderr", "host_id", hostID, "stderr", string(stderrBytes))
+			}
+		}()
+
+		if _, err := io.Copy(w, stdout); err != nil {
+			h.logger.Error("copy tar output failed", "host_id", hostID, "error", err)
+			return
+		}
+
+		if err := cmd.Wait(); err != nil {
+			h.logger.Error("docker exec tar failed", "host_id", hostID, "error", err)
+			return
+		}
+
+		if h.events != nil {
+			if _, err := h.events.RecordEvent(r.Context(), repository.RecordEventParams{
+				HostID:   &hostID,
+				Level:    "info",
+				Type:     "admin.host.config_exported",
+				Message:  "管理员导出容器配置",
+				Metadata: map[string]any{"operator": "admin"},
+			}); err != nil {
+				h.logger.Error("record event failed", "type", "admin.host.config_exported", "error", err)
+			}
+		}
+	})
+}
+
+func (h *AdminHostsHandler) ImportConfig() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		hostID := r.PathValue("hostID")
+
+		host, err := h.store.GetHost(r.Context(), hostID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "host not found"})
+				return
+			}
+			h.logger.Error("get host for config import failed", "host_id", hostID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "get host failed"})
+			return
+		}
+		if host.Status != "running" {
+			writeJSON(w, nethttp.StatusConflict, map[string]string{"error": "host is not running"})
+			return
+		}
+
+		if err := r.ParseMultipartForm(100 << 20); err != nil {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "invalid multipart form: " + err.Error()})
+			return
+		}
+		defer r.MultipartForm.RemoveAll()
+
+		file, _, err := r.FormFile("file")
+		if err != nil {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "file is required"})
+			return
+		}
+		defer file.Close()
+
+		containerName := "cloudproxy-" + hostID
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, "docker", "exec", "-i", containerName, "tar", "xzf", "-", "-C", "/")
+		cmd.Stdin = file
+
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			h.logger.Error("docker exec tar extract failed", "host_id", hostID, "error", err, "output", string(output))
+			writeJSON(w, nethttp.StatusBadGateway, map[string]string{"error": "import failed: " + strings.TrimSpace(string(output))})
+			return
+		}
+
+		if h.events != nil {
+			if _, err := h.events.RecordEvent(r.Context(), repository.RecordEventParams{
+				HostID:   &hostID,
+				Level:    "info",
+				Type:     "admin.host.config_imported",
+				Message:  "管理员导入容器配置",
+				Metadata: map[string]any{"operator": "admin"},
+			}); err != nil {
+				h.logger.Error("record event failed", "type", "admin.host.config_imported", "error", err)
+			}
+		}
+
+		writeJSON(w, nethttp.StatusOK, map[string]string{"status": "ok"})
+	})
 }
 
 func (h *AdminHostsHandler) GetClaudeSettings() nethttp.Handler {
