@@ -51,6 +51,7 @@ type Dependencies struct {
 	EventRecorder   EventRecorder
 	EntryStore      EntryStore
 	EntryBaseURL    string
+	ImageLockPath   string
 	UserHosts       UserHostStore
 	SSHKeys         SSHKeyStore
 }
@@ -187,7 +188,7 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 	mux.Handle("GET /v1/bootstrap/tasks/{taskID}/handoff", bootstrapHandoffHandler)
 
 	if deps.EntryStore != nil {
-		entryHandler := NewEntryHandler(deps.Logger, deps.EntryStore, deps.EntryBaseURL)
+		entryHandler := NewEntryHandler(deps.Logger, deps.EntryStore, deps.EntryBaseURL, deps.ImageLockPath)
 		mux.Handle("GET /entry/{username}", entryHandler.Script())
 		mux.Handle("POST /v1/entry/{username}/auth", entryHandler.Auth())
 	}
@@ -248,6 +249,8 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 			mux.Handle("GET /v1/admin/hosts/{hostID}/claude/status", adminGuard(hostsHandler.GetClaudeStatus()))
 			mux.Handle("GET /v1/admin/hosts/{hostID}/claude/info", adminGuard(hostsHandler.GetClaudeInfo()))
 			mux.Handle("POST /v1/admin/hosts/{hostID}/claude/update", adminGuard(hostsHandler.UpdateClaude()))
+			mux.Handle("GET /v1/admin/hosts/{hostID}/config/export", adminGuard(hostsHandler.ExportConfig()))
+			mux.Handle("POST /v1/admin/hosts/{hostID}/config/import", adminGuard(hostsHandler.ImportConfig()))
 			mux.Handle("GET /v1/admin/hosts/{hostID}/image-info", adminGuard(hostsHandler.GetImageInfo()))
 			mux.Handle("DELETE /v1/admin/hosts/{hostID}", adminGuard(hostsHandler.Delete()))
 

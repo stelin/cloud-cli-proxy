@@ -305,3 +305,60 @@ export function useUnbindEgressIP() {
     },
   });
 }
+
+export function useExportHostConfig() {
+  return useMutation({
+    mutationFn: async (hostId: string) => {
+      const token = localStorage.getItem("token");
+      const resp = await fetch(`/v1/admin/hosts/${hostId}/config/export`, {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({ error: "导出失败" }));
+        throw new Error(data.error || "导出失败");
+      }
+      const blob = await resp.blob();
+      const cd = resp.headers.get("Content-Disposition");
+      let filename = `host-${hostId}-config.tar.gz`;
+      if (cd) {
+        const match = cd.match(/filename="?([^"]+)"?/);
+        if (match) filename = match[1];
+      }
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    },
+  });
+}
+
+export function useImportHostConfig() {
+  return useMutation({
+    mutationFn: async ({ hostId, file }: { hostId: string; file: File }) => {
+      const token = localStorage.getItem("token");
+      const formData = new FormData();
+      formData.append("file", file);
+      const resp = await fetch(`/v1/admin/hosts/${hostId}/config/import`, {
+        method: "POST",
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: formData,
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({ error: "导入失败" }));
+        throw new Error(data.error || "导入失败");
+      }
+      return resp.json();
+    },
+    onSuccess: () => {
+      toast.success("配置导入成功");
+    },
+  });
+}
