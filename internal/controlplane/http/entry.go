@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/zanel1u/cloud-cli-proxy/internal/runtime"
 	"github.com/zanel1u/cloud-cli-proxy/internal/store/repository"
 )
 
@@ -34,8 +35,18 @@ const v3CapBaseline = "v3.0.0"
 //  1. 整体 trim 空白；
 //  2. 取最后一个 ":" 之后的 tag；若不存在 ":"，整串视为 tag；
 //  3. 再对 tag trim 空白（兼容异常配置）；
-//  4. supports_mergerfs = (tag == v3CapBaseline)。
-func deriveEntryCapabilities(templateImageRef string) (imageVersion string, supportsMergerfs bool) {
+//  4. supports_mergerfs = imageLockSupportsMergerfs || (tag == v3CapBaseline)。
+//     imageLockSupportsMergerfs 来自 image.lock 的显式声明，优先于 tag 推导，
+//     用于解决重建主机后数据库 template_image_ref 未同步更新的问题。
+func deriveEntryCapabilities(templateImageRef string, imageLockSupportsMergerfs bool) (imageVersion string, supportsMergerfs bool) {
+	if imageLockSupportsMergerfs {
+		tag := strings.TrimSpace(templateImageRef)
+		if idx := strings.LastIndex(tag, ":"); idx != -1 {
+			tag = tag[idx+1:]
+		}
+		tag = strings.TrimSpace(tag)
+		return tag, true
+	}
 	tag := strings.TrimSpace(templateImageRef)
 	if idx := strings.LastIndex(tag, ":"); idx != -1 {
 		tag = tag[idx+1:]
@@ -46,13 +57,14 @@ func deriveEntryCapabilities(templateImageRef string) (imageVersion string, supp
 }
 
 type EntryHandler struct {
-	logger  *slog.Logger
-	store   EntryStore
-	baseURL string
+	logger        *slog.Logger
+	store         EntryStore
+	baseURL       string
+	imageLockPath string
 }
 
-func NewEntryHandler(logger *slog.Logger, store EntryStore, baseURL string) *EntryHandler {
-	return &EntryHandler{logger: logger, store: store, baseURL: baseURL}
+func NewEntryHandler(logger *slog.Logger, store EntryStore, baseURL, imageLockPath string) *EntryHandler {
+	return &EntryHandler{logger: logger, store: store, baseURL: baseURL, imageLockPath: imageLockPath}
 }
 
 func (h *EntryHandler) Script() nethttp.Handler {
@@ -197,9 +209,13 @@ func (h *EntryHandler) Auth() nethttp.Handler {
 			sshHost = sshHost[:idx]
 		}
 
-		// Phase 30 D-06/D-07：仅依据 template_image_ref 推导能力字段，
-		// 不访问 host-agent / Docker registry（D-04 维持 Phase 29 结论）。
-		imageVersion, supportsMergerfs := deriveEntryCapabilities(templateImageRef)
+		// Phase 30 D-06/D-07：依据 template_image_ref + image.lock 显式声明推导能力字段。
+		// image.lock 的 supports_mergerfs 优先，解决重建主机后 DB 字段未同步问题。
+		var imageLockSupportsMergerfs bool
+		if spec, specErr := runtime.LoadRuntimeSpec(h.imageLockPath); specErr == nil {
+			imageLockSupportsMergerfs = spec.SupportsMergerfs
+		}
+		imageVersion, supportsMergerfs := deriveEntryCapabilities(templateImageRef, imageLockSupportsMergerfs)
 
 		resp := map[string]any{
 			"ssh_user":          user.Username,

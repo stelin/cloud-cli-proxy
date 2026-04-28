@@ -71,7 +71,7 @@ func mustBcrypt(t *testing.T, password string) string {
 
 func doAuth(t *testing.T, store EntryStore, username, password string) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
-	handler := NewEntryHandler(slog.Default(), store, "").Auth()
+	handler := NewEntryHandler(slog.Default(), store, "", "").Auth()
 	body, _ := json.Marshal(map[string]string{"password": password})
 	req := httptest.NewRequest(nethttp.MethodPost, "/v1/entry/"+username+"/auth", bytes.NewReader(body))
 	req.Host = "gateway.example.com"

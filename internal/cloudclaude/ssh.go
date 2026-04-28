@@ -140,7 +140,7 @@ func ConnectAndRunClaudeV3(cfg SSHConfig, claudeArgs []string, cwd string,
 	// 退出码引用 cloudclaude.Exit* 命名常量（避开 v2.0 main.go ExitConfigError=4 /
 	// ExitInternalError=5 撞码；OAuthNotFound=6 / OAuthExpired=7）。
 	if mountCfg.ClaudeAccountID == "" {
-		fmt.Fprintln(mountCfg.Logger, "[!] gateway 未返回 claude_account_id，跳过 OAuth 过期检查（建议升级 gateway 至 v3.0）")
+		fmt.Fprintln(mountCfg.Logger, "[!] 未配置 Claude Account 绑定，跳过 OAuth 过期检查（不影响正常使用）")
 	} else {
 		status, oauthErr := CheckOAuthCredentials(connA, mountCfg.ClaudeAccountID)
 		if oauthErr != nil {

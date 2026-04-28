@@ -11,6 +11,7 @@ import {
   RotateCcw,
   Globe,
   Server,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { getToken } from "@/lib/auth";
@@ -69,28 +70,42 @@ function formatDate(dateStr: string) {
   });
 }
 
-const statusConfig: Record<
-  string,
-  {
-    label: string;
-    variant: "default" | "secondary" | "destructive" | "outline";
-  }
-> = {
-  running: { label: "运行中", variant: "default" },
-  stopped: { label: "已停止", variant: "secondary" },
-  pending: { label: "等待中", variant: "outline" },
-  failed: { label: "失败", variant: "destructive" },
+const taskKindLabels: Record<string, string> = {
+  create_host: "创建",
+  start_host: "启动",
+  stop_host: "停止",
+  rebuild_host: "重建",
 };
 
-const dockerStatusMap: Record<string, { label: string; color: string }> = {
-  running: { label: "运行中", color: "text-green-600" },
-  exited: { label: "已退出", color: "text-red-500" },
-  created: { label: "已创建", color: "text-yellow-600" },
-  paused: { label: "已暂停", color: "text-yellow-600" },
-  restarting: { label: "重启中", color: "text-blue-500" },
-  dead: { label: "已死亡", color: "text-red-700" },
-  "not found": { label: "未创建", color: "text-muted-foreground" },
-};
+function getHostStatus(
+  host: (typeof useHosts extends (...args: any[]) => { data: infer D } | undefined ? D : never)["hosts"][number],
+  latestTask?: ReturnType<typeof useTasks>["data"]["tasks"][number],
+) {
+  // 优先显示进行中的任务
+  if (latestTask && (latestTask.status === "pending" || latestTask.status === "running")) {
+    const kind = taskKindLabels[latestTask.kind] ?? latestTask.kind;
+    return { type: "loading" as const, label: `${kind}中...` };
+  }
+
+  // 按 docker_status 判断
+  const docker = host.docker_status;
+  if (docker === "running") return { type: "badge" as const, label: "运行中", variant: "default" as const };
+  if (docker === "exited") return { type: "badge" as const, label: "已停止", variant: "secondary" as const };
+  if (docker === "not found") return { type: "badge" as const, label: "未创建", variant: "outline" as const };
+  if (docker === "created") return { type: "badge" as const, label: "已创建", variant: "outline" as const };
+  if (docker === "restarting") return { type: "badge" as const, label: "重启中", variant: "outline" as const };
+  if (docker === "paused") return { type: "badge" as const, label: "已暂停", variant: "outline" as const };
+  if (docker === "dead") return { type: "badge" as const, label: "已死亡", variant: "destructive" as const };
+
+  // 回退到 DB status
+  const db = host.status;
+  if (db === "failed") return { type: "badge" as const, label: "失败", variant: "destructive" as const };
+  if (db === "pending") return { type: "badge" as const, label: "等待中", variant: "outline" as const };
+  if (db === "running") return { type: "badge" as const, label: "运行中", variant: "default" as const };
+  if (db === "stopped") return { type: "badge" as const, label: "已停止", variant: "secondary" as const };
+
+  return { type: "badge" as const, label: db || "未知", variant: "outline" as const };
+}
 
 function HostsPage() {
   const { data, isLoading } = useHosts();
@@ -145,9 +160,7 @@ function HostsPage() {
               <TableHead>主机名</TableHead>
               <TableHead>所属用户</TableHead>
               <TableHead>出口 IP</TableHead>
-              <TableHead>DB 状态</TableHead>
-              <TableHead>容器状态</TableHead>
-              <TableHead>最新任务</TableHead>
+              <TableHead>运行状态</TableHead>
               <TableHead>更新时间</TableHead>
               <TableHead className="w-[140px]">操作</TableHead>
             </TableRow>
@@ -156,7 +169,7 @@ function HostsPage() {
             {isLoading ? (
               Array.from({ length: 3 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 8 }).map((_, j) => (
+                  {Array.from({ length: 6 }).map((_, j) => (
                     <TableCell key={j}>
                       <div className="h-4 w-20 animate-pulse rounded bg-muted" />
                     </TableCell>
@@ -165,7 +178,7 @@ function HostsPage() {
               ))
             ) : hosts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="p-0">
+                <TableCell colSpan={6} className="p-0">
                   <EmptyState
                     icon={Server}
                     title="暂无主机"
@@ -181,15 +194,8 @@ function HostsPage() {
               </TableRow>
             ) : (
               hosts.map((host) => {
-                const sc = statusConfig[host.status] ?? {
-                  label: host.status,
-                  variant: "outline" as const,
-                };
-                const ds = dockerStatusMap[host.docker_status] ?? {
-                  label: host.docker_status || "未知",
-                  color: "text-muted-foreground",
-                };
                 const latestTask = getLatestTask(host.id);
+                const status = getHostStatus(host, latestTask);
                 const isRunning = host.docker_status === "running";
                 const isStopped =
                   host.docker_status === "exited" ||
@@ -230,15 +236,45 @@ function HostsPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={sc.variant}>{sc.label}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <span className={`text-sm font-medium ${ds.color}`}>
-                        {ds.label}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <TaskStatusCell task={latestTask} />
+                      {status.type === "loading" && latestTask ? (
+                        <TooltipProvider delayDuration={100}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex items-center gap-1.5 text-sm text-primary cursor-help">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                {status.label}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom" className="max-w-xs">
+                              <div className="space-y-1">
+                                <p className="text-xs font-medium">
+                                  任务: {taskKindLabels[latestTask.kind] ?? latestTask.kind}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  状态: {latestTask.status === "pending" ? "排队中" : "执行中"}
+                                </p>
+                                {latestTask.last_error_summary && (
+                                  <p className="text-xs text-destructive break-all">
+                                    错误: {latestTask.last_error_summary}
+                                  </p>
+                                )}
+                                {latestTask.updated_at && (
+                                  <p className="text-xs text-muted-foreground">
+                                    更新: {formatDate(latestTask.updated_at)}
+                                  </p>
+                                )}
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      ) : status.type === "loading" ? (
+                        <span className="inline-flex items-center gap-1.5 text-sm text-primary">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          {status.label}
+                        </span>
+                      ) : (
+                        <Badge variant={status.variant}>{status.label}</Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-muted-foreground text-sm">
                       {formatDate(host.updated_at)}
@@ -426,65 +462,3 @@ function HostsPage() {
   );
 }
 
-function TaskStatusCell({
-  task,
-}: {
-  task?:
-    | (ReturnType<typeof useTasks>["data"] extends
-        | { tasks: (infer T)[] }
-        | undefined
-        ? T
-        : never)
-    | undefined;
-}) {
-  if (!task) return <span className="text-sm text-muted-foreground">—</span>;
-
-  const taskKindLabels: Record<string, string> = {
-    create_host: "创建",
-    start_host: "启动",
-    stop_host: "停止",
-    rebuild_host: "重建",
-  };
-
-  const taskStatusLabels: Record<
-    string,
-    { label: string; className: string }
-  > = {
-    pending: { label: "排队中", className: "text-muted-foreground" },
-    running: { label: "执行中", className: "text-primary" },
-    succeeded: { label: "成功", className: "text-green-600" },
-    failed: { label: "失败", className: "text-destructive" },
-    canceled: { label: "已取消", className: "text-muted-foreground" },
-  };
-
-  const kind = taskKindLabels[task.kind] ?? task.kind;
-  const status = taskStatusLabels[task.status] ?? {
-    label: task.status,
-    className: "",
-  };
-
-  if (task.status === "failed" && task.last_error_summary) {
-    return (
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span
-              className={`cursor-help text-sm underline decoration-dashed ${status.className}`}
-            >
-              {kind} {status.label}
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="max-w-sm">
-            <p className="text-xs break-all">{task.last_error_summary}</p>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-    );
-  }
-
-  return (
-    <span className={`text-sm ${status.className}`}>
-      {kind} {status.label}
-    </span>
-  );
-}

@@ -156,6 +156,8 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		AdminEvents:         repo,
 		EventRecorder:       repo,
 		EntryStore:     repo,
+		EntryBaseURL:   "",
+		ImageLockPath:  runtime.DefaultImageLockPath,
 		UserHosts:      repo,
 		SSHKeys:        repo,
 	})

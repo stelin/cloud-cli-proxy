@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -98,8 +99,12 @@ func (p *ContainerProxyProvider) PrepareHost(ctx context.Context, spec HostNetwo
 		return fmt.Errorf("gateway: connect worker to network: %w", err)
 	}
 
-	// 断开 Worker 原来的 bridge 网络，让隔离网络成为唯一出口
-	_ = exec.CommandContext(ctx, "docker", "network", "disconnect", "-f", "bridge", workerName).Run()
+	// 断开 Worker 原来的 bridge 网络，让隔离网络成为唯一出口。
+	// macOS/Windows: 保留 bridge 网络，因为 Docker Desktop 宿主机无法直接路由到
+	// 容器内部 IP，SSH 端口映射依赖 bridge 网络存活。
+	if runtime.GOOS == "linux" {
+		_ = exec.CommandContext(ctx, "docker", "network", "disconnect", "-f", "bridge", workerName).Run()
+	}
 
 	// 等待隔离网络的接口就绪（disconnect 后可能有短暂延迟）
 	time.Sleep(1 * time.Second)

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -187,6 +188,12 @@ func (w *Worker) buildCreateArgs(request agentapi.HostActionRequest, containerNa
 		"--hostname", hostname,
 		"--shm-size", "1g",
 		"--sysctl", "net.ipv6.conf.all.disable_ipv6=1",
+	}
+
+	// macOS/Windows: expose SSH port via host port mapping because Docker Desktop
+	// cannot route directly to container internal IPs from the host.
+	if runtime.GOOS != "linux" {
+		args = append(args, "-p", "0:22")
 	}
 
 	if request.MemoryLimitMB > 0 {

@@ -7,24 +7,38 @@ DEV_COMPOSE := docker compose -f deploy/compose/control-plane.dev.yml
 
 # ── Development ──────────────────────────────────────────────
 
-dev: ## Start backend + frontend (requires PostgreSQL running)
+dev: ## Start backend + frontend (auto-starts PostgreSQL if needed)
 	@echo "Starting control-plane + admin frontend..."
 	@echo "  API  → http://$(CONTROL_PLANE_ADDR)"
 	@echo "  Web  → http://localhost:5173"
 	@echo "  Agent → embedded (in-process)"
 	@echo ""
 	@mkdir -p .data
-	@trap 'kill 0' EXIT; \
-		HOST_AGENT_MODE=embedded DATA_DIR=$(CURDIR)/.data go run ./cmd/control-plane & \
-		cd web/admin && pnpm dev & \
+	@# Auto-start PostgreSQL if not running
+	@nc -z 127.0.0.1 $(POSTGRES_PORT) > /dev/null 2>&1 || \
+		{ echo "PostgreSQL not running, starting it now..."; $(MAKE) db; }
+	@# On macOS / Windows, ensure gateway sidecar image exists (ContainerProxyProvider needs it)
+	@if [ "$$(uname -s)" != "Linux" ]; then \
+		if ! docker images $(GATEWAY_IMAGE) --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -qF '$(GATEWAY_IMAGE)'; then \
+			echo "Non-Linux host: gateway image not found, building $(GATEWAY_IMAGE)..."; \
+			$(MAKE) gateway-image; \
+		fi; \
+	fi
+	@trap 'kill $$CP_PID $$VITE_PID 2>/dev/null; wait' INT EXIT; \
+		bash scripts/dev-backend.sh & CP_PID=$$!; \
+		cd web/admin && pnpm dev & VITE_PID=$$!; \
 		wait
 
-dev-api: ## Start backend only (with embedded host-agent)
+dev-api: ## Start backend only with hot reload (auto-starts PostgreSQL)
 	@mkdir -p .data
-	HOST_AGENT_MODE=embedded DATA_DIR=$(CURDIR)/.data go run ./cmd/control-plane
+	@nc -z 127.0.0.1 $(POSTGRES_PORT) > /dev/null 2>&1 || \
+		{ echo "PostgreSQL not running, starting it now..."; $(MAKE) db; }
+	@bash scripts/dev-backend.sh
 
 dev-web: ## Start frontend only
 	cd web/admin && pnpm dev
+
+dev-all: dev ## Alias for 'make dev' (PostgreSQL is auto-started)
 
 # ── Database ─────────────────────────────────────────────────
 
@@ -54,13 +68,15 @@ test-smoke: ## Run BATS bootstrap smoke tests
 # ── Images ────────────────────────────────────────────────────
 
 MANAGED_USER_TAG := $(shell grep '^image_name:' deploy/docker/managed-user/image.lock | cut -d' ' -f2)
+GATEWAY_IMAGE    := cloud-cli-proxy-sing-gateway:local
 
 user-image: ## Build managed-user image (cloud desktop)
 	docker build -t $(MANAGED_USER_TAG) -f deploy/docker/managed-user/Dockerfile .
 	@echo "Built: $(MANAGED_USER_TAG)"
 
 gateway-image: ## Build sing-box + iptables sidecar (required for macOS/Windows host-agent egress)
-	docker build -t cloud-cli-proxy-sing-gateway:local -f deploy/docker/sing-box-gateway/Dockerfile .
+	docker build -t $(GATEWAY_IMAGE) -f deploy/docker/sing-box-gateway/Dockerfile .
+	@echo "Built: $(GATEWAY_IMAGE)"
 
 # ── Build ────────────────────────────────────────────────────
 
@@ -117,8 +133,14 @@ release: ## Create and push release tag (usage make release VERSION=1.5.0)
 setup: ## First-time setup: install deps, copy .env
 	cd web/admin && pnpm install
 	@test -f .env || cp .env.example .env
-	@echo "Done. Edit .env if needed, then run: make db && make dev"
-	@echo "提示：在 macOS/Windows 上调试主机出口代理（sidecar 网关）前请先执行一次: make gateway-image"
+	@echo "Done. Edit .env if needed, then run: make dev"
+	@echo ""
+	@echo "常用命令:"
+	@echo "  make dev         一键启动 PostgreSQL + 后端 + 前端（推荐）"
+	@echo "  make dev-api     只启动后端（自动启动 PostgreSQL）"
+	@echo "  make dev-web     只启动前端"
+	@echo "  make db          只启动 PostgreSQL"
+	@echo "  make gateway-image  构建网关 sidecar 镜像（非 Linux 首次需执行）"
 
 # ── Utilities ────────────────────────────────────────────────
 

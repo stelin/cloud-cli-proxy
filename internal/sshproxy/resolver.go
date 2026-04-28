@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -85,17 +86,47 @@ func (r *RepoResolver) resolveTarget(ctx context.Context, auth repository.HostSS
 	}
 
 	containerName := fmt.Sprintf("cloudproxy-%s", auth.HostID)
-	containerIP, err := getContainerIP(ctx, containerName)
+	addr, err := getContainerSSHAddr(ctx, containerName)
 	if err != nil {
 		return ContainerTarget{}, fmt.Errorf("cannot resolve container address: %w", err)
 	}
 
 	return ContainerTarget{
-		Addr:       fmt.Sprintf("%s:22", containerIP),
+		Addr:       addr,
 		User:       auth.ContainerUser,
 		Password:   auth.EntryPassword,
 		PrivateKey: auth.SSHPrivateKey,
 	}, nil
+}
+
+func getContainerSSHAddr(ctx context.Context, containerName string) (string, error) {
+	if runtime.GOOS != "linux" {
+		return getContainerMappedPort(ctx, containerName)
+	}
+	ip, err := getContainerIP(ctx, containerName)
+	if err != nil {
+		return "", err
+	}
+	return ip + ":22", nil
+}
+
+func getContainerMappedPort(ctx context.Context, containerName string) (string, error) {
+	cmd := exec.CommandContext(ctx, "docker", "port", containerName, "22")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("docker port: %w", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		return "", fmt.Errorf("no port mapping for container %s", containerName)
+	}
+	// Format: "0.0.0.0:49153" or ":::49153"
+	parts := strings.Split(lines[0], ":")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("unexpected docker port output: %s", lines[0])
+	}
+	port := strings.TrimSpace(parts[len(parts)-1])
+	return "127.0.0.1:" + port, nil
 }
 
 func getContainerIP(ctx context.Context, containerName string) (string, error) {

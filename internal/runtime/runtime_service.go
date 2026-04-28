@@ -27,6 +27,7 @@ type RuntimeSpec struct {
 	DefaultUser        string
 	HomeMount          string
 	RebuildModeDefault string
+	SupportsMergerfs   bool
 }
 
 // QueueHostActionRepo 是 Service 在排队 host 操作时需要的仓储接口。
@@ -251,6 +252,7 @@ func LoadRuntimeSpec(path string) (RuntimeSpec, error) {
 		DefaultUser:        values["default_user"],
 		HomeMount:          values["home_mount"],
 		RebuildModeDefault: firstNonEmpty(values["rebuild_mode_default"], defaultRebuildMode),
+		SupportsMergerfs:   values["supports_mergerfs"] == "true",
 	}
 
 	if spec.ImageName == "" {
