@@ -1,14 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v3.1
-milestone_name: 映射语义补齐与懒加载
-status: shipped
-last_updated: "2026-04-24T16:47:05.934Z"
+milestone: v1.0
+milestone_name: milestone
+status: verifying
+stopped_at: Completed 17-01-PLAN.md
+last_updated: "2026-04-29T04:08:16.374Z"
+last_activity: 2026-04-29
 progress:
-  total_phases: 2
-  completed_phases: 2
-  total_plans: 11
-  completed_plans: 11
+  total_phases: 5
+  completed_phases: 5
+  total_plans: 17
+  completed_plans: 17
+  percent: 100
 ---
 
 # Project State
@@ -25,8 +28,8 @@ See: .planning/PROJECT.md (updated 2026-04-24 — v3.1 milestone shipped)
 Milestone: v3.1 映射语义补齐与懒加载 — ✅ SHIPPED (2026-04-24)
 Phase: 37 (e2e-uat) — COMPLETE
 Plan: 5 of 5 (全部完成)
-Status: v3.1 归档完成，等待下一里程碑规划
-Last activity: 2026-04-28 - Completed quick task 260420: 后台添加 claude 配置和 chrome 配置的导出导入功能
+Status: Phase complete — ready for verification
+Last activity: 2026-04-29
 
 Progress: [██████████] 100% (11/11 plans across v3.1 phases)
 
@@ -86,6 +89,7 @@ v3.0 关键方向已定：
 - [Phase 37-02]: ColdPromoter 集成到 tryModeReal Full 路径：mergerfs ready 后启动，cleanup LIFO（promoterCancel → promoter.Wait → cancel watcher → merge → sshfs → hot_sync），stats 在 writeLastSessionWarn 前刷入 snapshot；LastSessionSnapshot 新增 PromotionCount/PromotionBytes/PromotionFailedCount 三个 omitempty 字段；CLOUD_CLAUDE_NO_PROMOTION=1 时 promoter 保持 nil 完全跳过
 - [Phase 37-e2e-uat]: promotion stats 在 tryModeReal 返回前刷入 snapshot（writeLastSessionWarn 之前），此时 promoter 刚启动统计为 0——plan 明确接受此为 mount 就绪时的快照语义
 - [Phase 37-05]: uat-v31-promotion.sh (619 行) 6 场景全覆盖（git_reject / oversized_skip / fuse_cache_hit / cold_promotion / no_promotion / json_report），--dry-run 默认安全 + --confirm-destructive 触发实际操作；JSON 报告 schema_version=1 退出码 0/1/2；make ci-gate 追加 UAT dry-run；场景 3/4/5 在非 Linux 平台自动 SKIP；commits 2511a33 / bd06353
+- [Phase 17]: 删除 Ubuntu 24.04 预置 ubuntu 用户/组释放 UID/GID 1000，groupadd 使用 --force 标志（与 managed-user 模式一致）
 
 ### Pending Todos
 
@@ -118,8 +122,8 @@ v3.1 milestone 已启动；等待 ROADMAP.md 写入后进入 Phase 36 执行：
 
 ## Session Continuity
 
-Last session: 2026-04-24T05:09:00.000Z
-Stopped at: Completed 37-05-PLAN.md
+Last session: 2026-04-29T04:08:16.367Z
+Stopped at: Completed 17-01-PLAN.md
 Resume file: None
 
 ## Deferred Items
