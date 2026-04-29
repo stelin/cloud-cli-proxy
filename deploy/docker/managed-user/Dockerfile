@@ -144,7 +144,13 @@ RUN set -eux; \
       mv /tmp/claude /usr/local/bin/claude; \
       rm -f /tmp/claude-binary.tar.gz; \
     fi; \
-    CLAUDE_BIN="$(command -v claude)"; \
+    CLAUDE_BIN="${HOME}/.local/bin/claude"; \
+    if [ ! -x "${CLAUDE_BIN}" ]; then \
+      CLAUDE_BIN="/root/.local/bin/claude"; \
+    fi; \
+    if [ ! -x "${CLAUDE_BIN}" ]; then \
+      echo "Claude binary not found at ${HOME}/.local/bin/claude or /root/.local/bin/claude" >&2; exit 1; \
+    fi; \
     mv "${CLAUDE_BIN}" /usr/local/bin/claude-real; \
     chmod +x /usr/local/bin/claude-real; \
     claude-real --version
