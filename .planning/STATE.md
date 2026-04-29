@@ -108,6 +108,7 @@ v3.1 milestone 已启动；等待 ROADMAP.md 写入后进入 Phase 36 执行：
 | 260417-0w4 | 新增 cloud-claude ssh doctor 子命令（owner/mode/PEM 尾换行自检与修复） | 2026-04-16 | d716b14, 3f0567c, 7836821 | [260417-0w4-cloud-claude-cli-ssh-doctor-workspace-ss](./quick/260417-0w4-cloud-claude-cli-ssh-doctor-workspace-ss/) |
 | 260418 | 三层 panic recovery（Worker/Dispatcher/HTTP handler）修复启动排队卡住 | 2026-04-24 | e2bdc38, 19b098f, 15b5f1b | [260418-running-panic-recovery](./quick/260418-running-panic-recovery/) |
 | 260420 | 后台添加 claude 配置和 chrome 配置的导出导入功能 | 2026-04-28 | f224a9b | [260420-claude-chrome](./quick/260420-claude-chrome/) |
+| 260421 | 宿主机路径挂载管理（DB + API + Worker + 前端全链路） | 2026-04-29 | 2e910f3, ee98afa | [260421-host-bind-mounts](./quick/260421-host-bind-mounts/) |
 
 ### Roadmap Evolution
 
@@ -120,8 +121,8 @@ v3.1 milestone 已启动；等待 ROADMAP.md 写入后进入 Phase 36 执行：
 
 ## Session Continuity
 
-Last session: 2026-04-29T05:50:14Z
-Stopped at: Completed 17-02-PLAN.md
+Last session: 2026-04-29T07:34:00Z
+Stopped at: Completed 260421-host-bind-mounts
 Resume file: None
 
 ## Deferred Items
