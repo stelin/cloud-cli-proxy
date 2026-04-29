@@ -178,6 +178,73 @@ childProcess.spawnSync = function (cmd, args, opts) {
   return _spawnSync.call(this, cmd, args, opts);
 };
 
+// ── 拦截 fs 层 machine-id 读取 ────────────────────────────────
+const fs = require("fs");
+const MACHINE_ID_PATHS = ["/etc/machine-id", "/var/lib/dbus/machine-id"];
+function isMachineIdPath(p) {
+  const s = typeof p === "string" ? p : (p && p.toString ? p.toString() : "");
+  return MACHINE_ID_PATHS.includes(s);
+}
+const fakeMachineId = crypto.createHash("sha256").update(SPOOF.hostname).digest("hex").slice(0, 32) + "\n";
+
+const _origReadFileSync = fs.readFileSync.bind(fs);
+fs.readFileSync = function (path, options) {
+  if (isMachineIdPath(path)) {
+    return typeof options === "string" || (options && options.encoding)
+      ? fakeMachineId : Buffer.from(fakeMachineId);
+  }
+  return _origReadFileSync(path, options);
+};
+
+const _origReadFile = fs.readFile.bind(fs);
+fs.readFile = function (path, ...args) {
+  if (isMachineIdPath(path)) {
+    const cb = typeof args[args.length - 1] === "function" ? args[args.length - 1] : null;
+    if (cb) {
+      const opts = args.length > 1 ? args[0] : null;
+      const data = typeof opts === "string" || (opts && opts.encoding) ? fakeMachineId : Buffer.from(fakeMachineId);
+      process.nextTick(cb, null, data);
+      return;
+    }
+  }
+  return _origReadFile(path, ...args);
+};
+
+try {
+  const fsp = fs.promises || require("fs/promises");
+  if (fsp && fsp.readFile) {
+    const _origPromiseReadFile = fsp.readFile.bind(fsp);
+    fsp.readFile = function (path, options) {
+      if (isMachineIdPath(path)) {
+        const data = typeof options === "string" || (options && options.encoding) ? fakeMachineId : Buffer.from(fakeMachineId);
+        return Promise.resolve(data);
+      }
+      return _origPromiseReadFile(path, options);
+    };
+  }
+} catch (_) {}
+
+// ── 容器检测绕过 ─────────────────────────────────────────────
+const _origExistsSync = fs.existsSync.bind(fs);
+fs.existsSync = function (p) {
+  const s = typeof p === "string" ? p : (p && p.toString ? p.toString() : "");
+  if (s === "/.dockerenv") return false;
+  return _origExistsSync(p);
+};
+
+const _origReadFileSyncCg = fs.readFileSync;
+fs.readFileSync = function (path, options) {
+  const s = typeof path === "string" ? path : (path && path.toString ? path.toString() : "");
+  if (s === "/proc/1/cgroup") {
+    const content = _origReadFileSyncCg(path, options);
+    const str = typeof content === "string" ? content : content.toString();
+    return typeof options === "string" || (options && options.encoding)
+      ? str.replace(/docker|containerd|kubepods/gi, "system.slice")
+      : Buffer.from(str.replace(/docker|containerd|kubepods/gi, "system.slice"));
+  }
+  return _origReadFileSyncCg(path, options);
+};
+
 // ── 日志（调试时打开） ────────────────────────────────────────
 if (process.env.SPOOF_DEBUG === "1") {
   console.error("[spoof-fingerprint] Loaded. Spoofing as:", JSON.stringify({
