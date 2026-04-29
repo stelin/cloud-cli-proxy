@@ -26,7 +26,7 @@ Milestone: v3.1 映射语义补齐与懒加载 — ✅ SHIPPED (2026-04-24)
 Phase: 37 (e2e-uat) — COMPLETE
 Plan: 5 of 5 (全部完成)
 Status: Phase complete — ready for verification
-Last activity: 2026-04-29
+Last activity: 2026-04-29 - 完成 quick task 260422: 研究 cac 项目并评估 Claude 伪装增强方案
 
 Progress: [██████████] 100% (11/11 plans across v3.1 phases)
 
@@ -109,6 +109,7 @@ v3.1 milestone 已启动；等待 ROADMAP.md 写入后进入 Phase 36 执行：
 | 260418 | 三层 panic recovery（Worker/Dispatcher/HTTP handler）修复启动排队卡住 | 2026-04-24 | e2bdc38, 19b098f, 15b5f1b | [260418-running-panic-recovery](./quick/260418-running-panic-recovery/) |
 | 260420 | 后台添加 claude 配置和 chrome 配置的导出导入功能 | 2026-04-28 | f224a9b | [260420-claude-chrome](./quick/260420-claude-chrome/) |
 | 260421 | 宿主机路径挂载管理（DB + API + Worker + 前端全链路） | 2026-04-29 | 2e910f3, ee98afa | [260421-host-bind-mounts](./quick/260421-host-bind-mounts/) |
+| 260422 | 研究 cac 项目并评估 Claude 伪装增强方案 | 2026-04-29 | — | [260422-cac-claude](./quick/260422-cac-claude/) |
 
 ### Roadmap Evolution
 
