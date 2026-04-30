@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -15,8 +16,31 @@ const (
 	DefaultPollTimeout  = 120 * time.Second
 )
 
+// Status 兼容 JSON 字符串和数字两种形态的 status 字段。
+type Status string
+
+func (s *Status) UnmarshalJSON(data []byte) error {
+	// 先尝试按字符串解析（带引号）
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		*s = Status(str)
+		return nil
+	}
+	// 回退到数字解析，再转字符串
+	var num int64
+	if err := json.Unmarshal(data, &num); err == nil {
+		*s = Status(strconv.FormatInt(num, 10))
+		return nil
+	}
+	return fmt.Errorf("status 必须是字符串或数字，got: %s", string(data))
+}
+
+func (s Status) String() string {
+	return string(s)
+}
+
 type AuthResponse struct {
-	Status  string `json:"status"`
+	Status  Status `json:"status"`
 	Message string `json:"message,omitempty"`
 	Error   string `json:"error,omitempty"`
 

@@ -95,6 +95,66 @@ func TestAuthenticate_V3Gateway_PreservesExtensions(t *testing.T) {
 	}
 }
 
+// TestAuthResponse_StatusString 确认字符串形态的 status 字段仍然正常工作。
+func TestAuthResponse_StatusString(t *testing.T) {
+	payload := `{"status":"ready","ssh_user":"u","ssh_pass":"p","ssh_host":"h","ssh_port":2222}`
+	var resp AuthResponse
+	if err := json.Unmarshal([]byte(payload), &resp); err != nil {
+		t.Fatalf("unmarshal string status: %v", err)
+	}
+	if resp.Status.String() != "ready" {
+		t.Errorf("Status = %q, want ready", resp.Status.String())
+	}
+}
+
+// TestAuthResponse_StatusNumber 覆盖数字 status 解析场景：
+// gateway 返回 {"status":1} 时，Status 应解析为 "1" 不报错。
+func TestAuthResponse_StatusNumber(t *testing.T) {
+	payload := `{"status":1,"ssh_user":"u","ssh_pass":"p","ssh_host":"h","ssh_port":2222}`
+	var resp AuthResponse
+	if err := json.Unmarshal([]byte(payload), &resp); err != nil {
+		t.Fatalf("unmarshal number status: %v", err)
+	}
+	if resp.Status.String() != "1" {
+		t.Errorf("Status = %q, want 1", resp.Status.String())
+	}
+}
+
+// TestAuthResponse_StatusNumberZero 覆盖数字 0 边界。
+func TestAuthResponse_StatusNumberZero(t *testing.T) {
+	payload := `{"status":0}`
+	var resp AuthResponse
+	if err := json.Unmarshal([]byte(payload), &resp); err != nil {
+		t.Fatalf("unmarshal number zero status: %v", err)
+	}
+	if resp.Status.String() != "0" {
+		t.Errorf("Status = %q, want 0", resp.Status.String())
+	}
+}
+
+// TestAuthResponse_StatusMarshal 确认序列化时 Status 输出为 JSON 字符串。
+func TestAuthResponse_StatusMarshal(t *testing.T) {
+	resp := AuthResponse{Status: Status("ready"), SSHUser: "u"}
+	buf, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(buf), `"status":"ready"`) {
+		t.Errorf("marshal must emit status as string, got: %s", buf)
+	}
+}
+
+// TestAuthResponse_StatusComparison 确认 == 比较语法保持可用。
+func TestAuthResponse_StatusComparison(t *testing.T) {
+	resp := AuthResponse{Status: Status("ready")}
+	if resp.Status != "ready" {
+		t.Errorf("Status != \"ready\" with direct comparison")
+	}
+	if resp.Status.String() != "ready" {
+		t.Errorf("Status.String() != \"ready\"")
+	}
+}
+
 // TestAuthenticate_V2Gateway_NoExtensionsRequired 锁死向后兼容：
 // 旧 gateway 只返回 v2 字段时 Authenticate() 依然成功，扩展字段保持零值（D-08）。
 func TestAuthenticate_V2Gateway_NoExtensionsRequired(t *testing.T) {
