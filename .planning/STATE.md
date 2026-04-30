@@ -1,10 +1,10 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: active
-last_updated: "2026-04-29T09:26:19.657Z"
-last_activity: "2026-04-29 - 完成 quick task 260422: 研究 cac 项目并评估 Claude 伪装增强方案"
+milestone: v3.1
+milestone_name: "映射语义补齐与懒加载"
+status: complete
+last_updated: "2026-04-30T13:30:00.000Z"
+last_activity: 2026-04-30
 progress:
   total_phases: 5
   completed_phases: 5
