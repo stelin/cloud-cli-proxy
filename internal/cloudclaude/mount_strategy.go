@@ -451,6 +451,12 @@ func tryModeReal(connA, connB *ssh.Client, mode Mode, cfg MountConfig, snapshot 
 	// 零值/负值在 effectiveHotSyncMaxFileMB() 内已兜底为 mountDefaultHotSyncMaxFileMB=50。
 	maxFileBytes := int64(cfg.effectiveHotSyncMaxFileMB()) * 1024 * 1024
 
+	// 为热同步阶段创建 ProgressUI（可选，nil 时回退到静默）。
+	var progress *ProgressUI
+	if cfg.Logger != nil {
+		progress = NewProgressUI(cfg.Logger, cfg.NoColor)
+	}
+
 	// HotOnly：不启冷层、不做合并，直接把热同步目标设为 cfg.Cwd。
 	if mode == ModeHotOnly {
 		return StartHotSync(connA, connB, HotSyncConfig{
@@ -460,6 +466,7 @@ func tryModeReal(connA, connB *ssh.Client, mode Mode, cfg MountConfig, snapshot 
 			IgnorePatterns: ignorePatterns,
 			Logger:         cfg.Logger,
 			MaxFileBytes:   maxFileBytes,
+			Progress:       progress,
 		})
 	}
 
@@ -473,17 +480,20 @@ func tryModeReal(connA, connB *ssh.Client, mode Mode, cfg MountConfig, snapshot 
 		IgnorePatterns: ignorePatterns,
 		Logger:         cfg.Logger,
 		MaxFileBytes:   maxFileBytes,
+		Progress:       progress,
 	})
 	if hErr != nil {
 		return nil, HotSyncStatus{}, hErr
 	}
 
+	fmt.Fprintln(cfg.Logger, "\n━━ (2/3) 启动冷兜底 ━━")
 	sCleanup, sErr := mountSSHFS(connA, cfg.Cwd, coldRoot)
 	if sErr != nil {
 		hCleanup()
 		return nil, HotSyncStatus{}, sErr
 	}
 
+	fmt.Fprintln(cfg.Logger, "\n━━ (3/3) 合并视图 ━━")
 	cleanupStaleFUSE(connA, cfg.Cwd)
 	branches := []string{hotRoot + "=RW", coldRoot + "=RO"}
 	mergeCleanup, mergeErr := mountMerge(connA, branches, cfg.Cwd)
@@ -543,17 +553,15 @@ func tryModeReal(connA, connB *ssh.Client, mode Mode, cfg MountConfig, snapshot 
 func printProgress(w io.Writer, mode Mode) {
 	switch mode {
 	case ModeFull:
-		fmt.Fprintln(w, "(1/3) 热同步源码中…")
-		fmt.Fprintln(w, "(2/3) 启动冷兜底…")
-		fmt.Fprintln(w, "(3/3) 合并视图…")
+		fmt.Fprintln(w, "\n━━ (1/3) 热同步 ━━")
 	case ModeHotOnly:
-		fmt.Fprintln(w, "(1/3) 热同步源码中…")
-		fmt.Fprintf(w, "(2/3) 跳过 sshfs（模式: %s）\n", mode.String())
-		fmt.Fprintf(w, "(3/3) 跳过 mergerfs（模式: %s）\n", mode.String())
+		fmt.Fprintln(w, "\n━━ (1/3) 热同步 ━━")
+		fmt.Fprintf(w, "  (2/3) 跳过 sshfs（模式: %s）\n", mode.String())
+		fmt.Fprintf(w, "  (3/3) 跳过 mergerfs（模式: %s）\n", mode.String())
 	case ModeSSHFSOnly:
-		fmt.Fprintf(w, "(1/3) 跳过热同步（模式: %s）\n", mode.String())
-		fmt.Fprintln(w, "(2/3) 启动冷兜底…")
-		fmt.Fprintf(w, "(3/3) 跳过 mergerfs（模式: %s）\n", mode.String())
+		fmt.Fprintf(w, "\n━━ (1/3) 跳过热同步（模式: %s）━━\n", mode.String())
+		fmt.Fprintln(w, "━━ (2/3) 启动冷兜底 ━━")
+		fmt.Fprintf(w, "  (3/3) 跳过 mergerfs（模式: %s）\n", mode.String())
 	}
 }
 

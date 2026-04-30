@@ -47,6 +47,8 @@ type HotSyncConfig struct {
 	// 零值表示不启用熔断；正值由 mount_strategy 注入
 	// cfg.EffectiveHotSyncMaxFileMB() * 1024 * 1024。
 	MaxFileBytes int64
+	// Progress 提供极客风进度条 UI（可选，nil 时不输出）。
+	Progress *ProgressUI
 }
 
 // syncFileState 是本地/远端单个文件的可比较快照。
@@ -109,6 +111,9 @@ type HotSyncEngine struct {
 
 	// adaptive polling state
 	idleStreak int // 连续无变更次数
+
+	// progress 提供极客风进度条 UI（可选）。
+	progress *ProgressUI
 }
 
 // StartHotSync 基于现有 SSH 连接启动热同步。
@@ -146,6 +151,7 @@ func StartHotSync(connA, connB *ssh.Client, cfg HotSyncConfig) (cleanup func(), 
 		doneCh:       make(chan struct{}),
 		last:         make(map[string]syncFileState),
 		maxFileBytes: cfg.MaxFileBytes,
+		progress:     cfg.Progress,
 	}
 
 	if err := engine.prepareRemoteRoot(); err != nil {
@@ -163,9 +169,17 @@ func StartHotSync(connA, connB *ssh.Client, cfg HotSyncConfig) (cleanup func(), 
 	cleanup = func() {
 		close(engine.stopCh)
 		<-engine.doneCh
-		// 会话退出前最后做一次双向 reconcile，尽量把末尾几百毫秒内的编辑带上。
-		if err := engine.syncOnce(false); err != nil && engine.logger != nil {
-			fmt.Fprintln(engine.logger, "[!] 热同步最终收敛失败: "+err.Error())
+		// 会话退出前最后做一次收敛。
+		// Full 模式（resetRemote=true）只做 local → remote 单向上传，
+		// 防止远端 staging 的意外修改反向覆盖本地。
+		if engine.resetRemote {
+			if err := engine.syncOnceUploadOnly(); err != nil && engine.logger != nil {
+				fmt.Fprintln(engine.logger, "[!] 热同步最终上传失败: "+err.Error())
+			}
+		} else {
+			if err := engine.syncOnce(false); err != nil && engine.logger != nil {
+				fmt.Fprintln(engine.logger, "[!] 热同步最终收敛失败: "+err.Error())
+			}
 		}
 		_ = engine.client.Close()
 	}
@@ -175,9 +189,25 @@ func StartHotSync(connA, connB *ssh.Client, cfg HotSyncConfig) (cleanup func(), 
 }
 
 func (e *HotSyncEngine) initialSync() error {
-	localFiles, err := scanLocalSyncFiles(e.localDir, e.matcher)
+	scanCount := 0
+	localFiles, err := scanLocalSyncFiles(e.localDir, e.matcher, func(path string) {
+		scanCount++
+		if e.progress != nil {
+			e.progress.Scanning(path, scanCount)
+		}
+	})
 	if err != nil {
 		return newHotSyncErr("扫描本地目录失败: " + err.Error())
+	}
+	if e.progress != nil {
+		e.progress.ScanDone(len(localFiles))
+	}
+
+	// 统计总数（熔断前）。
+	var totalFiles, totalBytes int64
+	for _, state := range localFiles {
+		totalFiles++
+		totalBytes += state.Size
 	}
 
 	// [Phase 36 D-06] 单文件大小熔断（第二层）。
@@ -185,6 +215,18 @@ func (e *HotSyncEngine) initialSync() error {
 	// Phase 31 D-11 整目录级 SkipDir（在 scanLocalSyncFiles 内部）保持不动，
 	// 与本处单文件级熔断互补，executor 不得删除或合并。
 	oversizedSet := e.applyOversizedFilter(localFiles, true)
+
+	// 统计 hot/cold。
+	var hotFiles, hotBytes int64
+	for _, state := range localFiles {
+		hotFiles++
+		hotBytes += state.Size
+	}
+	coldFiles := totalFiles - hotFiles
+	coldBytes := totalBytes - hotBytes
+	if e.progress != nil {
+		e.progress.Distribution(hotFiles, hotBytes, coldFiles, coldBytes)
+	}
 
 	// 隐藏 staging 路径允许重置；直接映射到 cfg.Cwd 的 hot-only 路径则必须保守，
 	// 不能清空用户可见目录。
@@ -195,11 +237,22 @@ func (e *HotSyncEngine) initialSync() error {
 		if err := e.client.MkdirAll(e.remoteDir); err != nil {
 			return newHotSyncErr("重建远端 hot staging 失败: " + err.Error())
 		}
-		for rel, state := range localFiles {
-			if err := e.copyLocalToRemote(rel, state); err != nil {
+		rels := make([]string, 0, len(localFiles))
+		for rel := range localFiles {
+			rels = append(rels, rel)
+		}
+		sort.Strings(rels)
+		for i, rel := range rels {
+			if e.progress != nil {
+				e.progress.Syncing(i, len(rels), rel)
+			}
+			if err := e.copyLocalToRemote(rel, localFiles[rel]); err != nil {
 				return newHotSyncErr("初始化上传失败: " + err.Error())
 			}
-			e.last[rel] = state
+			e.last[rel] = localFiles[rel]
+		}
+		if e.progress != nil {
+			e.progress.SyncDone(len(rels), len(rels))
 		}
 		return nil
 	}
@@ -221,7 +274,15 @@ func (e *HotSyncEngine) initialSync() error {
 	for p := range remoteFiles {
 		paths[p] = struct{}{}
 	}
-	for rel := range paths {
+	rels := make([]string, 0, len(paths))
+	for p := range paths {
+		rels = append(rels, p)
+	}
+	sort.Strings(rels)
+	for i, rel := range rels {
+		if e.progress != nil {
+			e.progress.Syncing(i, len(rels), rel)
+		}
 		localState, hasLocal := localFiles[rel]
 		remoteState, hasRemote := remoteFiles[rel]
 		switch chooseConflictWinner(localState, hasLocal, remoteState, hasRemote) {
@@ -240,6 +301,9 @@ func (e *HotSyncEngine) initialSync() error {
 				e.last[rel] = remoteState
 			}
 		}
+	}
+	if e.progress != nil {
+		e.progress.SyncDone(len(rels), len(rels))
 	}
 	return nil
 }
@@ -295,7 +359,7 @@ func (e *HotSyncEngine) nextInterval(current time.Duration, hasChanges bool) tim
 // syncOnceAdaptive 执行一次双向同步并返回是否检测到变更。
 // 供 run() 自适应轮询使用；cleanup 最终收敛仍调用 syncOnce(false)。
 func (e *HotSyncEngine) syncOnceAdaptive(logConflicts bool) (hasChanges bool, err error) {
-	localFiles, err := scanLocalSyncFiles(e.localDir, e.matcher)
+	localFiles, err := scanLocalSyncFiles(e.localDir, e.matcher, nil)
 	if err != nil {
 		return false, fmt.Errorf("扫描本地目录失败: %w", err)
 	}
@@ -390,7 +454,7 @@ func (e *HotSyncEngine) syncOnceAdaptive(logConflicts bool) (hasChanges bool, er
 }
 
 func (e *HotSyncEngine) syncOnce(logConflicts bool) error {
-	localFiles, err := scanLocalSyncFiles(e.localDir, e.matcher)
+	localFiles, err := scanLocalSyncFiles(e.localDir, e.matcher, nil)
 	if err != nil {
 		return fmt.Errorf("扫描本地目录失败: %w", err)
 	}
@@ -478,6 +542,41 @@ func (e *HotSyncEngine) syncOnce(logConflicts bool) error {
 	}
 
 	e.last = next
+	return nil
+}
+
+// syncOnceUploadOnly 只把本地变更上传到远端，不做反向下载。
+// 用于 Full 模式退出收敛，防止远端 staging 的意外修改反向覆盖本地。
+func (e *HotSyncEngine) syncOnceUploadOnly() error {
+	localFiles, err := scanLocalSyncFiles(e.localDir, e.matcher, nil)
+	if err != nil {
+		return fmt.Errorf("扫描本地目录失败: %w", err)
+	}
+	// 跳过大文件（不更新 e.oversized，静默跳过）
+	e.applyOversizedFilter(localFiles, false)
+
+	// 上传新增/修改的文件
+	for rel, localState := range localFiles {
+		baseState, hasBase := e.last[rel]
+		if sameSyncState(localState, true, baseState, hasBase) {
+			continue
+		}
+		if err := e.copyLocalToRemote(rel, localState); err != nil {
+			return fmt.Errorf("最终上传 %s 失败: %w", rel, err)
+		}
+		e.last[rel] = localState
+	}
+
+	// 删除远端已不存在的文件
+	for rel := range e.last {
+		if _, hasLocal := localFiles[rel]; !hasLocal {
+			if err := e.deleteRemote(rel); err != nil {
+				return fmt.Errorf("最终删除远端 %s 失败: %w", rel, err)
+			}
+			delete(e.last, rel)
+		}
+	}
+
 	return nil
 }
 
@@ -599,8 +698,9 @@ func (e *HotSyncEngine) applyOversizedFilter(localFiles map[string]syncFileState
 	return oversizedSet
 }
 
-func scanLocalSyncFiles(root string, matcher *IgnoreMatcher) (map[string]syncFileState, error) {
+func scanLocalSyncFiles(root string, matcher *IgnoreMatcher, onFile func(path string)) (map[string]syncFileState, error) {
 	files := make(map[string]syncFileState)
+	count := 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil
@@ -634,6 +734,10 @@ func scanLocalSyncFiles(root string, matcher *IgnoreMatcher) (map[string]syncFil
 		files[rel] = syncFileState{
 			Size:    info.Size(),
 			ModTime: normalizeSyncModTime(info.ModTime()),
+		}
+		count++
+		if onFile != nil {
+			onFile(rel)
 		}
 		return nil
 	})

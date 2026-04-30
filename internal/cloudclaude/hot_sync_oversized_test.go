@@ -46,7 +46,7 @@ func TestHotSyncOversized_60MB_NotIgnored(t *testing.T) {
 	createFixtureFile(t, filepath.Join(dir, "bigfile.bin"), 60*1024*1024)
 
 	matcher := NewIgnoreMatcher(dir, nil)
-	localFiles, err := scanLocalSyncFiles(dir, matcher)
+	localFiles, err := scanLocalSyncFiles(dir, matcher, nil)
 	if err != nil {
 		t.Fatalf("scanLocalSyncFiles 失败: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestHotSyncOversized_IgnoreHit_NotCounted(t *testing.T) {
 	createFixtureFile(t, filepath.Join(dir, "ignored_big.bin"), 60*1024*1024)
 
 	matcher := NewIgnoreMatcher(dir, []string{"ignored_big.bin"})
-	localFiles, err := scanLocalSyncFiles(dir, matcher)
+	localFiles, err := scanLocalSyncFiles(dir, matcher, nil)
 	if err != nil {
 		t.Fatalf("scanLocalSyncFiles 失败: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestHotSyncOversized_30MB_NotOversized(t *testing.T) {
 	createFixtureFile(t, filepath.Join(dir, "medium.bin"), 30*1024*1024)
 
 	matcher := NewIgnoreMatcher(dir, nil)
-	localFiles, err := scanLocalSyncFiles(dir, matcher)
+	localFiles, err := scanLocalSyncFiles(dir, matcher, nil)
 	if err != nil {
 		t.Fatalf("scanLocalSyncFiles 失败: %v", err)
 	}
