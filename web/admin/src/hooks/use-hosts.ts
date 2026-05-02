@@ -48,6 +48,12 @@ export interface HostMount {
   read_only?: boolean;
 }
 
+export interface HostPort {
+  host_port: number;
+  container_port: number;
+  protocol?: string;
+}
+
 export interface HostDetail {
   host: {
     id: string;
@@ -60,6 +66,7 @@ export interface HostDetail {
     timezone: string;
     hostname: string;
     host_mounts?: HostMount[];
+    host_ports?: HostPort[];
     created_at: string;
     updated_at: string;
   };
@@ -86,7 +93,7 @@ export function useHostDetail(hostId: string) {
 export function useCreateHost() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { user_id: string; egress_ip_id: string; timezone?: string; host_mounts?: HostMount[] }) =>
+    mutationFn: (data: { user_id: string; egress_ip_id: string; timezone?: string; host_mounts?: HostMount[]; host_ports?: HostPort[] }) =>
       apiFetch<{ host: HostWithUsername; task_id: string; short_id: string; entry_password: string }>("/hosts", {
         method: "POST",
         body: JSON.stringify(data),
@@ -106,6 +113,20 @@ export function useUpdateHostMounts(hostId: string) {
       apiFetch(`/hosts/${hostId}/mounts`, {
         method: "PUT",
         body: JSON.stringify({ mounts }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["hosts", hostId] });
+    },
+  });
+}
+
+export function useUpdateHostPorts(hostId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ports: HostPort[]) =>
+      apiFetch(`/hosts/${hostId}/ports`, {
+        method: "PUT",
+        body: JSON.stringify({ ports }),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["hosts", hostId] });

@@ -71,6 +71,10 @@ export function CreateHostDialog({
   const [newMountSource, setNewMountSource] = useState("");
   const [newMountTarget, setNewMountTarget] = useState("");
   const [prevMountSource, setPrevMountSource] = useState("");
+  const [hostPorts, setHostPorts] = useState<Array<{ host_port: number; container_port: number; protocol: string }>>([]);
+  const [newHostPort, setNewHostPort] = useState("");
+  const [newContainerPort, setNewContainerPort] = useState("");
+  const [newProtocol, setNewProtocol] = useState("tcp");
   const [taskId, setTaskId] = useState<string | null>(null);
   const [hostAccess, setHostAccess] = useState<{
     shortId: string;
@@ -117,7 +121,7 @@ export function CreateHostDialog({
       return;
     }
     createMutation.mutate(
-      { user_id: userId, egress_ip_id: egressIpId, timezone, host_mounts: hostMounts.length > 0 ? hostMounts : undefined },
+      { user_id: userId, egress_ip_id: egressIpId, timezone, host_mounts: hostMounts.length > 0 ? hostMounts : undefined, host_ports: hostPorts.length > 0 ? hostPorts : undefined },
       {
         onSuccess: (data: any) => {
           setTaskId(data.task_id);
@@ -139,6 +143,10 @@ export function CreateHostDialog({
     setNewMountSource("");
     setNewMountTarget("");
     setPrevMountSource("");
+    setHostPorts([]);
+    setNewHostPort("");
+    setNewContainerPort("");
+    setNewProtocol("tcp");
     setTaskId(null);
     setHostAccess(null);
     onOpenChange(false);
@@ -299,6 +307,76 @@ export function CreateHostDialog({
                 {newMountSource && !newMountSource.startsWith("/") && (
                   <p className="text-xs text-destructive">宿主机路径必须以 / 开头</p>
                 )}
+              </div>
+
+              <div className="space-y-2">
+                <Label>端口映射（可选）</Label>
+                {hostPorts.map((p, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm">
+                    <span className="font-mono">{p.host_port}:{p.container_port}</span>
+                    {p.protocol !== "tcp" && (
+                      <span className="text-muted-foreground">/{p.protocol}</span>
+                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="ml-auto h-6 w-6 p-0"
+                      onClick={() => setHostPorts(hostPorts.filter((_, j) => j !== i))}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ))}
+                <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto_auto]">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    placeholder="宿主机端口"
+                    value={newHostPort}
+                    onChange={(e) => setNewHostPort(e.target.value)}
+                  />
+                  <Input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    placeholder="容器端口"
+                    value={newContainerPort}
+                    onChange={(e) => setNewContainerPort(e.target.value)}
+                  />
+                  <Select value={newProtocol} onValueChange={setNewProtocol}>
+                    <SelectTrigger className="w-[80px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="tcp">TCP</SelectItem>
+                      <SelectItem value="udp">UDP</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9"
+                    disabled={
+                      !newHostPort || !newContainerPort ||
+                      parseInt(newHostPort) <= 0 || parseInt(newHostPort) > 65535 ||
+                      parseInt(newContainerPort) <= 0 || parseInt(newContainerPort) > 65535
+                    }
+                    onClick={() => {
+                      setHostPorts([...hostPorts, {
+                        host_port: parseInt(newHostPort),
+                        container_port: parseInt(newContainerPort),
+                        protocol: newProtocol,
+                      }]);
+                      setNewHostPort("");
+                      setNewContainerPort("");
+                      setNewProtocol("tcp");
+                    }}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             </div>
 
