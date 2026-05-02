@@ -56,6 +56,19 @@ jobs:
       - name: Prepare image prefix (lowercase)
         run: echo "IMAGE_PREFIX=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/cloud-cli-proxy" >> "$GITHUB_ENV"
 
+      - name: Sync image.lock version for managed-user
+        if: matrix.image == 'managed-user' && inputs.version != ''
+        env:
+          VERSION: ${{ inputs.version }}
+          IMAGE_PREFIX: ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/cloud-cli-proxy
+        run: |
+          LOCK="deploy/docker/managed-user/image.lock"
+          sed -i "s|^image_name: .*|image_name: ${IMAGE_PREFIX}/managed-user:v${VERSION}|" "$LOCK"
+          sed -i "s|^local_dev_image_name: .*|local_dev_image_name: ${IMAGE_PREFIX}/managed-user:v${VERSION}|" "$LOCK"
+          sed -i "s|^image_version: .*|image_version: v${VERSION}|" "$LOCK"
+          echo "Updated image.lock:"
+          grep -E '^(image_name|local_dev_image_name|image_version):' "$LOCK"
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
