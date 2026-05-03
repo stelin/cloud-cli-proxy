@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v3.3.1 - 2026-05-03
+## What's Changed
+
+### Backend (Go / API)
+- fix(quick-260504-414-01): 修复路径联想——按父目录查询+前缀过滤 (335bead)
+- feat(quick-260504-414-01): implement GET /v1/admin/host-files API with security filters (9754c3e)
+
+### Frontend (Admin Web)
+- feat(quick-260504-414-02): 新建主机对话框 UX 优化 (02ef622)
+- fix(quick-260504-414-01): 修复路径联想——按父目录查询+前缀过滤 (335bead)
+- feat(quick-260504-414-03): replace host path inputs with PathAutocomplete in dialogs (4c482a1)
+- feat(quick-260504-414-02): add PathAutocomplete component and useHostFiles hook (da36a2b)
+- fix(quick-260504-2n4-02): 修复挂载管理目标路径行潜在溢出 (bf1c526)
+- fix(quick-260504-2n4-01): 修复创建主机对话框挂载路径溢出 (e208501)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v3.3.0...v3.3.1
+
+
 ## v3.3.0 - 2026-05-04
 ## What's Changed
 
