@@ -115,6 +115,7 @@ v3.1 milestone 已启动；等待 ROADMAP.md 写入后进入 Phase 36 执行：
 | 260423 | 容器反检测 + 遥测阻断 + machine-id 唯一化 | 2026-04-29 | 986a18d, 458e1cd, 9b0e660 | [260423-machine-id](./quick/260423-machine-id/) |
 | 260424 | 为 cloud-claude 添加外层信息面板（出口IP、账号、文件状态等） | 2026-04-30 | 77aee4d, 64cfcc9, 224bb08 | [260424-cloud-claude-ip](./quick/260424-cloud-claude-ip/) |
 | 260425 | 修复 AuthResponse.Status 字段无法解析 JSON 数字类型的问题 | 2026-04-30 | 7b49af3 | [260425-authresponse-status-json-json-cannot-unm](./quick/260425-authresponse-status-json-json-cannot-unm/) |
+| 260502-ni0 | 用户中心化凭据重构（DB/后端/前端）+ 容器自启动 + 删除 claude wrapper + 修复 IP 探测镜像 | 2026-05-02 | 6ed9cdc, 9a5db98, b0e6791, f24e3d1, 1b23a18, f744ec0 | [260502-ni0-user-centric-creds](./quick/260502-ni0-user-centric-creds/) |
 
 ### Roadmap Evolution
 
@@ -127,7 +128,7 @@ v3.1 milestone 已启动；等待 ROADMAP.md 写入后进入 Phase 36 执行：
 
 ## Session Continuity
 
-Last session: 2026-04-29T09:26:19.642Z
+Last session: 2026-05-03T02:00:00.000Z
 
 ## Deferred Items
 
