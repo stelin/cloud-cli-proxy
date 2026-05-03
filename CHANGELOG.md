@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v3.3.0 - 2026-05-04
+## What's Changed
+
+### Database / Migrations
+- feat(creds): 0018 用户中心化凭据迁移 — 反向回填 users.entry_password、一用户一活跃 host 硬约束、DROP hosts.entry_password (e232473)
+
+### Backend (Go / API)
+- feat(creds): A2 用户中心化凭据后端重构 — admin_users.Create 生成 entry_password + ed25519 SSH 密钥对，新增 POST /admin/users/{id}/credentials/regenerate；admin_hosts.Create 加入用户已有活跃主机 → 409 拒绝；删除 GetHostByShortID/GetUserByShortID 死代码 (38fad3c)
+- fix(probe): B3 IP 探测改用本地 sing-box gateway 镜像（CLOUD_CLI_PROXY_GATEWAY_IMAGE 默认 cloud-cli-proxy-sing-gateway:local），移除冗余 run -c 参数 (7ab8da7)
+
+### Frontend (Admin Web)
+- feat(creds): A3 用户中心化凭据 UI — 创建用户对话框一次性展示 SSH 公私钥 / 密码 / 指纹；用户详情页新增"重新生成 SSH 凭据"按钮 + 二次确认 + 凭据展示双对话框；移除主机创建对话框中的 SSH 凭据块与重置主机 SSH 密码按钮 (2805c51)
+
+### Runtime & Deployment
+- feat(runtime): B1 工作容器 + sing-box gateway 容器统一加 --restart=unless-stopped，宿主机重启自动恢复 (94b79b7)
+- feat(image): B2 删除 claude-wrapper.sh，managed-user 镜像 binary 直接落到 /usr/local/bin/claude，顺带修复 fallback 路径 CLAUDE_BIN 找不到的潜在问题 (060edae)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v3.2.6...v3.3.0
+
 ## v3.2.6 - 2026-05-02
 ## What's Changed
 
