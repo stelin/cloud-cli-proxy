@@ -226,6 +226,7 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 			mux.Handle("PUT /v1/admin/egress-ips/{ipID}", adminGuard(egressHandler.Update()))
 			mux.Handle("DELETE /v1/admin/egress-ips/{ipID}", adminGuard(egressHandler.Delete()))
 			mux.Handle("POST /v1/admin/egress-ips/{ipID}/test", adminGuard(egressHandler.TestProxy()))
+			mux.Handle("GET /v1/admin/egress-ips/{ipID}/test/stream", adminGuard(egressHandler.TestProxyStream()))
 		}
 
 		if deps.AdminBindings != nil {

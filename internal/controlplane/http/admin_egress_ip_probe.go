@@ -61,6 +61,23 @@ type contextDialer interface {
 	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
+type ProbeStage string
+
+const (
+	StagePulling    ProbeStage = "pulling"    // 拉取探针镜像中...
+	StageStarting   ProbeStage = "starting"   // 初始化探针容器...
+	StageConnecting ProbeStage = "connecting" // 建立代理连接...
+	StageTesting    ProbeStage = "testing"    // 进行连通性与出口 IP 检测...
+	StageDone       ProbeStage = "done"       // 检测完成
+	StageError      ProbeStage = "error"      // 检测出错
+)
+
+type ProbeStreamEvent struct {
+	Stage   ProbeStage  `json:"stage"`
+	Message string      `json:"message"`
+	Result  *ProbeResult `json:"result,omitempty"`
+}
+
 func getProxyDialer(ctx context.Context, proxyConfig json.RawMessage) (dialer contextDialer, cleanup func(), err error) {
 	var parsed map[string]any
 	if err := json.Unmarshal(proxyConfig, &parsed); err != nil {
@@ -481,6 +498,129 @@ func testEgressIP(ctx context.Context, client *nethttp.Client) EgressIPCheckResu
 		IP:      detectedIP,
 		Sources: results,
 	}
+}
+
+func runProbeStream(ctx context.Context, h *AdminEgressIPsHandler, ipID string, ch chan<- ProbeStreamEvent) {
+	defer close(ch)
+
+	ip, err := h.store.GetEgressIP(ctx, ipID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ch <- ProbeStreamEvent{Stage: StageError, Message: "出口 IP 不存在"}
+			return
+		}
+		h.logger.Error("get egress ip for test failed", "ip_id", ipID, "error", err)
+		ch <- ProbeStreamEvent{Stage: StageError, Message: "查询出口 IP 失败"}
+		return
+	}
+
+	if ip.ProxyConfig == nil {
+		ch <- ProbeStreamEvent{Stage: StageError, Message: "proxy_config 为空"}
+		return
+	}
+
+	// Stage: pulling
+	ch <- ProbeStreamEvent{Stage: StagePulling, Message: "拉取探针镜像中..."}
+
+	dialer, proxyCleanup, err := getProxyDialer(ctx, ip.ProxyConfig)
+	if proxyCleanup != nil {
+		defer proxyCleanup()
+	}
+	if err != nil {
+		ch <- ProbeStreamEvent{Stage: StageError, Message: fmt.Sprintf("无法建立代理连接: %v", err)}
+		return
+	}
+
+	// Stage: starting（容器已启动，作为逻辑阶段推送）
+	ch <- ProbeStreamEvent{Stage: StageStarting, Message: "初始化探针容器..."}
+
+	// Stage: connecting
+	ch <- ProbeStreamEvent{Stage: StageConnecting, Message: "建立代理连接..."}
+
+	httpClient := &nethttp.Client{
+		Transport: &nethttp.Transport{
+			DialContext:       dialer.DialContext,
+			DisableKeepAlives: true,
+		},
+		Timeout: 25 * time.Second,
+	}
+
+	// Stage: testing
+	ch <- ProbeStreamEvent{Stage: StageTesting, Message: "进行连通性与出口 IP 检测..."}
+
+	result := ProbeResult{TestedAt: time.Now().UTC()}
+	result.Results.Connectivity = testConnectivity(ctx, httpClient)
+	result.Results.EgressIP = testEgressIP(ctx, httpClient)
+	result.Results.DNSLeak = DNSLeakCheckResult{
+		Status: "skip",
+		Error:  "DNS 泄漏检测仅在容器运行时进行，探针测试不适用",
+	}
+
+	connOK := result.Results.Connectivity.Status == "pass"
+	ipOK := result.Results.EgressIP.Status == "pass"
+	if connOK && ipOK {
+		result.Status = "passed"
+	} else if connOK {
+		result.Status = "partial"
+	} else {
+		result.Status = "failed"
+	}
+
+	// Stage: done
+	ch <- ProbeStreamEvent{Stage: StageDone, Message: "检测完成", Result: &result}
+}
+
+// TestProxyStream 返回 SSE 流式探测结果。
+// 注意：此 GET endpoint 会触发非幂等的探测操作（创建临时容器、执行网络检测），
+// 仅用于 SSE 长连接场景，不应被缓存或重复调用。
+func (h *AdminEgressIPsHandler) TestProxyStream() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+
+		ipID := r.PathValue("ipID")
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+		w.WriteHeader(nethttp.StatusOK)
+
+		flusher, ok := w.(nethttp.Flusher)
+		if !ok {
+			h.logger.Error("ResponseWriter does not support flushing")
+			return
+		}
+
+		ch := make(chan ProbeStreamEvent, 8)
+		go runProbeStream(ctx, h, ipID, ch)
+
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ctx.Done():
+				data, _ := json.Marshal(ProbeStreamEvent{Stage: StageError, Message: "探测超时"})
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				flusher.Flush()
+				return
+			case ev, ok := <-ch:
+				if !ok {
+					return
+				}
+				data, err := json.Marshal(ev)
+				if err != nil {
+					h.logger.Error("marshal probe stream event", "error", err)
+					continue
+				}
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				flusher.Flush()
+				if ev.Stage == StageDone || ev.Stage == StageError {
+					return
+				}
+			}
+		}
+	})
 }
 
 func (h *AdminEgressIPsHandler) TestProxy() nethttp.Handler {
