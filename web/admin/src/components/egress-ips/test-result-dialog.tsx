@@ -1,4 +1,5 @@
-import { Check, X, AlertCircle, Minus } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Check, X, AlertCircle, Minus, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,46 +9,80 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import type { TestResult } from "@/hooks/use-egress-ips";
+import type { TestResult, ProbeStage } from "@/hooks/use-egress-ips";
 
 interface TestResultDialogProps {
   result: TestResult | null;
+  stage: ProbeStage | null;
+  message: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
+const stageOrder: { key: Exclude<ProbeStage, "done" | "error">; label: string }[] = [
+  { key: "pulling", label: "拉取镜像" },
+  { key: "starting", label: "初始化容器" },
+  { key: "connecting", label: "建立连接" },
+  { key: "testing", label: "执行检测" },
+];
+
 export function TestResultDialog({
   result,
+  stage,
+  message,
   open,
   onOpenChange,
 }: TestResultDialogProps) {
-  if (!result) return null;
+  const isRunning = stage !== null && stage !== "done" && stage !== "error";
+  const isError = stage === "error";
+  const showResult = result && (stage === "done" || !isRunning);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
-            出口 IP 测试结果
-            <StatusBadge status={result.status} />
+            出口 IP 测试
+            {showResult && <StatusBadge status={result.status} />}
           </DialogTitle>
         </DialogHeader>
 
-        {result.message && (
-          <p className="text-sm text-muted-foreground">{result.message}</p>
-        )}
-
-        {result.results && (
+        {isRunning && (
           <div className="space-y-4">
-            <ConnectivitySection result={result.results.connectivity} />
-            <EgressIPSection result={result.results.egress_ip} />
-            <DNSLeakSection result={result.results.dns_leak} />
+            <StageProgress currentStage={stage} />
+            <p className="text-sm text-muted-foreground flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {message}
+            </p>
           </div>
         )}
 
-        <p className="text-xs text-muted-foreground">
-          测试时间：{formatDateTime(result.tested_at)}
-        </p>
+        {isError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-sm text-red-700 flex items-center gap-2">
+              <AlertCircle className="h-4 w-4" />
+              {message || "检测出错"}
+            </p>
+          </div>
+        )}
+
+        {showResult && (
+          <div className="space-y-4">
+            {result.message && (
+              <p className="text-sm text-muted-foreground">{result.message}</p>
+            )}
+            {result.results && (
+              <div className="space-y-4">
+                <ConnectivitySection result={result.results.connectivity} />
+                <EgressIPSection result={result.results.egress_ip} />
+                <DNSLeakSection result={result.results.dns_leak} />
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              测试时间：{formatDateTime(result.tested_at)}
+            </p>
+          </div>
+        )}
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -56,6 +91,52 @@ export function TestResultDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function StageProgress({ currentStage }: { currentStage: ProbeStage }) {
+  const currentIndex = stageOrder.findIndex((s) => s.key === currentStage);
+
+  return (
+    <div className="space-y-3">
+      {stageOrder.map((s, idx) => {
+        const isActive = idx === currentIndex;
+        const isCompleted = idx < currentIndex;
+        return (
+          <div key={s.key} className="flex items-center gap-3">
+            <span
+              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-medium ${
+                isCompleted
+                  ? "bg-green-100 text-green-700"
+                  : isActive
+                    ? "bg-blue-100 text-blue-700"
+                    : "bg-gray-100 text-gray-400"
+              }`}
+            >
+              {isCompleted ? (
+                <Check className="h-3.5 w-3.5" />
+              ) : (
+                idx + 1
+              )}
+            </span>
+            <span
+              className={`text-sm ${
+                isActive
+                  ? "font-medium text-foreground"
+                  : isCompleted
+                    ? "text-muted-foreground"
+                    : "text-gray-400"
+              }`}
+            >
+              {s.label}
+            </span>
+            {isActive && (
+              <Loader2 className="ml-auto h-4 w-4 animate-spin text-blue-600" />
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

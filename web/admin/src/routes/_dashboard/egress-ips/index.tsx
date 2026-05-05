@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   MoreHorizontal,
@@ -17,11 +17,11 @@ import { toast } from "sonner";
 import {
   useEgressIPs,
   useDeleteEgressIP,
+  useTestEgressIPSSE,
   type EgressIP,
   type TestResult,
+  type ProbeStage,
 } from "@/hooks/use-egress-ips";
-import { apiFetch } from "@/lib/api";
-import { ApiError } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -94,41 +94,48 @@ function getActualIP(result: TestResult | undefined): string {
   return result.results.egress_ip.ip || "";
 }
 
+function stageLabel(stage: ProbeStage | null): string {
+  switch (stage) {
+    case "pulling":
+      return "拉取镜像";
+    case "starting":
+      return "初始化容器";
+    case "connecting":
+      return "建立连接";
+    case "testing":
+      return "执行检测";
+    default:
+      return "检测中…";
+  }
+}
+
 function EgressIPsPage() {
   const { data, isLoading } = useEgressIPs();
   const deleteMutation = useDeleteEgressIP();
+  const sseTest = useTestEgressIPSSE();
   const [drawerMode, setDrawerMode] = useState<"create" | "edit" | null>(null);
   const [editIpId, setEditIpId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<EgressIP | null>(null);
   const [testResults, setTestResults] =
     useState<Map<string, TestResult>>(loadTestResults);
-  const [testingIds, setTestingIds] = useState<Set<string>>(new Set());
-  const [testDialogResult, setTestDialogResult] = useState<TestResult | null>(
-    null,
-  );
+  const [testDialogIpId, setTestDialogIpId] = useState<string | null>(null);
 
   const egressIPs = data?.egress_ips ?? [];
 
-  async function handleTest(ip: EgressIP) {
-    setTestingIds((prev) => new Set(prev).add(ip.id));
-    try {
-      const result = await apiFetch<TestResult>(`/egress-ips/${ip.id}/test`, {
-        method: "POST",
-      });
+  // 当 SSE 流完成时，保存结果到 localStorage
+  useEffect(() => {
+    if (sseTest.result && sseTest.stage === "done" && testDialogIpId) {
       setTestResults((prev) => {
-        const next = new Map(prev).set(ip.id, result);
+        const next = new Map(prev).set(testDialogIpId, sseTest.result!);
         saveTestResults(next);
         return next;
       });
-    } catch {
-      toast.error(`${ip.label} 测试失败`);
-    } finally {
-      setTestingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(ip.id);
-        return next;
-      });
     }
+  }, [sseTest.result, sseTest.stage, testDialogIpId]);
+
+  function handleTest(ip: EgressIP) {
+    setTestDialogIpId(ip.id);
+    sseTest.start(ip.id);
   }
 
   function handleDelete(ip: EgressIP) {
@@ -137,8 +144,9 @@ function EgressIPsPage() {
         toast.success("出口 IP 已删除");
         setDeleteTarget(null);
       },
-      onError: (err) => {
-        if (err instanceof ApiError && err.status === 409) {
+      onError: (err: Error) => {
+        // @ts-expect-error ApiError may have status
+        if (err.status === 409) {
           toast.error("该出口 IP 已绑定到主机，请先解绑");
         } else {
           toast.error("删除失败");
@@ -147,6 +155,15 @@ function EgressIPsPage() {
       },
     });
   }
+
+  const dialogOpen =
+    sseTest.isRunning ||
+    sseTest.stage === "error" ||
+    (sseTest.result !== null && sseTest.stage === "done") ||
+    (testDialogIpId !== null &&
+      !sseTest.isRunning &&
+      sseTest.stage !== "done" &&
+      sseTest.stage !== "error");
 
   return (
     <div className="space-y-6">
@@ -212,6 +229,8 @@ function EgressIPsPage() {
               egressIPs.map((ip) => {
                 const result = testResults.get(ip.id);
                 const actualIP = getActualIP(result);
+                const isTestingThis =
+                  sseTest.isRunning && testDialogIpId === ip.id;
                 return (
                   <TableRow key={ip.id}>
                     <TableCell className="font-medium">{ip.label}</TableCell>
@@ -219,10 +238,10 @@ function EgressIPsPage() {
                       {egressProxyEntryDisplay(ip)}
                     </TableCell>
                     <TableCell>
-                      {testingIds.has(ip.id) ? (
+                      {isTestingThis ? (
                         <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          检测中…
+                          {stageLabel(sseTest.stage)}
                         </span>
                       ) : actualIP ? (
                         <span className="flex items-center gap-1.5">
@@ -246,7 +265,16 @@ function EgressIPsPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <StatusCell ip={ip} result={result} onClickResult={() => result && setTestDialogResult(result)} />
+                      <StatusCell
+                        ip={ip}
+                        result={result}
+                        onClickResult={() => {
+                          if (result) {
+                            setTestDialogIpId(ip.id);
+                            // 用已有结果直接展示，不触发 SSE
+                          }
+                        }}
+                      />
                     </TableCell>
                     <TableCell>
                       <DropdownMenu>
@@ -258,14 +286,16 @@ function EgressIPsPage() {
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem
                             onClick={() => handleTest(ip)}
-                            disabled={testingIds.has(ip.id)}
+                            disabled={isTestingThis}
                           >
-                            {testingIds.has(ip.id) ? (
+                            {isTestingThis ? (
                               <Loader2 className="animate-spin" />
                             ) : (
                               <FlaskConical />
                             )}
-                            {testingIds.has(ip.id) ? "测试中..." : "测试"}
+                            {isTestingThis
+                              ? stageLabel(sseTest.stage)
+                              : "测试"}
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={() => {
@@ -344,10 +374,21 @@ function EgressIPsPage() {
       </AlertDialog>
 
       <TestResultDialog
-        result={testDialogResult}
-        open={testDialogResult !== null}
+        result={
+          sseTest.stage === "done" || sseTest.stage === "error"
+            ? sseTest.result
+            : testDialogIpId
+              ? testResults.get(testDialogIpId) ?? null
+              : null
+        }
+        stage={sseTest.stage}
+        message={sseTest.message}
+        open={dialogOpen}
         onOpenChange={(open) => {
-          if (!open) setTestDialogResult(null);
+          if (!open) {
+            sseTest.stop();
+            setTestDialogIpId(null);
+          }
         }}
       />
     </div>
