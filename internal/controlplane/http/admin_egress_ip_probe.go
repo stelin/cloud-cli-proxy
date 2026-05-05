@@ -20,8 +20,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/net/proxy"
-
-	"github.com/zanel1u/cloud-cli-proxy/internal/network"
 )
 
 type ProbeResult struct {
@@ -308,7 +306,7 @@ func startSingBoxDocker(ctx context.Context, proxyConfig json.RawMessage, port i
 
 	args := []string{"run", "-d", "--name", containerName}
 	args = append(args, netArgs...)
-	args = append(args, "-v", tmpFile.Name()+":/etc/sing-box/config.json:ro", network.GatewayImage())
+	args = append(args, "-v", tmpFile.Name()+":/etc/sing-box/config.json:ro", "ghcr.io/sagernet/sing-box", "run", "-c", "/etc/sing-box/config.json")
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
