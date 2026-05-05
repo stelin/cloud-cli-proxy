@@ -20,9 +20,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/net/proxy"
-
-	"github.com/zanel1u/cloud-cli-proxy/internal/network"
 )
+
+// probeImage 固定 sing-box 版本，与项目自建 gateway 镜像保持一致（v1.13.3），
+// 避免 latest 版本配置格式不兼容导致探针失败。
+const probeImage = "ghcr.io/sagernet/sing-box:v1.13.3"
 
 type ProbeResult struct {
 	Status   string    `json:"status"`
@@ -321,19 +323,22 @@ func startSingBoxDocker(ctx context.Context, proxyConfig json.RawMessage, port i
 
 	containerName := fmt.Sprintf("singbox-probe-%d", port)
 
-	// 检查本地 gateway 镜像是否存在，不存在时给出明确提示
-	img := network.GatewayImage()
-	inspectCmd := exec.CommandContext(ctx, "docker", "inspect", "--type=image", img)
-	if err := inspectCmd.Run(); err != nil {
-		os.Remove(tmpFile.Name())
-		return 0, nil, fmt.Errorf("探针镜像 %s 不存在，请先运行 `make gateway-image` 构建本地 gateway 镜像", img)
+	// 如果镜像已在本地，跳过 docker pull（避免不必要的网络等待）
+	inspectCmd := exec.CommandContext(ctx, "docker", "inspect", "--type=image", probeImage)
+	if inspectCmd.Run() != nil {
+		pullCmd := exec.CommandContext(ctx, "docker", "pull", probeImage)
+		pullOutput, pullErr := pullCmd.CombinedOutput()
+		if pullErr != nil {
+			os.Remove(tmpFile.Name())
+			return 0, nil, fmt.Errorf("拉取探针镜像失败: %s: %w", strings.TrimSpace(string(pullOutput)), pullErr)
+		}
 	}
 
 	netArgs := resolveProbeNetworking(ctx, port)
 
 	args := []string{"run", "-d", "--name", containerName}
 	args = append(args, netArgs...)
-	args = append(args, "-v", tmpFile.Name()+":/etc/sing-box/config.json:ro", img)
+	args = append(args, "-v", tmpFile.Name()+":/etc/sing-box/config.json:ro", probeImage, "run", "-c", "/etc/sing-box/config.json")
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
