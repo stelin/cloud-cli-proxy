@@ -54,6 +54,7 @@ import {
 import { PageHeader } from "@/components/layout/page-header";
 import { DataTableShell } from "@/components/layout/data-table-shell";
 import { EmptyState } from "@/components/layout/empty-state";
+import { TableSkeleton } from "@/components/ui/table-skeleton";
 
 export const Route = createFileRoute("/_dashboard/hosts/")({
   component: HostsPage,
@@ -123,7 +124,7 @@ function HostsPage() {
     hostAction.mutate(
       { hostId, action },
       {
-        onSuccess: () => toast.success(`${label}指令已发送`),
+        onSuccess: () => toast.success(`${label}已提交`),
         onError: () => toast.error(`${label}失败`),
       },
     );
@@ -143,47 +144,61 @@ function HostsPage() {
 
       <CreateHostDialog open={createOpen} onOpenChange={setCreateOpen} />
 
-      <DataTableShell>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>主机名</TableHead>
-              <TableHead>所属用户</TableHead>
-              <TableHead>出口 IP</TableHead>
-              <TableHead>运行状态</TableHead>
-              <TableHead>更新时间</TableHead>
-              <TableHead className="w-[140px]">操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              Array.from({ length: 3 }).map((_, i) => (
-                <TableRow key={i}>
-                  {Array.from({ length: 6 }).map((_, j) => (
-                    <TableCell key={j}>
-                      <div className="h-4 w-20 animate-pulse rounded bg-muted" />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : hosts.length === 0 ? (
+      {isLoading ? (
+        <DataTableShell>
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={6} className="p-0">
-                  <EmptyState
-                    icon={Server}
-                    title="暂无主机"
-                    description="创建主机后，可在此查看容器状态、出口 IP 绑定与运维操作"
-                    action={
-                      <Button onClick={() => setCreateOpen(true)}>
-                        <Plus className="mr-2 h-4 w-4" />
-                        新建主机
-                      </Button>
-                    }
-                  />
-                </TableCell>
+                <TableHead>主机名</TableHead>
+                <TableHead>所属用户</TableHead>
+                <TableHead>出口 IP</TableHead>
+                <TableHead>运行状态</TableHead>
+                <TableHead>更新时间</TableHead>
+                <TableHead className="w-[140px]">操作</TableHead>
               </TableRow>
-            ) : (
-              hosts.map((host) => {
+            </TableHeader>
+            <TableSkeleton
+              rows={4}
+              columns={[
+                { width: "w-28" },
+                { width: "w-20" },
+                { width: "w-24" },
+                { width: "w-20", pill: true },
+                { width: "w-28", muted: true },
+                { width: "w-12", align: "right" },
+              ]}
+            />
+          </Table>
+        </DataTableShell>
+      ) : hosts.length === 0 ? (
+        <DataTableShell>
+          <EmptyState
+            icon={Server}
+            title="暂无主机"
+            description="创建主机后，可在此查看容器状态、出口 IP 绑定与运维操作"
+            action={
+              <Button onClick={() => setCreateOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                新建主机
+              </Button>
+            }
+          />
+        </DataTableShell>
+      ) : (
+        <DataTableShell>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>主机名</TableHead>
+                <TableHead>所属用户</TableHead>
+                <TableHead>出口 IP</TableHead>
+                <TableHead>运行状态</TableHead>
+                <TableHead>更新时间</TableHead>
+                <TableHead className="w-[140px]">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {hosts.map((host) => {
                 const latestTask = getLatestTask(host.id);
                 const status = getHostStatus(host, latestTask);
                 const isRunning = host.status === "running";
@@ -395,11 +410,11 @@ function HostsPage() {
                     </TableCell>
                   </TableRow>
                 );
-              })
-            )}
-          </TableBody>
-        </Table>
-      </DataTableShell>
+              })}
+            </TableBody>
+          </Table>
+        </DataTableShell>
+      )}
 
       <AlertDialog
         open={!!deleteTarget}

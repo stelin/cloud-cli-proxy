@@ -25,6 +25,7 @@ import { DeleteUserDialog } from "@/components/users/delete-user-dialog";
 import { PageHeader } from "@/components/layout/page-header";
 import { DataTableShell } from "@/components/layout/data-table-shell";
 import { EmptyState } from "@/components/layout/empty-state";
+import { TableSkeleton } from "@/components/ui/table-skeleton";
 
 export const Route = createFileRoute("/_dashboard/users/")({
   component: UsersPage,
@@ -79,53 +80,53 @@ function UsersPage() {
       </PageHeader>
 
       <DataTableShell>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>用户名</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead>到期时间</TableHead>
-              <TableHead>创建时间</TableHead>
-              <TableHead className="w-[60px]" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              Array.from({ length: 3 }).map((_, i) => (
-                <TableRow key={i}>
-                  <TableCell>
-                    <div className="h-4 w-24 animate-pulse rounded bg-muted" />
-                  </TableCell>
-                  <TableCell>
-                    <div className="h-5 w-14 animate-pulse rounded-full bg-muted" />
-                  </TableCell>
-                  <TableCell>
-                    <div className="h-4 w-28 animate-pulse rounded bg-muted" />
-                  </TableCell>
-                  <TableCell>
-                    <div className="h-4 w-32 animate-pulse rounded bg-muted" />
-                  </TableCell>
-                  <TableCell />
-                </TableRow>
-              ))
-            ) : users.length === 0 ? (
+        {isLoading ? (
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={5} className="p-0">
-                  <EmptyState
-                    icon={Users}
-                    title="暂无用户"
-                    description="创建第一个用户账号，即可为其分配云主机与出口 IP"
-                    action={
-                      <Button onClick={() => setCreateOpen(true)}>
-                        <Plus className="h-4 w-4" />
-                        创建用户
-                      </Button>
-                    }
-                  />
-                </TableCell>
+                <TableHead>用户名</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>到期时间</TableHead>
+                <TableHead>创建时间</TableHead>
+                <TableHead className="w-[60px]" />
               </TableRow>
-            ) : (
-              users.map((user) => (
+            </TableHeader>
+            <TableSkeleton
+              rows={4}
+              columns={[
+                { width: "w-24" },
+                { width: "w-16", pill: true },
+                { width: "w-28", muted: true },
+                { width: "w-32", muted: true },
+                { width: "w-8", align: "right" },
+              ]}
+            />
+          </Table>
+        ) : users.length === 0 ? (
+          <EmptyState
+            icon={Users}
+            title="暂无用户"
+            description="创建第一个用户账号，即可为其分配云主机与出口 IP"
+            action={
+              <Button onClick={() => setCreateOpen(true)}>
+                <Plus className="h-4 w-4" />
+                创建用户
+              </Button>
+            }
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>用户名</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>到期时间</TableHead>
+                <TableHead>创建时间</TableHead>
+                <TableHead className="w-[60px]" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {users.map((user) => (
                 <TableRow key={user.id}>
                   <TableCell>
                     <Link
@@ -208,10 +209,10 @@ function UsersPage() {
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+              ))}
+            </TableBody>
+          </Table>
+        )}
       </DataTableShell>
 
       <CreateUserDialog open={createOpen} onOpenChange={setCreateOpen} />

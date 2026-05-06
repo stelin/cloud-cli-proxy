@@ -61,6 +61,7 @@ import { egressProxyEntryDisplay } from "@/lib/egress-display";
 import { PageHeader } from "@/components/layout/page-header";
 import { DataTableShell } from "@/components/layout/data-table-shell";
 import { EmptyState } from "@/components/layout/empty-state";
+import { TableSkeleton } from "@/components/ui/table-skeleton";
 
 export const Route = createFileRoute("/_dashboard/egress-ips/")({
   component: EgressIPsPage,
@@ -187,50 +188,58 @@ function EgressIPsPage() {
       </PageHeader>
 
       <DataTableShell>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>标签</TableHead>
-              <TableHead>代理服务器</TableHead>
-              <TableHead>实际出口 IP</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead className="w-[60px]" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              Array.from({ length: 3 }).map((_, i) => (
-                <TableRow key={i}>
-                  {Array.from({ length: 5 }).map((_, j) => (
-                    <TableCell key={j}>
-                      <div className="h-4 w-20 animate-pulse rounded bg-muted" />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : egressIPs.length === 0 ? (
+        {isLoading ? (
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={5} className="p-0">
-                  <EmptyState
-                    icon={Globe}
-                    title="暂无出口 IP"
-                    description="添加出口 IP 后，即可在主机上绑定并验证实际出网地址"
-                    action={
-                      <Button
-                        onClick={() => {
-                          setEditIpId(null);
-                          setDrawerMode("create");
-                        }}
-                      >
-                        <Plus className="h-4 w-4" />
-                        添加出口 IP
-                      </Button>
-                    }
-                  />
-                </TableCell>
+                <TableHead>标签</TableHead>
+                <TableHead>代理服务器</TableHead>
+                <TableHead>实际出口 IP</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead className="w-[60px]" />
               </TableRow>
-            ) : (
-              egressIPs.map((ip) => {
+            </TableHeader>
+            <TableSkeleton
+              rows={4}
+              columns={[
+                { width: "w-24" },
+                { width: "w-48" },
+                { width: "w-28" },
+                { width: "w-20", pill: true },
+                { width: "w-8", align: "right" },
+              ]}
+            />
+          </Table>
+        ) : egressIPs.length === 0 ? (
+          <EmptyState
+            icon={Globe}
+            title="暂无出口 IP"
+            description="添加出口 IP 后，即可在主机上绑定并验证实际出网地址"
+            action={
+              <Button
+                onClick={() => {
+                  setEditIpId(null);
+                  setDrawerMode("create");
+                }}
+              >
+                <Plus className="h-4 w-4" />
+                添加出口 IP
+              </Button>
+            }
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>标签</TableHead>
+                <TableHead>代理服务器</TableHead>
+                <TableHead>实际出口 IP</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead className="w-[60px]" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {egressIPs.map((ip) => {
                 const result = testResults.get(ip.id);
                 const actualIP = getActualIP(result);
                 const testState = sseTest.states.get(ip.id);
@@ -327,10 +336,10 @@ function EgressIPsPage() {
                     </TableCell>
                   </TableRow>
                 );
-              })
-            )}
-          </TableBody>
-        </Table>
+              })}
+            </TableBody>
+          </Table>
+        )}
       </DataTableShell>
 
       <EgressIPDrawer
