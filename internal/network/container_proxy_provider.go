@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -99,12 +98,9 @@ func (p *ContainerProxyProvider) PrepareHost(ctx context.Context, spec HostNetwo
 		return fmt.Errorf("gateway: connect worker to network: %w", err)
 	}
 
-	// 断开 Worker 原来的 bridge 网络，让隔离网络成为唯一出口。
-	// macOS/Windows: 保留 bridge 网络，因为 Docker Desktop 宿主机无法直接路由到
-	// 容器内部 IP，SSH 端口映射依赖 bridge 网络存活。
-	if runtime.GOOS == "linux" {
-		_ = exec.CommandContext(ctx, "docker", "network", "disconnect", "-f", "bridge", workerName).Run()
-	}
+	// 所有平台统一断开 Worker 的 bridge 网络，防止 restart 后 default route 被 bridge 覆盖。
+	// macOS Docker Desktop 上 SSH 端口映射由 vpnkit 在 cloudproxy-net 上也能工作，不依赖 bridge。
+	_ = exec.CommandContext(ctx, "docker", "network", "disconnect", "-f", "bridge", workerName).Run()
 
 	// 等待隔离网络的接口就绪（disconnect 后可能有短暂延迟）
 	time.Sleep(1 * time.Second)
@@ -112,6 +108,13 @@ func (p *ContainerProxyProvider) PrepareHost(ctx context.Context, spec HostNetwo
 	if err := configureWorkerEgress(ctx, workerName, gwIP, workerIP); err != nil {
 		p.teardownGateway(ctx, hostID)
 		return fmt.Errorf("gateway: configure worker routes/DNS: %w", err)
+	}
+
+	if spec.Egress != nil && spec.Egress.ExpectedIP != "" {
+		if err := verifyWorkerEgress(ctx, workerName, spec.Egress.ExpectedIP); err != nil {
+			p.teardownGateway(ctx, hostID)
+			return fmt.Errorf("gateway: egress IP smoke check failed: %w", err)
+		}
 	}
 
 	if cpID, _ := os.Hostname(); cpID != "" {
@@ -257,7 +260,22 @@ func waitGatewayHealthy(ctx context.Context, gwName string) error {
 }
 
 func configureWorkerEgress(ctx context.Context, workerName, gwIP, workerIP string) error {
-	// workerIP 例如 "172.25.42.3"，从中提取网段前缀来匹配正确的接口
+	const maxRetry = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxRetry; attempt++ {
+		if err := tryConfigureWorkerEgress(ctx, workerName, gwIP, workerIP); err == nil {
+			return nil
+		} else {
+			lastErr = err
+			if attempt < maxRetry {
+				time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+			}
+		}
+	}
+	return fmt.Errorf("configureWorkerEgress failed after %d attempts: %w", maxRetry, lastErr)
+}
+
+func tryConfigureWorkerEgress(ctx context.Context, workerName, gwIP, workerIP string) error {
 	script := fmt.Sprintf(`set -e
 # 等待网络接口就绪
 for i in 1 2 3 4 5; do
@@ -270,15 +288,46 @@ if [ -z "$DEV" ]; then
   ip -o addr show >&2
   exit 1
 fi
+# 删除所有现有 default 路由
+ip route show default | while read -r line; do
+  gw=$(echo "$line" | grep -oP 'via \\K[^ ]+' || true)
+  dev=$(echo "$line" | grep -oP 'dev \\K[^ ]+' || true)
+  if [ -n "$gw" ] && [ -n "$dev" ]; then
+    ip route del default via "$gw" dev "$dev" 2>/dev/null || true
+  fi
+done
 ip route del default 2>/dev/null || true
-ip route add default via %s dev "$DEV"
+# 添加低 metric default，确保优先级最高
+ip route add default via %s dev "$DEV" metric 0
+# 立即 verify
+default_route=$(ip route show default | head -1)
+echo "$default_route" | grep -q "via %s"
 echo 'nameserver 8.8.8.8' > /etc/resolv.conf
-`, workerIP, workerIP, gwIP)
+`, workerIP, workerIP, gwIP, gwIP)
 
 	cmd := exec.CommandContext(ctx, "docker", "exec", workerName, "sh", "-c", script)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func verifyWorkerEgress(ctx context.Context, workerName, expectedIP string) error {
+	cmd := exec.CommandContext(ctx, "docker", "exec", workerName, "sh", "-c",
+		fmt.Sprintf("curl -s --max-time 5 https://api.ipify.org || echo ''"))
+	out, err := cmd.Output()
+	if err != nil {
+		return &NetworkError{Type: ErrEgressIPMismatch, Message: "curl failed: " + err.Error(), HostID: workerName}
+	}
+	actual := strings.TrimSpace(string(out))
+	if actual != expectedIP {
+		return &NetworkError{
+			Type:     ErrEgressIPMismatch,
+			Message:  fmt.Sprintf("egress IP mismatch: expected %s, got %s", expectedIP, actual),
+			HostID:   workerName,
+			Metadata: map[string]any{"expected": expectedIP, "actual": actual},
+		}
 	}
 	return nil
 }
