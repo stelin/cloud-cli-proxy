@@ -152,7 +152,7 @@ RUN set -eux; \
       echo "Claude binary not found in /usr/local/bin, ${HOME}/.local/bin, or /root/.local/bin" >&2; exit 1; \
     fi; \
     if [ "${CLAUDE_BIN}" != "/usr/local/bin/claude" ]; then \
-      mv "${CLAUDE_BIN}" /usr/local/bin/claude; \
+      cp -fL "${CLAUDE_BIN}" /usr/local/bin/claude; \
     fi; \
     chmod +x /usr/local/bin/claude; \
     claude --version
