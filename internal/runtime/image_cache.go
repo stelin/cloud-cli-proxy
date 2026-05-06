@@ -85,8 +85,8 @@ func (c *ImageCache) Refresh(ctx context.Context) error {
 		return fmt.Errorf("docker pull %s: %w", spec.ImageName, err)
 	}
 
-	// 刷新本地 digest
-	digest, created, inspectErr := c.inspectLocal(pullCtx, spec.ImageName)
+	// 刷新本地 digest 和版本 label
+	digest, created, version, inspectErr := c.inspectImage(pullCtx, spec.ImageName)
 	if inspectErr != nil {
 		c.logger.Warn("image cache refresh: inspect after pull failed",
 			"image", spec.ImageName, "error", inspectErr)
@@ -95,6 +95,9 @@ func (c *ImageCache) Refresh(ctx context.Context) error {
 	} else {
 		c.status.LocalDigest = digest
 		c.status.LocalCreated = created
+		if version != "" {
+			c.status.ImageVersion = version
+		}
 	}
 
 	c.status.LastRefreshError = ""
@@ -105,20 +108,23 @@ func (c *ImageCache) Refresh(ctx context.Context) error {
 	return nil
 }
 
-// inspectLocal 查询本地镜像的 digest 和创建时间。
-func (c *ImageCache) inspectLocal(ctx context.Context, imageName string) (digest, created string, err error) {
+// inspectImage 查询本地镜像的 digest、创建时间和版本 label。
+func (c *ImageCache) inspectImage(ctx context.Context, imageName string) (digest, created, version string, err error) {
 	cmd := exec.CommandContext(ctx, "docker", "inspect",
-		"--format", "{{.Id}}|{{.Created}}", imageName)
+		"--format", "{{.Id}}|{{.Created}}|{{index .Config.Labels \"org.opencontainers.image.version\"}}", imageName)
 	out, err := cmd.Output()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	parts := strings.SplitN(strings.TrimSpace(string(out)), "|", 2)
+	parts := strings.SplitN(strings.TrimSpace(string(out)), "|", 3)
 	digest = shortImageID(parts[0])
 	if len(parts) > 1 {
 		created = parts[1]
 	}
-	return digest, created, nil
+	if len(parts) > 2 {
+		version = parts[2]
+	}
+	return digest, created, version, nil
 }
 
 func shortImageID(id string) string {
