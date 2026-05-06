@@ -11,9 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/zanel1u/cloud-cli-proxy/internal/agentapi"
 	cphttp "github.com/zanel1u/cloud-cli-proxy/internal/controlplane/http"
@@ -197,32 +195,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 }
 
 func (a *App) ensureSeedAdmin(ctx context.Context) error {
-	if a.cfg.AdminUsername == "" || a.cfg.AdminPassword == "" {
-		a.logger.Warn("seed admin: ADMIN_USERNAME or ADMIN_PASSWORD not set, skipping")
-		return nil
-	}
-	_, err := a.repo.GetUserByLoginIdentifierForAuth(ctx, a.cfg.AdminUsername)
-	if err == nil {
-		return nil // 已存在
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("check seed admin: %w", err)
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(a.cfg.AdminPassword), bcrypt.DefaultCost)
-	if err != nil {
-		return fmt.Errorf("hash admin password: %w", err)
-	}
-	_, err = a.repo.CreateUserWithRole(ctx, repository.CreateUserWithRoleParams{
-		Username:     a.cfg.AdminUsername,
-		PasswordHash: string(hash),
-		ShortID:      a.cfg.AdminUsername,
-		Role:         "admin",
-	})
-	if err != nil {
-		return fmt.Errorf("create seed admin: %w", err)
-	}
-	a.logger.Info("seed admin created", "short_id", a.cfg.AdminUsername)
-	return nil
+	return ensureSeedAdminWithRepo(ctx, a.logger, a.repo, a.cfg.AdminUsername, a.cfg.AdminPassword)
 }
 
 func (a *App) Run(ctx context.Context) error {
