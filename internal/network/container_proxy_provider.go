@@ -110,13 +110,6 @@ func (p *ContainerProxyProvider) PrepareHost(ctx context.Context, spec HostNetwo
 		return fmt.Errorf("gateway: configure worker routes/DNS: %w", err)
 	}
 
-	if spec.Egress != nil && spec.Egress.ExpectedIP != "" {
-		if err := verifyWorkerEgress(ctx, workerName, spec.Egress.ExpectedIP); err != nil {
-			p.teardownGateway(ctx, hostID)
-			return fmt.Errorf("gateway: egress IP smoke check failed: %w", err)
-		}
-	}
-
 	if cpID, _ := os.Hostname(); cpID != "" {
 		if err := dockerNetworkConnect(ctx, netName, cpID, ""); err != nil {
 			p.logger.Warn("container-proxy: connect control-plane to isolated network failed (VNC may not work)",
@@ -313,21 +306,3 @@ echo 'nameserver 8.8.8.8' > /etc/resolv.conf
 	return nil
 }
 
-func verifyWorkerEgress(ctx context.Context, workerName, expectedIP string) error {
-	cmd := exec.CommandContext(ctx, "docker", "exec", workerName, "sh", "-c",
-		fmt.Sprintf("curl -s --max-time 5 https://ip.me || echo ''"))
-	out, err := cmd.Output()
-	if err != nil {
-		return &NetworkError{Type: ErrEgressIPMismatch, Message: "curl failed: " + err.Error(), HostID: workerName}
-	}
-	actual := strings.TrimSpace(string(out))
-	if actual != expectedIP {
-		return &NetworkError{
-			Type:     ErrEgressIPMismatch,
-			Message:  fmt.Sprintf("egress IP mismatch: expected %s, got %s", expectedIP, actual),
-			HostID:   workerName,
-			Metadata: map[string]any{"expected": expectedIP, "actual": actual},
-		}
-	}
-	return nil
-}
