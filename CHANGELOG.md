@@ -4,6 +4,30 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v3.3.3 - 2026-05-06
+## What's Changed
+
+### Backend (Go / API)
+- fix(quick-260506-ty7): seed admin generates entry_password + ed25519 keys + ssh_keys row, idempotent backfill (7bfc626)
+- refactor(quick-260506-ty7): extract credential generators to internal/controlplane/credgen (5b0105b)
+- feat(quick-260506): 容器日志查看 + egress IP 修复 + X11 lock 清理 (1fbf88f)
+- fix(quick-260506): 修复状态机分裂 — list 去 DockerStatus + worker 失败路径补 stop + 前端统一 DB status (c4a164c)
+- fix(quick-260506): 修复 IP 泄漏 — 统一 disconnect bridge + 反竞态 verify+retry (23a4a02)
+- fix: 修复若干问题 (bd147c6)
+
+### Frontend (Admin Web)
+- feat(quick-260506): 容器日志查看 + egress IP 修复 + X11 lock 清理 (1fbf88f)
+- fix(quick-260506): 修复状态机分裂 — list 去 DockerStatus + worker 失败路径补 stop + 前端统一 DB status (c4a164c)
+- fix: 修复若干问题 (bd147c6)
+- fix(ssh-keys): create/delete 后立即 refetch 同步状态 (f061126)
+
+### Runtime & Deployment
+- fix(quick-260506-urq): install.sh 路径改用 cp -fL 复制真实 claude 二进制 (28d18e7)
+- feat(quick-260506): 容器日志查看 + egress IP 修复 + X11 lock 清理 (1fbf88f)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v3.3.2...v3.3.3
+
+
 ## v3.3.2 - 2026-05-05
 ## What's Changed
 
