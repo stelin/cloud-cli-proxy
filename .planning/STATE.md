@@ -7,10 +7,10 @@ last_updated: "2026-05-07T11:55:00Z"
 last_activity: 2026-05-07
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 13
-  completed_plans: 2
-  percent: 15
+  completed_plans: 3
+  percent: 23
 ---
 
 # Project State
@@ -26,24 +26,24 @@ See: .planning/PROJECT.md (updated 2026-05-07 — v3.2 milestone started)
 
 Milestone: v3.2 多形态容器接入
 Phase: 38 of 41 (SSH Proxy 端口转发支持)
-Plan: 02 of 02 (global request passthrough + forwarded-tcpip relay — COMPLETE)
-Status: Executing Phase 38 — Plan 02 complete, Phase 38 COMPLETE
-Last activity: 2026-05-07 — Completed 038-02: tcpip-forward/cancel-tcpip-forward 透传 + forwarded-tcpip channel 回传
+Plan: 03 of 03 (sshd_config 验证 + forwarding 测试覆盖 — COMPLETE)
+Status: Executing Phase 38 — Plan 03 complete, Phase 38 COMPLETE
+Last activity: 2026-05-07 — Completed 038-03: sshd_config 端口转发配置验证 + 全部测试无回归
 
-Progress: [██░░░░░░░░] 15%
+Progress: [██░░░░░░░░] 23%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 2 (v3.2)
-- Average duration: 14min 6s
-- Total execution time: 28min 12s
+- Total plans completed: 3 (v3.2)
+- Average duration: 9min 24s
+- Total execution time: 28min 15s
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 038 | 2/2 | 28min 12s | 14min 6s |
+| 038 | 3/3 | 28min 15s | 9min 24s |
 
 *Updated after each plan completion*
 
@@ -71,6 +71,11 @@ Phase 38 Plan 02 决策：
 - `handleGlobalRequests` 使用 `ssh.Conn` 接口（而非 `*ssh.Client`），保持函数签名通用
 - `proxyForwardedChannels` 测试通过 server-side ssh.Conn.OpenChannel 验证 SSH mux channel relay 路径
 
+Phase 38 Plan 03 决策：
+
+- Plan 038-03 的所有测试已在 038-01 和 038-02 中完整实现，验证确认无回归即可，无需新增代码
+- sshd_config 配置在 managed-user 镜像中已就绪，38-RESEARCH.md 已确认
+
 ### Pending Todos
 
 - Phase 39: Cloud/Local 两版架构边界分析
@@ -89,15 +94,15 @@ v3.1 quick tasks 见归档 STATE。
 ### Roadmap Evolution
 
 v3.2 roadmap 已创建：
-- Phase 38: SSH-01..04 (端口转发 + 安全校验) — COMPLETE
+- Phase 38: SSH-01..04 (端口转发 + 安全校验 + 测试验证) — COMPLETE
 - Phase 39: LOCAL-01..04 + UX-02 (本地 Dev Containers)
 - Phase 40: SSH-05 + SEC-01..02 (E2E 验证 + 安全)
 - Phase 41: UX-01 (doctor 扩展)
 
 ## Session Continuity
 
-Last session: 2026-05-07T11:55:00Z
-Stopped at: Completed 038-02-PLAN.md (global request passthrough + forwarded-tcpip relay)
+Last session: 2026-05-07T12:08:00Z
+Stopped at: Completed 038-03-PLAN.md (sshd_config verification + forwarding test coverage)
 Resume file: None
 
 ## Deferred Items
@@ -105,4 +110,4 @@ Resume file: None
 v3.1 遗留 deferred items 保持原状态，见 MILESTONES.md。
 
 ---
-*State updated: 2026-05-07 after Phase 38 Plan 02 completion*
+*State updated: 2026-05-07 after Phase 38 Plan 03 completion*

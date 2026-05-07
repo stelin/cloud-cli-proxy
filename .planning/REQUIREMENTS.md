@@ -17,7 +17,7 @@
   - 处理客户端的 `tcpip-forward` 请求（远程端口转发）
   - 当远程端口有连接时，打开 `forwarded-tcpip` channel 回传客户端
 
-- [ ] **SSH-03**: 容器内 `sshd_config` 显式开启端口转发
+- [x] **SSH-03**: 容器内 `sshd_config` 显式开启端口转发 — completed 2026-05-07 (038-03)
   - `AllowTcpForwarding yes`
   - `AllowStreamLocalForwarding yes`
   - `GatewayPorts no`（安全：只允许本地转发）
@@ -112,8 +112,8 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | SSH-01 | Phase 38 | Complete (038-01) |
-| SSH-02 | Phase 38 | Pending |
-| SSH-03 | Phase 38 | Pending |
+| SSH-02 | Phase 38 | Complete (038-02) |
+| SSH-03 | Phase 38 | Complete (038-03) |
 | SSH-04 | Phase 38 | Complete (038-01) |
 | SSH-05 | Phase 40 | Pending |
 | LOCAL-01 | Phase 39 | Pending |
