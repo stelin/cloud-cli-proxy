@@ -90,13 +90,13 @@ func main() {
 	rootCmd.PersistentFlags().String("mount-mode", "auto",
 		"文件映射模式: auto|full|hot-only|sshfs-only")
 
-	rootCmd.AddCommand(initCmd, envCmd, sshCmd, newSyncCmd(), newSessionsCmd(), newExplainCmd(), newDoctorCmd())
+	rootCmd.AddCommand(initCmd, envCmd, sshCmd, newSyncCmd(), newSessionsCmd(), newExplainCmd(), newDoctorCmd(), newLocalCmd())
 
 	// DisableFlagParsing 会阻止 cobra 识别子命令，
 	// 在检测到已知子命令时关闭它以恢复正常路由。
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "init", "env", "ssh", "sync", "sessions", "explain", "doctor", "help", "--help", "-h":
+		case "init", "env", "ssh", "sync", "sessions", "explain", "doctor", "local", "help", "--help", "-h":
 			rootCmd.DisableFlagParsing = false
 		}
 	}

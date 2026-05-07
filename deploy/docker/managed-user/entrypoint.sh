@@ -207,6 +207,10 @@ if [ -c /dev/fuse ]; then
   chmod 666 /dev/fuse
 fi
 
+# MODE 检测：remote（默认）= 完整桌面栈，local = 仅 sshd + 可选 sing-box
+MODE="${MODE:-remote}"
+
+if [ "$MODE" != "local" ]; then
 # KasmVNC 配置（无密码认证——由控制面反代保护）
 mkdir -p /workspace/.vnc
 cat > /workspace/.vnc/kasmvnc.yaml <<'YAML'
@@ -298,6 +302,13 @@ prepare_persistent_state
 prepare_container_disguise
 prepare_mergerfs_check
 assert_tmux_version
+
+fi # end MODE != "local"
+
+# sing-box 启动（MODE=local + 有 egress 配置时）
+if [ "$MODE" = "local" ] && [ -f /etc/cloud-claude/sing-box-outbound.json ]; then
+  echo "[entrypoint] local mode: sing-box egress config detected"
+fi
 
 # Foreground: sshd
 exec /usr/sbin/sshd -D -e
