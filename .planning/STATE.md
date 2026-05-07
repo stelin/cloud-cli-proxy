@@ -28,7 +28,7 @@ Milestone: v3.1 映射语义补齐与懒加载 — ✅ SHIPPED (2026-04-24)
 Phase: 37 (e2e-uat) — COMPLETE
 Plan: 5 of 5 (全部完成)
 Status: Phase complete — ready for verification
-Last activity: 2026-05-06 - 完成 quick task 260506-urq: 修复 Dockerfile 中 claude 安装产物为软链导致容器重建后断裂
+Last activity: 2026-05-07 - 完成 quick task 260508: 基于当前代码全面更新 README、docs 与 deploy 文档
 
 Progress: [██████████] 100% (11/11 plans across v3.1 phases)
 
@@ -126,6 +126,7 @@ v3.1 milestone 已启动；等待 ROADMAP.md 写入后进入 Phase 36 执行：
 | 260506-ty7 | 修复种子 admin 凭据缺口（主机创建卡在创建中） | 2026-05-06 | 5b0105b, 7bfc626, 55dec86 | [260506-ty7-admin](./quick/260506-ty7-admin/) |
 | 260506-urq | 修复 Dockerfile 中 claude 安装产物为软链导致容器重建后断裂 | 2026-05-06 | 28d18e7 | [260506-urq-dockerfile-claude](./quick/260506-urq-dockerfile-claude/) |
 | 260507 | Docker 重启后出口 IP 泄漏修复：restart=no + Reconciler 自动恢复 | 2026-05-07 | 67e8d21, 03e7dcb | [260507-docker-ip-user-gw-restart-no-db-running](./quick/260507-docker-ip-user-gw-restart-no-db-running/) |
+| 260508 | 基于当前代码全面更新 README、docs 与 deploy 文档 | 2026-05-07 | c71e048 | [260508-readme-md](./quick/260508-readme-md/) |
 
 ### Roadmap Evolution
 
