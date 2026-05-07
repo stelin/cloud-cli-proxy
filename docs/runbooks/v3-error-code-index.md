@@ -129,8 +129,8 @@ comm -23 \
 | Code | Severity | Message（摘要） | NextAction（摘要） | Extended |
 |------|----------|-----------------|---------------------|----------|
 | STATE_LAST_SESSION_MISSING  | INFO  | 未找到上次会话快照                                | 首次运行 cloud-claude 后再 doctor 即可看到                                | — |
-| STATE_VOLUME_IN_USE_001     | ERROR | 持久化 volume %s 仍被容器持有，DELETE 拒绝         | 先停止容器：cloud-claude admin hosts stop <id>                            | ✅ |
-| STATE_CONTAINER_NOT_RUNNING | WARN  | 主机 %s 状态非 running，远端 doctor 检查跳过       | 运行 cloud-claude admin hosts start <id> 启动容器                         | ✅ |
+| STATE_VOLUME_IN_USE_001     | ERROR | 持久化 volume %s 仍被容器持有，DELETE 拒绝         | 先停止容器：`cloud-claude admin hosts stop <id>`                            | ✅ |
+| STATE_CONTAINER_NOT_RUNNING | WARN  | 主机 %s 状态非 running，远端 doctor 检查跳过       | 运行 `cloud-claude admin hosts start <id>` 启动容器                         | ✅ |
 
 ### 3.8 SYSTEM_*（OS / kernel / FUSE / DNS / timeout）
 

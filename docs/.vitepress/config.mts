@@ -83,6 +83,10 @@ export default defineConfig({
     },
   },
 
+  markdown: {
+    html: false,
+  },
+
   themeConfig: {
     logo: '/logo.svg',
     socialLinks: [

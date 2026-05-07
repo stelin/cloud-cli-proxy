@@ -9,7 +9,7 @@
 
 v3.0 把 v2 时代的 `cloud-claude doctor`（PASS/FAIL 黑盒）升级为 5 维度 18 项自检 + `--fix` 自动修复 + JSON schema 契约。设计目标：
 
-- 让运维拿到任一 [!]/[✗] 行都能直接 copy-paste 修复命令（M14 四要素：`[图标] 中文原因 + 建议: <next_action> + 错误码: <CODE>`）
+- 让运维拿到任一 [!]/[✗] 行都能直接 copy-paste 修复命令（M14 四要素：`[图标] 中文原因 + 建议: &lt;next_action&gt; + 错误码: &lt;CODE&gt;`）
 - 让 CI/CD 把 doctor JSON 当作健康度门禁（M14：`schema_version=1` 锁死 + `next_action` 必填 + 错误码命名规范）
 - 把过去散落在多个 SUMMARY 的降级链整合到 doctor 启动第一屏（M13：禁止静默降级）
 

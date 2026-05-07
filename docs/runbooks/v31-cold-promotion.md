@@ -125,8 +125,8 @@ sysctl -p
 
 | 层 | 路径 | 权限 | 职责 |
 |----|------|------|------|
-| hot（hot_sync） | /tmp/.cloud-claude-mounts/<hash>/hot/ | RW | 源码双向同步 + 已晋升文件存储 |
-| cold（sshfs） | /tmp/.cloud-claude-mounts/<hash>/cold/ | RO | 完整文件系统只读镜像 |
+| hot（hot_sync） | `/tmp/.cloud-claude-mounts/<hash>/hot/` | RW | 源码双向同步 + 已晋升文件存储 |
+| cold（sshfs） | `/tmp/.cloud-claude-mounts/<hash>/cold/` | RO | 完整文件系统只读镜像 |
 | merge（mergerfs） | 用户 cwd | — | union mount（hot=RW 在前，cold=RO 在后） |
 
 ### 4.2 晋升文件生命周期
