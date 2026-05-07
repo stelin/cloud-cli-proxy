@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v3.3.6 - 2026-05-07
+## What's Changed
+
+### Backend (Go / API)
+- fix(quick-260507): user / gateway 容器 restart 策略改为 no，防止 Docker 重启后自动重建错误路由导致 IP 泄漏 (67e8d21)
+- feat(quick-260507): Reconciler 对账新增自动恢复逻辑 — DB running 但 docker 缺失时自动排队启动 (03e7dcb)
+
+### Runtime & Deployment
+- fix(quick-260507): user / gateway 容器 restart 策略改为 no (67e8d21)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v3.3.5...v3.3.6
+
+
 ## v3.3.5 - 2026-05-06
 ## What's Changed
 
