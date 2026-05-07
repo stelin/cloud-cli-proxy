@@ -132,7 +132,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		if p := os.Getenv("HOST_AGENT_SOCKET"); p != "" {
 			socketPath = p
 		}
-		reconciler = scheduler.NewReconciler(logger, repo, agentapi.NewClient(socketPath), 0)
+		reconciler = scheduler.NewReconciler(logger, repo, agentapi.NewClient(socketPath), runtimeService, 0)
 	}
 
 	router := cphttp.NewRouter(cphttp.Dependencies{

@@ -67,7 +67,8 @@ func TestReconciler(t *testing.T) {
 				"cloudproxy-h2": {Exists: true, Running: true},
 			},
 		}
-		r := NewReconciler(slog.Default(), store, inspector, 10*time.Minute)
+		queuer := &mockQueuer{}
+		r := NewReconciler(slog.Default(), store, inspector, queuer, 10*time.Minute)
 
 		err := r.Run(context.Background())
 		if err != nil {
@@ -79,9 +80,12 @@ func TestReconciler(t *testing.T) {
 		if len(store.recordedEvents) != 0 {
 			t.Errorf("expected no events, got %d", len(store.recordedEvents))
 		}
+		if len(queuer.queuedActions) != 0 {
+			t.Errorf("expected no queued actions, got %d", len(queuer.queuedActions))
+		}
 	})
 
-	t.Run("Run_ContainerStopped_UpdatesStatus", func(t *testing.T) {
+	t.Run("Run_ContainerStopped_QueuesStartHost", func(t *testing.T) {
 		store := &mockReconcileStore{
 			runningHosts: []repository.Host{{ID: "h1"}},
 		}
@@ -90,7 +94,89 @@ func TestReconciler(t *testing.T) {
 				"cloudproxy-h1": {Exists: true, Running: false},
 			},
 		}
-		r := NewReconciler(slog.Default(), store, inspector, 10*time.Minute)
+		queuer := &mockQueuer{}
+		r := NewReconciler(slog.Default(), store, inspector, queuer, 10*time.Minute)
+
+		err := r.Run(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(queuer.queuedActions) != 1 {
+			t.Fatalf("expected 1 queued action, got %d", len(queuer.queuedActions))
+		}
+		if queuer.queuedActions[0].HostID != "h1" || queuer.queuedActions[0].Action != agentapi.ActionStartHost || queuer.queuedActions[0].RequestedBy != "system" {
+			t.Errorf("queued = %+v, want {h1 start_host system}", queuer.queuedActions[0])
+		}
+
+		if len(store.updatedHosts) != 0 {
+			t.Errorf("expected no host status update when auto-recovering, got %d", len(store.updatedHosts))
+		}
+
+		foundRecover := false
+		for _, ev := range store.recordedEvents {
+			if ev.Type == "reconcile.host.auto_recover" {
+				foundRecover = true
+				actual, _ := ev.Metadata["previous_actual_status"].(string)
+				if actual != "stopped" {
+					t.Errorf("previous_actual_status = %q, want stopped", actual)
+				}
+			}
+		}
+		if !foundRecover {
+			t.Error("expected reconcile.host.auto_recover event, not found")
+		}
+	})
+
+	t.Run("Run_ContainerNotFound_QueuesStartHost", func(t *testing.T) {
+		store := &mockReconcileStore{
+			runningHosts: []repository.Host{{ID: "h1"}},
+		}
+		inspector := &mockInspector{
+			results: map[string]agentapi.ContainerStatusResponse{
+				"cloudproxy-h1": {Exists: false, Running: false},
+			},
+		}
+		queuer := &mockQueuer{}
+		r := NewReconciler(slog.Default(), store, inspector, queuer, 10*time.Minute)
+
+		err := r.Run(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(queuer.queuedActions) != 1 {
+			t.Fatalf("expected 1 queued action, got %d", len(queuer.queuedActions))
+		}
+		if queuer.queuedActions[0].HostID != "h1" || queuer.queuedActions[0].Action != agentapi.ActionStartHost {
+			t.Errorf("queued = %+v, want {h1 start_host}", queuer.queuedActions[0])
+		}
+
+		foundRecover := false
+		for _, ev := range store.recordedEvents {
+			if ev.Type == "reconcile.host.auto_recover" {
+				foundRecover = true
+				actual, _ := ev.Metadata["previous_actual_status"].(string)
+				if actual != "not_found" {
+					t.Errorf("previous_actual_status = %q, want not_found", actual)
+				}
+			}
+		}
+		if !foundRecover {
+			t.Error("expected reconcile.host.auto_recover event, not found")
+		}
+	})
+
+	t.Run("Run_QueuerNil_FallsBackToDrift", func(t *testing.T) {
+		store := &mockReconcileStore{
+			runningHosts: []repository.Host{{ID: "h1"}},
+		}
+		inspector := &mockInspector{
+			results: map[string]agentapi.ContainerStatusResponse{
+				"cloudproxy-h1": {Exists: true, Running: false},
+			},
+		}
+		r := NewReconciler(slog.Default(), store, inspector, nil, 10*time.Minute)
 
 		err := r.Run(context.Background())
 		if err != nil {
@@ -118,23 +204,29 @@ func TestReconciler(t *testing.T) {
 		}
 	})
 
-	t.Run("Run_ContainerNotFound_UpdatesStatus", func(t *testing.T) {
+	t.Run("Run_QueuerError_FallsBackToDrift", func(t *testing.T) {
 		store := &mockReconcileStore{
 			runningHosts: []repository.Host{{ID: "h1"}},
 		}
 		inspector := &mockInspector{
 			results: map[string]agentapi.ContainerStatusResponse{
-				"cloudproxy-h1": {Exists: false, Running: false},
+				"cloudproxy-h1": {Exists: true, Running: false},
 			},
 		}
-		r := NewReconciler(slog.Default(), store, inspector, 10*time.Minute)
+		queuer := &mockQueuer{err: errors.New("queue full")}
+		r := NewReconciler(slog.Default(), store, inspector, queuer, 10*time.Minute)
 
 		err := r.Run(context.Background())
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
+
+		if len(queuer.queuedActions) != 1 {
+			t.Fatalf("expected 1 queued action attempt, got %d", len(queuer.queuedActions))
+		}
+
 		if len(store.updatedHosts) != 1 {
-			t.Fatalf("expected 1 host update, got %d", len(store.updatedHosts))
+			t.Fatalf("expected 1 host update on fallback, got %d", len(store.updatedHosts))
 		}
 		if store.updatedHosts[0].Status != "stopped" {
 			t.Errorf("status = %q, want stopped", store.updatedHosts[0].Status)
@@ -144,14 +236,10 @@ func TestReconciler(t *testing.T) {
 		for _, ev := range store.recordedEvents {
 			if ev.Type == "reconcile.host.drift" {
 				foundDrift = true
-				actual, _ := ev.Metadata["actual_status"].(string)
-				if actual != "not_found" {
-					t.Errorf("actual_status = %q, want not_found", actual)
-				}
 			}
 		}
 		if !foundDrift {
-			t.Error("expected reconcile.host.drift event, not found")
+			t.Error("expected reconcile.host.drift event on fallback, not found")
 		}
 	})
 
@@ -164,7 +252,8 @@ func TestReconciler(t *testing.T) {
 				"cloudproxy-h1": errors.New("agent unreachable"),
 			},
 		}
-		r := NewReconciler(slog.Default(), store, inspector, 10*time.Minute)
+		queuer := &mockQueuer{}
+		r := NewReconciler(slog.Default(), store, inspector, queuer, 10*time.Minute)
 
 		err := r.Run(context.Background())
 		if err != nil {
@@ -172,6 +261,9 @@ func TestReconciler(t *testing.T) {
 		}
 		if len(store.updatedHosts) != 0 {
 			t.Errorf("expected no host updates when inspect fails, got %d", len(store.updatedHosts))
+		}
+		if len(queuer.queuedActions) != 0 {
+			t.Errorf("expected no queued actions when inspect fails, got %d", len(queuer.queuedActions))
 		}
 	})
 
@@ -184,7 +276,8 @@ func TestReconciler(t *testing.T) {
 			},
 		}
 		inspector := &mockInspector{}
-		r := NewReconciler(slog.Default(), store, inspector, 10*time.Minute)
+		queuer := &mockQueuer{}
+		r := NewReconciler(slog.Default(), store, inspector, queuer, 10*time.Minute)
 
 		err := r.Run(context.Background())
 		if err != nil {
@@ -207,7 +300,8 @@ func TestReconciler(t *testing.T) {
 			runningHosts: []repository.Host{},
 		}
 		inspector := &mockInspector{}
-		r := NewReconciler(slog.Default(), store, inspector, 10*time.Minute)
+		queuer := &mockQueuer{}
+		r := NewReconciler(slog.Default(), store, inspector, queuer, 10*time.Minute)
 
 		err := r.Run(context.Background())
 		if err != nil {
@@ -218,6 +312,9 @@ func TestReconciler(t *testing.T) {
 		}
 		if len(store.recordedEvents) != 0 {
 			t.Errorf("expected no events, got %d", len(store.recordedEvents))
+		}
+		if len(queuer.queuedActions) != 0 {
+			t.Errorf("expected no queued actions, got %d", len(queuer.queuedActions))
 		}
 	})
 }

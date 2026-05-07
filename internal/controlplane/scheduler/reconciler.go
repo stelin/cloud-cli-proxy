@@ -25,10 +25,11 @@ type Reconciler struct {
 	logger         *slog.Logger
 	store          ReconcileStore
 	inspector      ContainerInspector
+	queuer         HostActionQueuer
 	staleThreshold time.Duration
 }
 
-func NewReconciler(logger *slog.Logger, store ReconcileStore, inspector ContainerInspector, staleThreshold time.Duration) *Reconciler {
+func NewReconciler(logger *slog.Logger, store ReconcileStore, inspector ContainerInspector, queuer HostActionQueuer, staleThreshold time.Duration) *Reconciler {
 	if staleThreshold == 0 {
 		staleThreshold = 10 * time.Minute
 	}
@@ -36,6 +37,7 @@ func NewReconciler(logger *slog.Logger, store ReconcileStore, inspector Containe
 		logger:         logger,
 		store:          store,
 		inspector:      inspector,
+		queuer:         queuer,
 		staleThreshold: staleThreshold,
 	}
 }
@@ -77,29 +79,61 @@ func (r *Reconciler) reconcileHosts(ctx context.Context) error {
 			actualStatus = "not_found"
 		}
 
-		if err := r.store.UpdateHostStatus(ctx, host.ID, "stopped"); err != nil {
-			r.logger.Error("update drifted host status failed", "host_id", host.ID, "error", err)
+		if r.queuer != nil {
+			if _, err := r.queuer.QueueHostAction(ctx, host.ID, agentapi.ActionStartHost, "system"); err != nil {
+				r.logger.Error("auto-recover host failed, falling back to drift",
+					"host_id", host.ID, "error", err)
+				// 自动恢复失败时回退到原有 drift 行为
+				r.recordHostDrift(ctx, host.ID, actualStatus)
+				continue
+			}
+
+			r.store.RecordEvent(ctx, repository.RecordEventParams{
+				HostID:  &host.ID,
+				Level:   "info",
+				Type:    "reconcile.host.auto_recover",
+				Message: "对账自动恢复主机",
+				Metadata: map[string]any{
+					"operator":               "system",
+					"db_status":              "running",
+					"previous_actual_status": actualStatus,
+					"host_id":                host.ID,
+				},
+			})
+
+			r.logger.Info("reconciled auto-recovered host",
+				"host_id", host.ID, "db_status", "running", "previous_actual_status", actualStatus)
 			continue
 		}
 
-		r.store.RecordEvent(ctx, repository.RecordEventParams{
-			HostID:  &host.ID,
-			Level:   "warn",
-			Type:    "reconcile.host.drift",
-			Message: "对账发现主机状态漂移",
-			Metadata: map[string]any{
-				"operator":      "system",
-				"db_status":     "running",
-				"actual_status": actualStatus,
-				"host_id":       host.ID,
-			},
-		})
-
-		r.logger.Info("reconciled drifted host",
-			"host_id", host.ID, "db_status", "running", "actual_status", actualStatus)
+		// queuer == nil: 向后兼容，保持原有 drift 行为
+		r.recordHostDrift(ctx, host.ID, actualStatus)
 	}
 
 	return nil
+}
+
+func (r *Reconciler) recordHostDrift(ctx context.Context, hostID, actualStatus string) {
+	if err := r.store.UpdateHostStatus(ctx, hostID, "stopped"); err != nil {
+		r.logger.Error("update drifted host status failed", "host_id", hostID, "error", err)
+		return
+	}
+
+	r.store.RecordEvent(ctx, repository.RecordEventParams{
+		HostID:  &hostID,
+		Level:   "warn",
+		Type:    "reconcile.host.drift",
+		Message: "对账发现主机状态漂移",
+		Metadata: map[string]any{
+			"operator":      "system",
+			"db_status":     "running",
+			"actual_status": actualStatus,
+			"host_id":       hostID,
+		},
+	})
+
+	r.logger.Info("reconciled drifted host",
+		"host_id", hostID, "db_status", "running", "actual_status", actualStatus)
 }
 
 func (r *Reconciler) reconcileStaleTasks(ctx context.Context) error {
