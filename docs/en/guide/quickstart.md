@@ -64,11 +64,11 @@ Default recommendation: **prefer prebuilt images** (`latest`) for faster and con
 
 ```bash
 # Built-in Docker PostgreSQL
-docker compose pull --policy always
+docker compose pull
 docker compose up -d
 
 # External PostgreSQL (skip built-in DB)
-docker compose pull --policy always control-plane admin
+docker compose pull control-plane admin
 docker compose up -d control-plane admin
 ```
 
@@ -280,15 +280,41 @@ cloud-claude
 cloud-claude -p "refactor this function"
 ```
 
-**Optional:** check remote timezone, locale, egress IP, FUSE, toolchain:
+**Session management:** By default attaches the existing tmux session for the same account; disconnects do not lose the workspace:
 
 ```bash
-cloud-claude env check
+cloud-claude                  # default: attach existing session (multi-client)
+cloud-claude --new-session    # force a new isolated session
+cloud-claude --take-over      # take over the primary session and detach others
+
+cloud-claude sessions                  # list current tmux sessions
+cloud-claude sessions --attach 0       # attach a specific session
 ```
 
-**Optional:** set `proxy_commands` in `~/.cloud-claude/config.yaml` (list of command names to run on the host). Default is `git` only; use `[]` to disable.
+**Mount modes:** Auto mode picks the best strategy; you can also specify manually:
 
-When you run `cloud-claude`, it: (1) authenticates; (2) waits for the container; (3) sshfs-mounts the cwd at the **same path** in the container; (4) starts Claude Code remotely. Terminal size, signals, and exit codes are forwarded.
+```bash
+cloud-claude --mount-mode=auto         # default: HotSync preferred, falls back to SSHFS
+cloud-claude --mount-mode=full         # HotSync + SSHFS dual-track (full features)
+cloud-claude --mount-mode=sshfs-only   # SSHFS only (compatibility first)
+```
+
+**Self-checks and troubleshooting:**
+
+```bash
+cloud-claude doctor                    # full five-domain check (network / auth / ssh / mount / disk)
+cloud-claude doctor mount --fix        # mount-only check with auto-repair
+cloud-claude explain MOUNT_SSHFS_DISCONNECTED   # query error code details and remediation
+cloud-claude env check                 # verify remote timezone, locale, egress IP, FUSE, etc.
+```
+
+**Environment variables:**
+
+- `CLOUD_CLAUDE_NO_PROMOTION=1` — disable cold-file read promotion (enabled by default on Linux; skipped on macOS)
+- Set `proxy_commands` in `~/.cloud-claude/config.yaml` (list of command names to run on the host). Default is `git` only; use an empty list to disable.
+- `hot_sync_max_file_mb` — per-file throttling threshold (default 50MB); files larger than this fall back to the cold path.
+
+When you run `cloud-claude`, it: (1) authenticates; (2) waits for the container; (3) sshfs-mounts the cwd at the **same path** in the container; (4) starts Claude Code remotely. Terminal size, signals, and exit codes are forwarded; network jitters auto-recover within 30s with buffered input surviving reconnections.
 
 **Error codes:**
 
@@ -314,7 +340,7 @@ Enter your password and you'll be in your cloud host within seconds.
 | Tool | Description |
 |------|-------------|
 | **Claude Code** | AI coding assistant — just run `claude` in terminal |
-| **KasmVNC + Chromium** | Browser remote desktop, accessible via admin or user panel |
+| **KasmVNC + Chromium** | Browser remote desktop, accessible via the admin dashboard |
 | **Git** | Version control |
 | **tmux** | Terminal multiplexer, sessions survive disconnects |
 | **zsh** | Enhanced shell experience |
@@ -336,7 +362,7 @@ If your SSH connection drops, re-run the same `curl` command to reconnect. Your 
 
 ### Rebuilding
 
-If you need to reset your environment, click "Rebuild" in the user panel. This recreates the container but preserves your home directory data.
+If you need to reset your environment, click "Rebuild" in the admin dashboard. This recreates the container but preserves your home directory data.
 
 ## Local Source Development (From Clone)
 

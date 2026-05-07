@@ -24,15 +24,18 @@
 ## 功能特性
 
 - **一条命令接入** — `curl | bash` 自动认证、创建容器、SSH 接入，用户无需任何配置
-- **cloud-claude 本地 CLI** — `alias claude=cloud-claude`，在本地终端透明运行远端 Claude Code；当前目录经 sshfs 映射到容器内**同名路径**（与本地路径一致），可选将 `git` 等命令代理到本机执行
+- **cloud-claude 本地 CLI** — `alias claude=cloud-claude`，在本地终端透明运行远端 Claude Code；当前目录经 sshfs 映射到容器内**同名路径**（与本地路径一致），可选将 `git` 等命令代理到本机执行；支持三层映射模式（Auto / Full / SSHFS-Only）与单文件大文件熔断
 - **Claude Code 开箱即用** — 容器预装 Claude Code，进入即可使用，所有 API 请求自动走指定出口
 - **全流量强制出口** — sing-box tun + Linux netns 全隧道，nftables 默认拒绝策略，杜绝 DNS / WebRTC 泄漏
 - **多协议支持** — 出口 IP 支持 6 种代理协议（SOCKS5 / VMess / VLESS / Shadowsocks / Trojan / HTTP）
 - **每用户隔离** — 独立 Docker 容器，预装 KasmVNC 远程桌面 + Chromium 浏览器
-- **管理后台** — React SPA 仪表盘，用户、主机、出口 IP、事件日志一站式管理
-- **用户自助面板** — 用户可查看主机状态、重建主机、访问 VNC 桌面
+- **管理后台** — React SPA 仪表盘，用户、主机、出口 IP、事件日志一站式管理；支持宿主机路径挂载到容器
 - **到期自动治理** — 过期自动停机、禁止登录
 - **多架构 CI/CD** — GitHub Actions 自动构建 `linux/amd64` + `linux/arm64` 镜像
+- **错误码自解释系统** — `cloud-claude explain <CODE>` 查询任何错误码的详细说明与修复建议
+- **tmux 多端会话管理** — 同一账号可多客户端 attach 同一 tmux 会话，断线不丢失；支持 `--new-session` 独占会话、`--take-over` 接管踢人
+- **网络抖动自动恢复** — 内置 Reconnector，30s 内断线自动重连，输入缓冲不丢失
+- **doctor 五维度自检** — `cloud-claude doctor [network|auth|ssh|mount|disk]` 带 `--fix` 自动修复常见故障
 
 ---
 
@@ -81,7 +84,7 @@ cd cloud-cli-proxy
 bash deploy/scripts/setup-env.sh
 
 # 推荐：优先使用预构建镜像（latest）
-docker compose pull --policy always
+docker compose pull
 docker compose up -d
 
 curl http://127.0.0.1:8080/healthz
@@ -196,15 +199,41 @@ cloud-claude                # 或 claude
 cloud-claude -p "帮我重构这个函数"
 ```
 
-**可选：** 检查远端容器时区、语言、出口 IP、FUSE 等：
+**会话管理：** 默认 attach 同一账号的已有 tmux 会话，断线不丢失工作区：
 
 ```bash
-cloud-claude env check
+cloud-claude                  # 默认：attach 已有会话（多端共享）
+cloud-claude --new-session    # 强制新建独立会话
+cloud-claude --take-over      # 接管主会话并踢掉其他客户端
+
+cloud-claude sessions                  # 列出当前 tmux 会话
+cloud-claude sessions --attach 0       # 接管指定会话
 ```
 
-**可选：** 在 `~/.cloud-claude/config.yaml` 中配置 `proxy_commands`（命令名列表），指定在**本机**执行的命令；默认仅 `git`；设为空数组可关闭代理。
+**映射模式：** 默认 Auto 模式自动选择最优挂载策略，也可手动指定：
 
-`cloud-claude` 会自动完成：向网关认证 → 等待容器就绪 → sshfs 将当前目录挂到容器内同名路径 → 在远端启动 Claude Code。终端大小、信号、退出码会透传。
+```bash
+cloud-claude --mount-mode=auto         # 默认：优先 HotSync，失败降级 SSHFS
+cloud-claude --mount-mode=full         # HotSync + SSHFS 双轨（完整功能）
+cloud-claude --mount-mode=sshfs-only   # 纯 SSHFS（兼容性优先）
+```
+
+**自检与排障：**
+
+```bash
+cloud-claude doctor                    # 五维度全面自检（network / auth / ssh / mount / disk）
+cloud-claude doctor mount --fix        # 仅检查挂载维度，并自动修复常见故障
+cloud-claude explain MOUNT_SSHFS_DISCONNECTED   # 查询错误码详细说明与修复建议
+cloud-claude env check                 # 检查远端容器时区、语言、出口 IP、FUSE 等
+```
+
+**环境变量：**
+
+- `CLOUD_CLAUDE_NO_PROMOTION=1` — 禁用冷文件读触发晋升（Linux 默认启用，macOS 自动跳过）
+- 在 `~/.cloud-claude/config.yaml` 中配置 `proxy_commands`（命令名列表），指定在**本机**执行的命令；默认仅 `git`；设为空数组可关闭代理。
+- `hot_sync_max_file_mb` — 单文件熔断阈值（默认 50MB），超过此大小的文件走 cold 路径。
+
+`cloud-claude` 会自动完成：向网关认证 → 等待容器就绪 → sshfs 将当前目录挂到容器内同名路径 → 在远端启动 Claude Code。终端大小、信号、退出码会透传；网络抖动 30s 内自动重连，输入缓冲不丢失。
 
 ### Claude Code（SSH 方式）
 
@@ -218,7 +247,7 @@ claude
 
 ### KasmVNC 远程桌面
 
-容器内置 KasmVNC + Chromium，可通过管理后台或用户面板直接访问浏览器桌面环境。
+容器内置 KasmVNC + Chromium，可通过管理后台直接访问浏览器桌面环境。
 
 ---
 
@@ -243,7 +272,7 @@ claude
 | **Control Plane** | Go API，认证、用户管理、任务编排、SSH 代理 |
 | **Host Agent** | 特权代理，管理 Docker 容器、网络命名空间和隧道 |
 | **用户容器** | Ubuntu 24.04，预装 OpenSSH + Claude Code + sshfs + KasmVNC + Chromium |
-| **cloud-claude** | Go CLI，透明替代本地 claude；本地目录经 sshfs 映射到容器内同名路径，可选命令本机代理 |
+| **cloud-claude** | Go CLI，透明替代本地 claude；本地目录经 sshfs 映射到容器内同名路径，支持 Auto/Full/SSHFS-Only 三层映射模式、tmux 多端会话、断线自动重连、doctor 五维度自检与错误码解释 |
 | **PostgreSQL** | 持久化用户、主机、出口 IP、任务和事件 |
 | **Admin SPA** | React 19 + TypeScript + Vite + Tailwind CSS |
 

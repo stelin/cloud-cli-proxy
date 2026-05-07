@@ -24,15 +24,18 @@ Out-of-the-box isolated cloud hosts for Claude Code and dev teams. Pre-installed
 ## Features
 
 - **One-command access** — `curl | bash` to authenticate, create container, and SSH in. Zero user config
-- **cloud-claude local CLI** — `alias claude=cloud-claude` to run remote Claude Code from your terminal; local cwd is sshfs-mounted at the **same path** in the container; optional local exec for commands like `git`
+- **cloud-claude local CLI** — `alias claude=cloud-claude` to run remote Claude Code from your terminal; local cwd is sshfs-mounted at the **same path** in the container; optional local exec for commands like `git`; supports Auto/Full/SSHFS-Only mount modes and oversized-file throttling
 - **Claude Code ready** — Pre-installed in every container. All API requests auto-routed through designated exit IP
 - **Full-tunnel egress** — sing-box tun + Linux netns full-tunnel, nftables default-deny, no DNS/WebRTC leaks
 - **Multi-protocol** — 6 proxy protocols (SOCKS5 / VMess / VLESS / Shadowsocks / Trojan / HTTP)
-- **Per-user isolation** — Dedicated Docker containers with KasmVNC remote desktop + Chromium
-- **Admin dashboard** — React SPA for users, hosts, egress IPs, events, and stats
-- **User self-service** — View host status, rebuild hosts, access VNC desktop
+- **Per-user isolation** — Dedicated Docker containers with KasmVNC remote desktop + Chromium browser
+- **Admin dashboard** — React SPA for users, hosts, egress IPs, events, and stats; supports host bind mounts
 - **Auto expiration** — Auto-stop containers and block login on expiry
 - **Multi-arch CI/CD** — GitHub Actions builds `linux/amd64` + `linux/arm64` images
+- **Self-explanatory error codes** — `cloud-claude explain <CODE>` for detailed description and remediation
+- **tmux multi-client sessions** — Multiple clients can attach the same tmux session; supports `--new-session` for isolation and `--take-over` to detach others
+- **Network resilience** — Built-in Reconnector auto-recovers within 30s on disconnect; buffered input survives reconnections
+- **doctor five-domain checks** — `cloud-claude doctor [network|auth|ssh|mount|disk]` with `--fix` for auto-repair
 
 ---
 
@@ -47,7 +50,7 @@ cd cloud-cli-proxy
 bash deploy/scripts/setup-env.sh
 
 # Recommended: prefer prebuilt images (latest)
-docker compose pull --policy always
+docker compose pull
 docker compose up -d
 
 curl http://127.0.0.1:8080/healthz
@@ -162,15 +165,41 @@ cloud-claude
 cloud-claude -p "refactor this function"
 ```
 
-**Optional:** verify remote timezone, locale, egress IP, FUSE, etc.:
+**Session management:** By default attaches the existing tmux session for the same account; disconnects do not lose the workspace:
 
 ```bash
-cloud-claude env check
+cloud-claude                  # default: attach existing session (multi-client)
+cloud-claude --new-session    # force a new isolated session
+cloud-claude --take-over      # take over the primary session and detach others
+
+cloud-claude sessions                  # list current tmux sessions
+cloud-claude sessions --attach 0       # attach a specific session
 ```
 
-**Optional:** set `proxy_commands` in `~/.cloud-claude/config.yaml` (list of command names to run on the host). Default is `git` only; use an empty list to disable.
+**Mount modes:** Auto mode picks the best strategy; you can also specify manually:
 
-`cloud-claude` does: gateway auth → wait for container → sshfs mount at the same path → start Claude Code remotely. Terminal size, signals, and exit codes are forwarded.
+```bash
+cloud-claude --mount-mode=auto         # default: HotSync preferred, falls back to SSHFS
+cloud-claude --mount-mode=full         # HotSync + SSHFS dual-track (full features)
+cloud-claude --mount-mode=sshfs-only   # SSHFS only (compatibility first)
+```
+
+**Self-checks and troubleshooting:**
+
+```bash
+cloud-claude doctor                    # full five-domain check (network / auth / ssh / mount / disk)
+cloud-claude doctor mount --fix        # mount-only check with auto-repair
+cloud-claude explain MOUNT_SSHFS_DISCONNECTED   # query error code details and remediation
+cloud-claude env check                 # verify remote timezone, locale, egress IP, FUSE, etc.
+```
+
+**Environment variables:**
+
+- `CLOUD_CLAUDE_NO_PROMOTION=1` — disable cold-file read promotion (enabled by default on Linux; skipped on macOS)
+- Set `proxy_commands` in `~/.cloud-claude/config.yaml` (list of command names to run on the host). Default is `git` only; use an empty list to disable.
+- `hot_sync_max_file_mb` — per-file throttling threshold (default 50MB); files larger than this fall back to the cold path.
+
+`cloud-claude` does: gateway auth → wait for container → sshfs mount at the same path → start Claude Code remotely. Terminal size, signals, and exit codes are forwarded; network jitters auto-recover within 30s with buffered input surviving reconnections.
 
 ### Claude Code (via SSH)
 
@@ -184,7 +213,7 @@ All Claude API requests are automatically routed through the designated exit IP.
 
 ### KasmVNC Remote Desktop
 
-Containers include KasmVNC + Chromium. Access the browser desktop via admin or user panel.
+Containers include KasmVNC + Chromium. Access the browser desktop via the admin dashboard.
 
 ---
 
@@ -209,7 +238,7 @@ User ──cloud-claude──> auth + SSH + sshfs ──────────
 | **Control Plane** | Go API — auth, user management, task orchestration, SSH proxy |
 | **Host Agent** | Privileged agent — Docker containers, network namespaces, tunnels |
 | **User Container** | Ubuntu 24.04 — OpenSSH + Claude Code + sshfs + KasmVNC + Chromium |
-| **cloud-claude** | Go CLI — transparent `claude`; sshfs same-path mount; optional local command proxy |
+| **cloud-claude** | Go CLI — transparent `claude`; sshfs same-path mount; supports Auto/Full/SSHFS-Only mount modes, tmux multi-client sessions, auto-reconnect, doctor five-domain checks, and error code explanations |
 | **PostgreSQL** | Persists users, hosts, egress IPs, tasks, and events |
 | **Admin SPA** | React 19 + TypeScript + Vite + Tailwind CSS |
 

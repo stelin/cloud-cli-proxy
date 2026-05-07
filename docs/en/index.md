@@ -31,8 +31,17 @@ features:
     details: Egress IPs support 6 proxy protocols — SOCKS5, VMess, VLESS, Shadowsocks, Trojan, HTTP
   - icon: 🖥️
     title: Remote Desktop
-    details: Built-in KasmVNC + Chromium browser desktop, accessible via admin or user panel
+    details: Built-in KasmVNC + Chromium browser desktop, accessible via the admin dashboard
   - icon: 📊
     title: Admin Dashboard
     details: React SPA for users, hosts, egress IPs, event logs, proxy testing — all in one place
+  - icon: 🔧
+    title: Doctor Five-domain Checks
+    details: cloud-claude doctor covers network / auth / ssh / mount / disk with --fix auto-repair for common issues
+  - icon: 🔄
+    title: Network Resilience
+    details: Built-in Reconnector auto-recovers within 30s on disconnect; buffered input survives; multi-client tmux sessions
+  - icon: 📋
+    title: Self-explanatory Error Codes
+    details: cloud-claude explain <CODE> for detailed description and remediation of any error code
 ---

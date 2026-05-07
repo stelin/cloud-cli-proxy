@@ -42,3 +42,35 @@ sudo apparmor_parser -r /etc/apparmor.d/fusermount3
 ### 参考
 
 - 覆盖路径必须为 **`/etc/apparmor.d/local/fusermount3`**（不是 `docker-default`）。
+
+## 部署脚本
+
+### setup-env.sh — 环境初始化
+
+`deploy/scripts/setup-env.sh` 交互式生成所有密码和密钥，支持：
+
+- 内置 Docker PostgreSQL（零配置，推荐）
+- 外部 PostgreSQL（手动填入连接信息）
+
+两种方案都会自动生成管理员密码（20 位）和 JWT 密钥（48 位）。脚本执行完毕后会显示管理员密码，请立即保存，仅显示一次。
+
+### host-preflight.sh — 宿主机预检
+
+`deploy/scripts/host-preflight.sh` 在部署前检查宿主机环境，包括：
+
+- Docker Engine 版本
+- 内核模块（tun、nftables 等）
+- AppArmor fusermount3 override（Ubuntu 25.04+）
+- 磁盘空间
+
+建议在首次部署前运行，确保环境满足要求。
+
+## v3.1+ 宿主机路径挂载
+
+创建主机时支持配置宿主机路径挂载（Host Bind Mounts），将宿主机的指定目录映射到容器内。挂载路径在创建主机时通过管理后台或 API 配置，支持目录联想功能。
+
+注意事项：
+
+- 挂载路径必须为绝对路径
+- 宿主机路径需要存在且可读
+- 容器内挂载点为 `/mnt/host/{name}`

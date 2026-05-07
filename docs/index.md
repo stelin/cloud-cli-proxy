@@ -31,8 +31,17 @@ features:
     details: 出口 IP 支持 6 种代理协议 — SOCKS5、VMess、VLESS、Shadowsocks、Trojan、HTTP
   - icon: 🖥️
     title: 远程桌面
-    details: 容器内置 KasmVNC + Chromium，可通过管理后台或用户面板直接访问浏览器桌面环境
+    details: 容器内置 KasmVNC + Chromium，可通过管理后台直接访问浏览器桌面环境
   - icon: 📊
     title: 管理后台
     details: React SPA 仪表盘，用户、主机、出口 IP、事件日志、代理测试一站式管理
+  - icon: 🔧
+    title: doctor 五维度自检
+    details: cloud-claude doctor 覆盖 network / auth / ssh / mount / disk 五维度，带 --fix 自动修复常见故障
+  - icon: 🔄
+    title: 网络抖动自动恢复
+    details: 内置 Reconnector，30s 内断线自动重连，输入缓冲不丢失，多端 tmux 会话共享
+  - icon: 📋
+    title: 错误码自解释系统
+    details: cloud-claude explain <CODE> 查询任何错误码的详细说明与修复建议，降低排障门槛
 ---

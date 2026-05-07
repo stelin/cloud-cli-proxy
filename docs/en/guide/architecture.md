@@ -55,6 +55,17 @@ Managed image based on Ubuntu 24.04, created with `--network=none` for complete 
 - sing-box — Proxy mode tunnel client
 - Common dev tools — Git, tmux, zsh, Node.js, etc.
 
+### cloud-claude CLI
+
+Go CLI installed on the user's laptop, acting as a transparent bridge between the local terminal and the remote container:
+
+- **Local transparent proxy** — `alias claude=cloud-claude`, run remote Claude Code directly from the local terminal
+- **Three-layer file mapping** — Auto (HotSync preferred, falls back to SSHFS) / Full (dual-track) / SSHFS-Only (compatibility)
+- **tmux session management** — Multi-client attach to the same session; supports `--new-session` for isolation and `--take-over` to detach others
+- **Network resilience** — Reconnector with 1/2/4/8/30s backoff; BufferedStdin preserves input across reconnections
+- **Self-checks** — `doctor` five-domain checks + `--fix` auto-repair; `explain` error code lookup
+- **Command proxy** — `proxy_commands` forwards commands like `git` to the local machine
+
 ### PostgreSQL
 
 Persists all system state:
@@ -152,6 +163,19 @@ User → curl /entry/{shortId} → Get entry script
      → ssh -p 2222 → Connect via SSH proxy
 ```
 
+### cloud-claude Local CLI Access Flow
+
+```
+User → cloud-claude init → Write ~/.cloud-claude/config.yaml (gateway / Short ID / password)
+     → cd project dir → cloud-claude
+     → POST /v1/entry/{shortId}/auth → Authenticate + get SSH params
+     → sshfs mounts local CWD at the same path in container (Auto/Full/SSHFS-Only)
+     → Detect tmux session → attach existing or create new
+     → Start Claude Code remotely
+     → Terminal size, signals, exit codes forwarded
+     → Network jitter → Reconnector auto-recovers (buffered input replay)
+```
+
 ### Host Startup Task Flow
 
 ```
@@ -178,6 +202,7 @@ Control plane creates task → host-agent receives
 ```
 cloud-cli-proxy/
 ├── cmd/
+│   ├── cloud-claude/           # cloud-claude local CLI entrypoint
 │   ├── control-plane/          # Control plane API entrypoint
 │   └── host-agent/             # Host agent entrypoint
 ├── internal/
@@ -211,7 +236,7 @@ cloud-cli-proxy/
 
 | Layer | Technology |
 |-------|-----------|
-| Backend | Go 1.26, net/http stdlib, pgx v5 |
+| Backend | Go 1.25.7, net/http stdlib, pgx v5 |
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS, TanStack Router/Query |
 | Database | PostgreSQL 18 |
 | Containers | Docker Engine 28, Ubuntu 24.04 user image |

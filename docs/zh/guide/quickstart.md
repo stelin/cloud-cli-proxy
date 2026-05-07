@@ -64,11 +64,11 @@ bash deploy/scripts/setup-env.sh
 
 ```bash
 # 内置 Docker PostgreSQL
-docker compose pull --policy always
+docker compose pull
 docker compose up -d
 
 # 外部 PostgreSQL（跳过内置数据库）
-docker compose pull --policy always control-plane admin
+docker compose pull control-plane admin
 docker compose up -d control-plane admin
 ```
 
@@ -280,15 +280,41 @@ cloud-claude                # 或 claude
 cloud-claude -p "帮我重构这个函数"
 ```
 
-**可选：** 检查远端时区、语言、出口 IP、FUSE、工具链等：
+**会话管理：** 默认 attach 同一账号的已有 tmux 会话，断线不丢失工作区：
 
 ```bash
-cloud-claude env check
+cloud-claude                  # 默认：attach 已有会话（多端共享）
+cloud-claude --new-session    # 强制新建独立会话
+cloud-claude --take-over      # 接管主会话并踢掉其他客户端
+
+cloud-claude sessions                  # 列出当前 tmux 会话
+cloud-claude sessions --attach 0       # 接管指定会话
 ```
 
-**可选：** 在 `~/.cloud-claude/config.yaml` 中设置 `proxy_commands`（字符串列表），指定在**本机**执行的命令名；默认仅 `git`；设为空数组 `[]` 可关闭代理。
+**映射模式：** 默认 Auto 模式自动选择最优挂载策略，也可手动指定：
 
-运行时 `cloud-claude` 会：1）向网关认证；2）等待容器就绪；3）sshfs 将当前目录挂到容器内**同名路径**；4）在远端启动 Claude Code。终端大小、信号、退出码会透传。
+```bash
+cloud-claude --mount-mode=auto         # 默认：优先 HotSync，失败降级 SSHFS
+cloud-claude --mount-mode=full         # HotSync + SSHFS 双轨（完整功能）
+cloud-claude --mount-mode=sshfs-only   # 纯 SSHFS（兼容性优先）
+```
+
+**自检与排障：**
+
+```bash
+cloud-claude doctor                    # 五维度全面自检（network / auth / ssh / mount / disk）
+cloud-claude doctor mount --fix        # 仅检查挂载维度，并自动修复常见故障
+cloud-claude explain MOUNT_SSHFS_DISCONNECTED   # 查询错误码详细说明与修复建议
+cloud-claude env check                 # 检查远端容器时区、语言、出口 IP、FUSE 等
+```
+
+**环境变量：**
+
+- `CLOUD_CLAUDE_NO_PROMOTION=1` — 禁用冷文件读触发晋升（Linux 默认启用，macOS 自动跳过）
+- 在 `~/.cloud-claude/config.yaml` 中设置 `proxy_commands`（字符串列表），指定在**本机**执行的命令名；默认仅 `git`；设为空数组 `[]` 可关闭代理。
+- `hot_sync_max_file_mb` — 单文件熔断阈值（默认 50MB），超过此大小的文件走 cold 路径。
+
+运行时 `cloud-claude` 会：1）向网关认证；2）等待容器就绪；3）sshfs 将当前目录挂到容器内**同名路径**；4）在远端启动 Claude Code。终端大小、信号、退出码会透传；网络抖动 30s 内自动重连，输入缓冲不丢失。
 
 **错误提示：**
 
@@ -338,7 +364,7 @@ claude
 
 ### 重建主机
 
-如果需要重置环境，可以在用户面板中点击"重建"按钮。重建会重新创建容器，但 home 目录数据会保留。
+如果需要重置环境，可以在管理后台中点击"重建"按钮。重建会重新创建容器，但 home 目录数据会保留。
 
 ## 在本机进行源码开发（从 clone 开始）
 
