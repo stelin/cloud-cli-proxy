@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v3.2
 milestone_name: 多形态容器接入
 status: unknown
-last_updated: "2026-05-07T13:07:50.528Z"
+last_updated: "2026-05-08T11:50:00.000Z"
 progress:
   total_phases: 7
   completed_phases: 7
-  total_plans: 24
-  completed_plans: 24
+  total_plans: 26
+  completed_plans: 26
 ---
 
 # Project State
@@ -18,17 +18,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-07 — v3.2 milestone started)
 
 **Core value:** 给每个用户提供一台开箱即用的 SSH 云主机，并且严格保证其所有出网流量都走受控的指定出口 IP
-**Current focus:** Phase 39 — 本地 Dev Containers 支持 (ready to plan)
+**Current focus:** Phase 40 — VS Code Remote-SSH E2E 验证 (plans complete, manual testing pending)
 
 ## Current Position
 
 Milestone: v3.2 多形态容器接入
-Phase: 38 of 41 (SSH Proxy 端口转发支持)
-Plan: 03 of 03 (sshd_config 验证 + forwarding 测试覆盖 — COMPLETE)
-Status: Executing Phase 38 — Plan 03 complete, Phase 38 COMPLETE
-Last activity: 2026-05-07 — Completed 038-03: sshd_config 端口转发配置验证 + 全部测试无回归
+Phase: 40 of 41 (VS Code Remote-SSH E2E 验证)
+Plan: 02 of 02 (E2E 验证执行 — template ready, manual testing pending)
+Status: Phase 40 plans complete — UAT script + checklist created, manual execution pending
+Last activity: 2026-05-08 — Completed 40-01 + 40-02: UAT script, manual checklist, verification report template
 
-Progress: [██░░░░░░░░] 23%
+Progress: [████████░░] 77%
 
 ## Performance Metrics
 
