@@ -160,7 +160,8 @@
   2. VS Code 端口转发（语言服务器、调试器）正常工作，容器内 `claude` 命令在 VS Code terminal 中可用
   3. 通过 VS Code 端口转发访问外部服务时，出口 IP 必须是绑定的 egress IP，不能绕过 tun 直接走宿主机路由
   4. VS Code Server 下载和扩展安装流量（`update.code.visualstudio.com` 等）全部通过 sing-box 出站，不破坏出口 IP 强约束
-**Plans**: TBD
+**Plans**: 1 plan
+- [ ] 44-01-PLAN.md — sshd_config 转发指令解析检查 + 3 个错误码 + 单元测试 + doctor ssh 维度注册（SSH-03）
 
 ### Phase 41: Doctor 扩展与收尾
 **Goal**: `cloud-claude doctor` 覆盖 Remote-SSH 场景的诊断，里程碑完成时所有验收标准满足
@@ -200,7 +201,8 @@
   3. 通过 VS Code 端口转发访问外部服务时，出口 IP 是绑定的 egress IP
   4. VS Code Server 下载和扩展安装流量通过 sing-box 出站
   5. 生成 Phase 40-VERIFICATION.md，SSH-05 / SEC-01 / SEC-02 标记 SATISFIED
-**Plans**: TBD
+**Plans**: 1 plan
+- [ ] 44-01-PLAN.md — sshd_config 转发指令解析检查 + 3 个错误码 + 单元测试 + doctor ssh 维度注册（SSH-03）
 
 ### Phase 44: doctor sshd_config 主动验证
 **Goal**: doctor remote-ssh 维度主动检查 sshd_config 中 `AllowTcpForwarding=yes`，消除最后一个集成缺口
@@ -211,7 +213,8 @@
   1. doctor remote-ssh 维度新增 sshd_config 解析检查
   2. 检测到 `AllowTcpForwarding` 缺失或为 `no` 时输出 warning
   3. 单元测试覆盖正常和异常 sshd_config 场景
-**Plans**: TBD
+**Plans**: 1 plan
+- [ ] 44-01-PLAN.md — sshd_config 转发指令解析检查 + 3 个错误码 + 单元测试 + doctor ssh 维度注册（SSH-03）
 
 ## Progress
 
