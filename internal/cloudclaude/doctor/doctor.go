@@ -255,7 +255,22 @@ func RunDoctor(ctx context.Context, opts Options) (*Report, error) {
 			func(c context.Context) Check { return checkContainerDisk(c, remoteRunner) }))
 	}
 
-	// 8) 聚合 Summary
+	// 8) remote-ssh 维度（Phase 41）
+	if want("remote-ssh") {
+		ensureRemote()
+		report.Checks = append(report.Checks, runWithTimeout(ctx, "remote-ssh", "vscode_server_process", timeout,
+			func(c context.Context) Check { return checkVSCodeServerProcess(c, remoteRunner) }))
+		report.Checks = append(report.Checks, runWithTimeout(ctx, "remote-ssh", "vscode_server_port", timeout,
+			func(c context.Context) Check { return checkVSCodeServerPort(c, remoteRunner) }))
+		report.Checks = append(report.Checks, runWithTimeout(ctx, "remote-ssh", "vscode_server_disk", timeout,
+			func(c context.Context) Check { return checkVSCodeServerDisk(c, remoteRunner) }))
+		report.Checks = append(report.Checks, runWithTimeout(ctx, "remote-ssh", "forwarding_socket", timeout,
+			func(c context.Context) Check { return checkForwardingSocket(c, remoteRunner) }))
+		report.Checks = append(report.Checks, runWithTimeout(ctx, "remote-ssh", "forwarding_blocked", timeout,
+			func(c context.Context) Check { return checkForwardingBlocked(c, remoteRunner) }))
+	}
+
+	// 9) 聚合 Summary
 	for _, c := range report.Checks {
 		report.Summary.Total++
 		switch c.Status {

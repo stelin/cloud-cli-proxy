@@ -24,12 +24,13 @@ const (
 func newDoctorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor [domain]",
-		Short: "cloud-claude 五维度自检（network/auth/ssh/mount/disk）",
+		Short: "cloud-claude 六维度自检（network/auth/ssh/mount/disk/remote-ssh）",
 		Long: "运行 cloud-claude doctor 检测当前环境健康度，每项输出 [符号] + 中文原因 + 建议 + 错误码。\n" +
 			"支持 --fix 自动修复（Plan 03 落实）、--json 脚本消费、--verbose 详细日志、--yes 跳过交互确认。\n" +
+			"维度：network / auth / ssh / mount / disk / remote-ssh / all。\n" +
 			"退出码：0 全部通过 / 1 含 warn 无 fail / 2 含 fail（与 brew doctor 对齐）。",
 		Args:          cobra.MaximumNArgs(1),
-		ValidArgs:     []string{"network", "auth", "ssh", "mount", "disk", "all"},
+		ValidArgs:     []string{"network", "auth", "ssh", "mount", "disk", "remote-ssh", "all"},
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE:          runDoctor,
