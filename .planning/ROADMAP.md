@@ -9,7 +9,7 @@
 - ✅ **v2.0 cloud-claude 透明远程 CLI** — Phases 24-28 (shipped 2026-04-15) — [Archive](milestones/v2.0-ROADMAP.md)
 - ✅ **v3.0 远端开发体验升级** — Phases 29-35 (shipped 2026-04-23) — [Archive](milestones/v3.0-ROADMAP.md)
 - ✅ **v3.1 映射语义补齐与懒加载** — Phases 36-37 (shipped 2026-04-24) — [Archive](milestones/v3.1-ROADMAP.md)
-- 🚧 **v3.2 多形态容器接入** — Phases 38-41 (in progress)
+- ✅ **v3.2 多形态容器接入** — Phases 38-44 (shipped 2026-05-08) — [Archive](milestones/v3.2-ROADMAP.md)
 
 ## Phases
 
@@ -106,138 +106,36 @@
 
 </details>
 
-### 🚧 v3.2 多形态容器接入 (In Progress)
+<details>
+<summary>✅ v3.2 多形态容器接入 (Phases 38-44) — SHIPPED 2026-05-08</summary>
 
-**Milestone Goal:** 扩展容器接入方式，让 Cloud 版支持 VS Code Remote SSH，让本地版支持 VS Code Dev Containers，同时研究两套产品形态的最佳拆分/复用边界。
+- [x] Phase 38: SSH Proxy 端口转发支持 (3/3 plans) — completed 2026-05-07
+- [x] Phase 39: 本地 Dev Containers 支持 (3/3 plans) — completed 2026-05-07
+- [x] Phase 40: VS Code Remote-SSH E2E 验证 (2/2 plans) — completed 2026-05-08
+- [x] Phase 41: Doctor 扩展与收尾 (2/2 plans) — completed 2026-05-08
+- [x] Phase 42: Phase 39 验证补齐 (1/1 plan, gap closure) — completed 2026-05-08
+- [x] Phase 43: VS Code 端口转发 E2E 补齐 (2/2 plans, gap closure) — completed 2026-05-08
+- [x] Phase 44: doctor sshd_config 验证 (1/1 plan, gap closure) — completed 2026-05-08
 
-- [x] **Phase 38: SSH Proxy 端口转发支持** — 3/3 plans complete: direct-tcpip + 安全校验 + tcpip-forward/forwarded-tcpip 透传 + sshd_config 验证 — completed 2026-05-07
-- [x] **Phase 39: 本地 Dev Containers 支持** — cloud-claude local 子命令 + devcontainer.json + entrypoint MODE 分支 + local down/status (completed 2026-05-07)
-- [x] **Phase 40: VS Code Remote-SSH E2E 验证** — VS Code 端到端连接验证 + 安全流量校验 (completed 2026-05-08)
-- [x] **Phase 41: Doctor 扩展与收尾** — doctor remote-ssh 诊断维度 + 里程碑收尾 (completed 2026-05-08)
-- [x] **Phase 42: Phase 39 验证补齐** — 为 LOCAL-01~04、UX-02 补充 VERIFICATION.md（gap closure）(completed 2026-05-08)
-- [x] **Phase 43: VS Code Remote-SSH 端口转发 E2E 补齐** — 端口转发 + egress + 安全验证 + VERIFICATION.md（gap closure） (completed 2026-05-08)
-- [x] **Phase 44: doctor sshd_config 主动验证** — 1/1 plan complete: sshd 转发指令解析检查 + 3 个错误码 + 13 个单元测试 — completed 2026-05-08
+11 项人工验证 deferred-to-ship（Phase 38 x3 / Phase 39 x5 / Phase 43 x3），跟踪在 `milestones/v3.2-MILESTONE-AUDIT.md`。
 
-## Phase Details
-
-### Phase 38: SSH Proxy 端口转发支持
-**Goal**: Cloud 版 managed-user 容器支持 VS Code Remote SSH 所需的端口转发能力，同时保证转发目标的安全性
-**Depends on**: Phase 37 (v3.1 shipped)
-**Requirements**: SSH-01, SSH-02, SSH-03, SSH-04
-**Success Criteria** (what must be TRUE):
-  1. VS Code 可以通过 SSH Proxy 的 2222 端口建立 `direct-tcpip` channel 转发到容器内任意端口
-  2. 远程端口转发 (`tcpip-forward` / `forwarded-tcpip`) 在同一 SSH 连接上正常工作
-  3. 容器内 sshd 显式开启 `AllowTcpForwarding yes` 和 `AllowStreamLocalForwarding yes`，同时 `GatewayPorts no` 防止外部暴露
-  4. 转发到管理网段 (10.99.x.x)、Docker socket、metadata 端点的请求被明确拒绝并记录
-  5. 同一 SSH 连接支持多个并发 forwarding channel 而不互相干扰
-**Plans**: 3 plans
-- [x] 038-01-PLAN.md — direct-tcpip channel 转发 + 安全校验（SSH-01, SSH-04） — completed 2026-05-07
-- [x] 038-02-PLAN.md — tcpip-forward 全局请求透传 + forwarded-tcpip 回传（SSH-02） — completed 2026-05-07
-- [x] 038-03-PLAN.md — sshd_config 验证 + forwarding 集成测试补充（SSH-03） — completed 2026-05-07
-
-### Phase 39: 本地 Dev Containers 支持
-**Goal**: 用户可以在本地机器上通过 `cloud-claude local` 一键启动独立容器，支持 VS Code Dev Containers 工作流，无需连接 control-plane
-**Depends on**: Phase 38
-**Requirements**: LOCAL-01, LOCAL-02, LOCAL-03, LOCAL-04, UX-02
-**Success Criteria** (what must be TRUE):
-  1. 用户运行 `cloud-claude local` 后，本地直接启动 managed-user 容器并输出 SSH 连接信息（host, port, user, password）
-  2. 项目根目录的 `.devcontainer/devcontainer.json` 可以引用 managed-user 镜像并正确 bind mount 当前目录到 `/workspace`
-  3. 本地容器 entrypoint 在 `MODE=local` 下跳过 KasmVNC 和 control-plane 心跳，但仍启动 sshd 和 sing-box
-  4. 用户可以通过 `--egress-config` 注入 sing-box outbound JSON，容器内自动启动 tun 模式；macOS 宿主机上支持 SOCKS/HTTP 代理兜底
-  5. `cloud-claude local down` 可以停止并清理本地容器，`cloud-claude local status` 显示容器运行状态和端口映射
-**Plans**: 3 plans
-- [x] 039-01-PLAN.md — CLI local up 子命令 + internal/local 包 + entrypoint MODE=local（LOCAL-01, LOCAL-04） — completed 2026-05-07
-- [x] 039-02-PLAN.md — local down/status 子命令 + --egress-config 注入（UX-02, LOCAL-03） — completed 2026-05-07
-- [x] 039-03-PLAN.md — devcontainer.json 更新 + sing-box 启动逻辑（LOCAL-02, LOCAL-03） — completed 2026-05-07
-**UI hint**: yes
-
-### Phase 40: VS Code Remote-SSH E2E 验证
-**Goal**: VS Code Remote-SSH 可以完整连接到 Cloud 版容器，所有功能正常工作，且流量严格走 sing-box tun 出口
-**Depends on**: Phase 39
-**Requirements**: SSH-05, SEC-01, SEC-02
-**Success Criteria** (what must be TRUE):
-  1. VS Code 通过 SSH Proxy 2222 端口成功连接，VS Code Server 在容器内自动下载并启动
-  2. VS Code 端口转发（语言服务器、调试器）正常工作，容器内 `claude` 命令在 VS Code terminal 中可用
-  3. 通过 VS Code 端口转发访问外部服务时，出口 IP 必须是绑定的 egress IP，不能绕过 tun 直接走宿主机路由
-  4. VS Code Server 下载和扩展安装流量（`update.code.visualstudio.com` 等）全部通过 sing-box 出站，不破坏出口 IP 强约束
-**Plans**: 1 plan
-- [x] 44-01-PLAN.md — sshd_config 转发指令解析检查 + 3 个错误码 + 单元测试 + doctor ssh 维度注册（SSH-03） — completed 2026-05-08
-
-### Phase 41: Doctor 扩展与收尾
-**Goal**: `cloud-claude doctor` 覆盖 Remote-SSH 场景的诊断，里程碑完成时所有验收标准满足
-**Depends on**: Phase 40
-**Requirements**: UX-01
-**Success Criteria** (what must be TRUE):
-  1. `cloud-claude doctor` 新增 remote-ssh 维度，能检测 VS Code Server 进程是否存在
-  2. doctor 能检测 `~/.vscode-server/` 磁盘占用并给出清理建议
-  3. doctor 能检测 forwarding channel 是否被拦截或异常
-  4. v3.2 所有需求对应的错误码已注册，explain 子命令覆盖新增场景
-**Plans**: 2 plans
-- [x] 41-01-PLAN.md — remote-ssh doctor 维度 + 5 项检查 — completed 2026-05-08
-- [x] 41-02-PLAN.md — error codes + explain 覆盖 + 单元测试 — completed 2026-05-08
-
-### Phase 42: Phase 39 验证补齐
-**Goal**: 为 Phase 39 本地 Dev Containers 的 5 个需求补充正式 VERIFICATION.md，消除 unverified phase blocker
-**Depends on**: Phase 41
-**Requirements**: LOCAL-01, LOCAL-02, LOCAL-03, LOCAL-04, UX-02
-**Gap Closure:** Closes Phase 39 verification gaps from v3.2 audit
-**Success Criteria** (what must be TRUE):
-  1. `cloud-claude local up` 一键启动容器并输出 SSH 连接信息，功能正确
-  2. `cloud-claude local down` / `local status` 功能正确
-  3. entrypoint `MODE=local` 跳过 KasmVNC、保留 sshd + sing-box
-  4. `--egress-config` 注入 tun 和 proxy 模式均工作正常
-  5. 生成 Phase 39-VERIFICATION.md，所有 5 个需求标记 SATISFIED
-**Plans**: 1 plan
-- [x] 42-01-PLAN.md — 运行自动化验证 + 生成 39-VERIFICATION.md + Docker 集成确认 — completed 2026-05-08
-
-### Phase 43: VS Code Remote-SSH 端口转发 E2E 补齐
-**Goal**: 完成 VS Code Remote-SSH 端口转发 + egress 流量的端到端验证，生成标准 VERIFICATION.md
-**Depends on**: Phase 42
-**Requirements**: SSH-05, SEC-01, SEC-02
-**Gap Closure:** Closes Phase 40 verification gaps, integration gap (UAT 端口转发), and flow gap (VS Code 端口转发 E2E)
-**Success Criteria** (what must be TRUE):
-  1. UAT 脚本包含 direct-tcpip / tcpip-forward 端口转发验证场景
-  2. VS Code 端口转发（语言服务器端口）通过 direct-tcpip channel 正常工作
-  3. 通过 VS Code 端口转发访问外部服务时，出口 IP 是绑定的 egress IP
-  4. VS Code Server 下载和扩展安装流量通过 sing-box 出站
-  5. 生成 Phase 40-VERIFICATION.md，SSH-05 / SEC-01 / SEC-02 标记 SATISFIED
-**Plans**: 1 plan
-- [x] 44-01-PLAN.md — sshd_config 转发指令解析检查 + 3 个错误码 + 单元测试 + doctor ssh 维度注册（SSH-03） — completed 2026-05-08
-
-### Phase 44: doctor sshd_config 主动验证
-**Goal**: doctor remote-ssh 维度主动检查 sshd_config 中 `AllowTcpForwarding=yes`，消除最后一个集成缺口
-**Depends on**: Phase 43
-**Requirements**: SSH-03（集成缺口）
-**Gap Closure:** Closes integration gap (doctor → sshd_config)
-**Success Criteria** (what must be TRUE):
-  1. doctor remote-ssh 维度新增 sshd_config 解析检查
-  2. 检测到 `AllowTcpForwarding` 缺失或为 `no` 时输出 warning
-  3. 单元测试覆盖正常和异常 sshd_config 场景
-**Plans**: 1 plan
-- [x] 44-01-PLAN.md — sshd_config 转发指令解析检查 + 3 个错误码 + 单元测试 + doctor ssh 维度注册（SSH-03） — completed 2026-05-08
+</details>
 
 ## Progress
 
-**Execution Order:**
-Phases execute in numeric order: 38 → 39 → 40 → 41
+**Next milestone:** TBD — 运行 `/gsd:new-milestone` 规划下一里程碑
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1-6. v1.0 MVP | v1.0 | 19/19 | Complete | 2026-03-28 |
 | 7-10. v1.1 代理协议出网 | v1.1 | 11/11 | Complete | 2026-03-28 |
 | 11-12. v1.2 认证与自助面板 | v1.2 | 5/5 | Partial | 2026-03-29 |
-| 17-23. claude-shell 本地代理 | v1.3 | — | Paused | — |
+| 17-23. claude-shell 本地代理 | v1.3 | — | Archived | — |
 | 24-28. v2.0 cloud-claude | v2.0 | 7/7 | Complete | 2026-04-15 |
 | 29-35. v3.0 远端开发体验升级 | v3.0 | 30/30 | Complete | 2026-04-23 |
 | 36-37. v3.1 映射语义补齐与懒加载 | v3.1 | 11/11 | Complete | 2026-04-24 |
-| 38. SSH Proxy 端口转发支持 | v3.2 | 3/3 | Complete | 2026-05-07 |
-| 39. 本地 Dev Containers 支持 | v3.2 | Complete    | 2026-05-07 | — |
-| 40. VS Code Remote-SSH E2E 验证 | v3.2 | 2/2 | Complete | 2026-05-08 |
-| 41. Doctor 扩展与收尾 | v3.2 | 2/2 | Complete | 2026-05-08 |
-| 42. Phase 39 验证补齐 | v3.2 | Complete    | 2026-05-08 | 2026-05-08 |
-| 43. VS Code 端口转发 E2E 补齐 | v3.2 | 2/2 | Complete    | 2026-05-08 |
-| 44. doctor sshd_config 验证 | v3.2 | 1/1 | Complete | 2026-05-08 |
+| 38-44. v3.2 多形态容器接入 | v3.2 | 14/14 | Complete | 2026-05-08 |
 
 ---
 
-*Last updated: 2026-05-08 — Phase 44 Plan 01 complete.*
+*Last updated: 2026-05-08 — v3.2 milestone shipped (tag v3.4.0). All 14 plans complete.*

@@ -305,6 +305,55 @@
 
 ---
 
+## Milestone: v3.2 — 多形态容器接入
+
+**Shipped:** 2026-05-08 (tag v3.4.0)
+**Phases:** 7 (含 3 gap closure) | **Plans:** 14 | **Timeline:** 2 days (2026-05-07 → 2026-05-08)
+
+### What Was Built
+
+- SSH Proxy 端口转发：direct-tcpip + tcpip-forward/forwarded-tcpip 全通道，管理网段/Docker socket/metadata 安全拦截
+- `cloud-claude local up/down/status`：本地 Dev Containers 支持 + entrypoint `MODE=local` + sing-box tun/proxy 出网
+- VS Code Remote-SSH E2E 验证：端到端连接 + 端口转发 + 出口 IP 强约束
+- Doctor remote-ssh 维度：5 项检查 + 6 个新错误码 + 20 个单元测试
+- doctor sshd_config 主动验证：parseSSHDForwarding + 3 个错误码 + 13 个单元测试
+
+### What Worked
+
+- **审计驱动的 gap closure 链**：第一轮审计发现 3 个缺口 → Phase 42/43/44 精准补齐 → 第二轮审计全通过。闭环效率高。
+- **纯函数设计 `isForbiddenTarget`**：不依赖 Server 结构体，单测覆盖率高
+- **`ssh.Conn` 接口抽象**：`handleGlobalRequests` 保持通用性，测试用 server-side conn 验证
+- **Phase 38 预 dial 架构**：共享 targetClient 避免 per-channel dial，与 forwarded-tcpip API 契合
+- **entrypoint MODE 分支复用**：`MODE=local` 跳过特定栈但复用 sshd + sing-box，实现简洁
+
+### What Was Inefficient
+
+- **Phase 39 无独立 VERIFICATION.md**：实现时未同步生成验证文件，审计时发现需要 Phase 42 补齐
+- **Phase 40 UAT 脚本不完整**：首版只有 6 个场景，缺少端口转发验证，Phase 43 补到 9 个
+- **UX-01 REQUIREMENTS.md 勾选遗漏**：审计时发现 UX-01 行仍为 `[ ]`，traceability 表已 Complete 但正文未同步
+
+### Patterns Established
+
+- **审计 → gap closure → 再审计**三步闭环：里程碑审计发现问题后，立即创建 gap closure phase 精准修复，修复后再跑一轮审计确认。
+- **VERIFICATION.md 应在实现阶段同步生成**：不应等到审计时才发现缺失
+- **UAT 脚本按"场景数"增长**：功能扩展时 UAT 场景应同步增加（6→9）
+
+### Key Lessons
+
+1. Phase 实现时就生成 VERIFICATION.md，不要推到 gap closure 阶段
+2. UAT 脚本首版应覆盖所有已知场景类型（端口转发是 v3.2 核心，不应遗漏）
+3. REQUIREMENTS.md 正文和 traceability 表应自动同步校验
+4. `ssh.Conn` 接口比 `*ssh.Client` 更适合测试和抽象层次
+
+### Cost Observations
+
+- **Model mix**: balanced profile
+- **Sessions**: 约 5-7 次会话完成 7 个 phase（Phase 38: ~3 次，其余各 ~1 次）
+- **Notable**: 最高效的里程碑之一（2 天 14 plans），得益于 Phase 38 架构清晰 + gap closure 精准
+- **Code growth**: +8,599 Go LOC（40,702 vs 32,103），主要是 SSH 端口转发 + local 子命令 + doctor checks + 测试
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -316,6 +365,7 @@
 | v2.0 | 1 day | 5 | 7 | 最高效里程碑 — 平均每个计划 2.1 分钟，复用现有基础设施 |
 | v3.0 | 5 days | 8 (含 1 hotfix) | 30 | Critical Pitfalls 前置 + Gap-closure + post-fix + integration-checker |
 | v3.1 | ~1 day active | 2 | 11 | 纯配置/参数级改动 + 并发引擎 + e2e UAT；effective accessor 兜底模式 |
+| v3.2 | 2 days | 7 (含 3 gap) | 14 | 审计驱动 gap closure 闭环；SSH 端口转发 + 本地 Dev Containers |
 
 ### Cumulative Quality
 
@@ -326,6 +376,7 @@
 | v2.0 | 76+ | ~28,877 | 7 | ~2.1 min |
 | v3.0 | 200+ | ~45,766 | 30 | ~10-30 min |
 | v3.1 | 230+ | ~48,953 | 11 | ~5-15 min |
+| v3.2 | 263+ | ~43,300 | 14 | ~2-10 min |
 
 ### Top Lessons (Verified Across Milestones)
 
@@ -343,3 +394,5 @@
 12. **`effective*()` accessor 兜底防止零值静默关闭功能（v3.1 新）** — MountConfig / Config 层统一模式
 13. **plan 中代码示例需编译期验证（v3.1 新）** — 4 个 auto-fix 说明 plan-checker 应增加可编译性检查
 14. **macOS stub + Linux 真实实现的双平台分离（v3.1 新）** — 开发不阻塞，真机验证留到目标平台
+15. **审计→gap closure→再审计 三步闭环（v3.2 新）** — 精准修复比一次性修补更可靠，gap closure phase 应即开即关
+16. **VERIFICATION.md 应在实现阶段同步生成（v3.2 新）** — 推到审计阶段补齐会多浪费一个 gap closure phase

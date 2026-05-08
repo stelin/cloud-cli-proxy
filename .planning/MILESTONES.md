@@ -1,5 +1,42 @@
 # Milestones
 
+## v3.2 多形态容器接入 (Shipped: 2026-05-08)
+
+**Phases completed:** 7 phases (38-44, 含 3 gap closure), 14 plans
+**Git range:** 61 commits, 84 files (+12,724/-968 lines)
+**Timeline:** 2026-05-07 → 2026-05-08 (2 days)
+**Codebase LOC:** Go 40,702 + Shell 2,594 ≈ 43,300+
+
+**Key accomplishments:**
+
+- SSH Proxy 端口转发：direct-tcpip channel dispatch + tcpip-forward/forwarded-tcpip 全局请求透传 + 管理网段/Docker socket/metadata 安全拦截 + sshd_config 验证
+- 本地 Dev Containers：`cloud-claude local up/down/status` cobra 子命令组 + `internal/local` 包 + entrypoint `MODE=local` + sing-box tun/proxy 双模式出网 + `--egress-config` 注入 + devcontainer.json 模板
+- VS Code Remote-SSH E2E：端到端连接 + 端口转发 + 出口 IP 强约束验证（6→9 场景 UAT 脚本）
+- Doctor remote-ssh 维度：5 项检查（VS Code Server 进程 / vscode-server 磁盘占用 / forwarding channel / sshd 进程 / sing-box 进程）+ 6 个新错误码 + 20 个单元测试
+- doctor sshd_config 主动验证：parseSSHDForwarding + checkSSHDForwarding + 3 个错误码（SSH_SSHD_FORWARDING_DISABLED / SSH_SSHD_STREAM_FORWARDING_DISABLED / SSH_SSHD_GATEWAY_PORTS_OPEN）+ 13 个单元测试
+- Gap closure 链：第一轮审计发现 3 个关键缺口 → Phase 42（39-VERIFICATION.md）+ Phase 43（端口转发 UAT 补齐 + 43-VERIFICATION.md）+ Phase 44（doctor sshd_config）→ 第二轮审计全部关闭
+
+**Coverage:**
+
+- Requirements: **13/13 satisfied** — SSH-01~05 + LOCAL-01~04 + SEC-01~02 + UX-01~02
+- Cross-phase integration: 13/13 WIRED（channel dispatch / 安全校验 / 全局请求 / MODE=local / egress 注入 / doctor / UAT）
+- E2E flows: 3/3 complete（SSH → VS Code → direct-tcpip → sing-box / local up → Dev Containers / doctor → remote-ssh + sshd）
+
+**Known deferred items at close:**
+
+- 11 项人工验证场景待 Docker 环境执行（Phase 38 x3 / Phase 39 x5 / Phase 43 x3）
+- v2 deferred requirements（SSH-06~08 / LOCAL-05~07 / UX-03）
+
+**Audit:** `.planning/milestones/v3.2-MILESTONE-AUDIT.md` (status: tech_debt — 0 blocker)
+**Tag:** v3.4.0
+**Archive:**
+
+- `.planning/milestones/v3.2-ROADMAP.md`
+- `.planning/milestones/v3.2-REQUIREMENTS.md`
+- `.planning/milestones/v3.2-MILESTONE-AUDIT.md`
+
+---
+
 ## v3.1 映射语义补齐与懒加载 (Shipped: 2026-04-30)
 
 **Phases completed:** 5 phases, 18 plans, 32 tasks
