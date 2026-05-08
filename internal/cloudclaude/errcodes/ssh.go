@@ -18,4 +18,25 @@ func init() {
 		Message:    "远端 sshd ClientAlive 配置 (%s) 与基线 (15/8) 不一致",
 		NextAction: "重建容器以恢复基线（参考 deploy/docker/managed-user/sshd_config）",
 	})
+
+	MustRegister(Entry{
+		Code:       SSH_SSHD_FORWARDING_DISABLED,
+		Severity:   SeverityWarn,
+		Message:    "远端 sshd AllowTcpForwarding 未开启（当前值: %s），端口转发功能不可用",
+		NextAction: "检查 deploy/docker/managed-user/sshd_config 并重建容器恢复基线",
+	})
+
+	MustRegister(Entry{
+		Code:       SSH_SSHD_STREAM_FORWARDING_DISABLED,
+		Severity:   SeverityWarn,
+		Message:    "远端 sshd AllowStreamLocalForwarding 未开启（当前值: %s），Unix socket 转发不可用",
+		NextAction: "检查 deploy/docker/managed-user/sshd_config 并重建容器恢复基线",
+	})
+
+	MustRegister(Entry{
+		Code:       SSH_SSHD_GATEWAY_PORTS_OPEN,
+		Severity:   SeverityWarn,
+		Message:    "远端 sshd GatewayPorts 非 no（当前值: %s），可能导致外部暴露",
+		NextAction: "将 GatewayPorts 改为 no 并重启 sshd，或重建容器",
+	})
 }

@@ -247,6 +247,24 @@ func init() {
 修复路径：重建容器以恢复基线（参考 deploy/docker/managed-user/sshd_config）；如果是定制场景，需保证客户端 keepalive_interval ≤ 服务端 ClientAliveInterval；运行 cloud-claude doctor 全栈诊断。
 关联文档：Phase 32 PITFALLS M11 / Phase 34 D-21`)
 
+	registerExplanation(SSH_SSHD_FORWARDING_DISABLED, `触发场景：cloud-claude doctor ssh 检查发现远端容器 sshd_config 中 AllowTcpForwarding 未设置为 yes（缺失或显式设为 no），导致 VS Code Remote SSH 的端口转发功能（direct-tcpip / tcpip-forward channel 类型）完全不可用。
+根本原因：AllowTcpForwarding 是 OpenSSH 服务端控制 TCP 端口转发（包括 VS Code 的语言服务器通信、调试器端口转发、SSH tunnel）的总开关。基线配置（deploy/docker/managed-user/sshd_config）要求 AllowTcpForwarding yes。该值被改为 no 的常见原因是管理员误操作或镜像版本未包含正确配置，导致 SSH 连接可以建立但 VS Code 的端口转发功能静默失效。
+复现方式：在容器内执行 sed -i 's/AllowTcpForwarding yes/AllowTcpForwarding no/' /etc/ssh/sshd_config && systemctl reload sshd，然后运行 cloud-claude doctor ssh 即可看到此警告。
+修复路径：检查 deploy/docker/managed-user/sshd_config 中 AllowTcpForwarding 应为 yes，重建容器以恢复基线配置；如果是自定义镜像，确保 Dockerfile 中 sshd_config 包含 AllowTcpForwarding yes；运行 cloud-claude doctor ssh 确认检查通过。
+关联文档：Phase 34 D-21 sshd 基线漂移检查；deploy/docker/managed-user/sshd_config 基线配置；VS Code Remote SSH 官方文档 Forwarding 章节`)
+
+	registerExplanation(SSH_SSHD_STREAM_FORWARDING_DISABLED, `触发场景：cloud-claude doctor ssh 检查发现远端容器 sshd_config 中 AllowStreamLocalForwarding 未设置为 yes（缺失或显式设为 no），导致 Unix domain socket 转发功能不可用。
+根本原因：AllowStreamLocalForwarding 控制 SSH 的 streamlocal（Unix domain socket）转发通道，VS Code Remote SSH 在建立转发连接时会创建 forwarding socket（如 /tmp/vscode-ssh-proxy.sock）。该指令缺失时 sshd 默认行为是不允许 stream local 转发，VS Code 的 socket 转发路径会被拒绝，但 TCP 端口转发不受影响，因此用户可能只在特定扩展（如远程容器中的 Docker 扩展）场景下遇到问题。
+复现方式：在容器内执行 sed -i 's/AllowStreamLocalForwarding yes/AllowStreamLocalForwarding no/' /etc/ssh/sshd_config && systemctl reload sshd，然后运行 cloud-claude doctor ssh 即可看到此警告。
+修复路径：检查 deploy/docker/managed-user/sshd_config 中 AllowStreamLocalForwarding 应为 yes，重建容器以恢复基线配置；如果确实不需要 socket 转发，可忽略此警告但需了解相关扩展功能会受限；运行 cloud-claude doctor ssh 确认检查通过。
+关联文档：Phase 34 D-21 sshd 基线漂移检查；deploy/docker/managed-user/sshd_config 基线配置；OpenSSH sshd_config(5) AllowStreamLocalForwarding 手册页`)
+
+	registerExplanation(SSH_SSHD_GATEWAY_PORTS_OPEN, `触发场景：cloud-claude doctor ssh 检查发现远端容器 sshd_config 中 GatewayPorts 未设置为 no（即值为 yes 或 clientspecified），导致远程端口转发（remote port forwarding）绑定到 0.0.0.0 而非仅 127.0.0.1，外部网络可直接访问容器内转发的端口。
+根本原因：GatewayPorts=yes 或 clientspecified 时，SSH 远程端口转发（ssh -R）会把转发端口绑定到所有网络接口而非仅 loopback。在容器安全模型中，这违反了网络隔离约束——外部流量可能通过该端口绕过 sing-box tun 全隧道到达容器内部服务。基线配置（deploy/docker/managed-user/sshd_config）要求 GatewayPorts no，确保远程转发仅绑定到 127.0.0.1。
+复现方式：在容器内执行 sed -i 's/GatewayPorts no/GatewayPorts yes/' /etc/ssh/sshd_config && systemctl reload sshd，然后运行 cloud-claude doctor ssh 即可看到此警告。
+修复路径：将 GatewayPorts 改为 no 并重启 sshd（systemctl reload sshd），或重建容器恢复基线配置；这是安全相关配置，建议优先处理而非忽略；运行 cloud-claude doctor ssh 确认检查通过。
+关联文档：Phase 34 D-21 sshd 基线漂移检查；deploy/docker/managed-user/sshd_config 基线配置；OpenSSH sshd_config(5) GatewayPorts 手册页；CLAUDE.md 网络安全约束`)
+
 	// ────────────────────────────────────────────────────────────────────
 	// AUTH_* 域（Phase 34 新增）
 	// ────────────────────────────────────────────────────────────────────

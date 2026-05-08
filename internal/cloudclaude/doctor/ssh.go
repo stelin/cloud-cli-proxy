@@ -60,6 +60,73 @@ func parseSSHDKeepalive(out string) (interval, count int) {
 	return
 }
 
+// parseSSHDForwarding 从 sshd -T 输出解析三个转发指令；缺失时返回空串。
+func parseSSHDForwarding(out string) (tcpForwarding, streamForwarding, gatewayPorts string) {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		// 用 TrimPrefix 从原始行中提取值；大小写混合时回退到 lowercase 做前缀匹配
+		trimVal := func(prefix, l, lo string) string {
+			if v, ok := strings.CutPrefix(l, prefix); ok {
+				return strings.TrimSpace(v)
+			}
+			if v, ok := strings.CutPrefix(lo, prefix); ok {
+				return strings.TrimSpace(v)
+			}
+			return ""
+		}
+		switch {
+		case strings.HasPrefix(lower, "allowtcpforwarding "):
+			tcpForwarding = trimVal("allowtcpforwarding ", line, lower)
+		case strings.HasPrefix(lower, "allowstreamlocalforwarding "):
+			streamForwarding = trimVal("allowstreamlocalforwarding ", line, lower)
+		case strings.HasPrefix(lower, "gatewayports "):
+			gatewayPorts = trimVal("gatewayports ", line, lower)
+		}
+	}
+	return
+}
+
+// checkSSHDForwarding 远端 sshd 转发指令检查。基线：AllowTcpForwarding=yes, AllowStreamLocalForwarding=yes, GatewayPorts=no。
+func checkSSHDForwarding(ctx context.Context, runner RemoteRunner) Check {
+	if runner == nil {
+		return newSkip("ssh", "sshd_forwarding", "未能连接远端容器，跳过")
+	}
+	stdout, _, err := runner.RunScript("sshd_forwarding",
+		"sshd -T 2>/dev/null | grep -E '^(allowtcpforwarding|allowstreamlocalforwarding|gatewayports)\\b' || true")
+	if err != nil {
+		// runner 错误时，假设第一个指令有问题（与基线不一致）
+		return newWarn("ssh", "sshd_forwarding_disabled", errcodes.SSH_SSHD_FORWARDING_DISABLED, "sshd -T 失败: "+err.Error())
+	}
+	tcp, stream, gw := parseSSHDForwarding(stdout)
+
+	if tcp != "yes" {
+		actual := tcp
+		if actual == "" {
+			actual = "(缺失)"
+		}
+		return newWarn("ssh", "sshd_forwarding_disabled", errcodes.SSH_SSHD_FORWARDING_DISABLED, actual)
+	}
+	if stream != "yes" {
+		actual := stream
+		if actual == "" {
+			actual = "(缺失)"
+		}
+		return newWarn("ssh", "sshd_stream_forwarding_disabled", errcodes.SSH_SSHD_STREAM_FORWARDING_DISABLED, actual)
+	}
+	if gw != "no" {
+		actual := gw
+		if actual == "" {
+			actual = "(缺失)"
+		}
+		return newWarn("ssh", "sshd_gateway_ports_open", errcodes.SSH_SSHD_GATEWAY_PORTS_OPEN, actual)
+	}
+	return newPass("ssh", "sshd_forwarding", "AllowTcpForwarding=yes AllowStreamLocalForwarding=yes GatewayPorts=no")
+}
+
 // checkKnownHosts 本地读 ~/.ssh/known_hosts（RESEARCH §3.3 gotcha：HASHED hostname，
 // 用 knownhosts.New HostKeyCallback）。本 plan 简化：
 //   - ~/.ssh/known_hosts 不存在 → Skip
