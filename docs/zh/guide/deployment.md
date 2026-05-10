@@ -132,7 +132,7 @@ go build -o /opt/cloud-cli-proxy/bin/host-agent ./cmd/host-agent
 bash deploy/docker/managed-user/build-managed-image.sh
 
 # 管理后台前端（可选）
-cd web/admin && npm install && npm run build && cd /opt/cloud-cli-proxy
+cd web/admin && pnpm install && pnpm build && cd /opt/cloud-cli-proxy
 ```
 
 ## 4. 配置

@@ -1,10 +1,10 @@
 FROM node:24-alpine AS build
 
 WORKDIR /app
-COPY web/admin/package.json web/admin/package-lock.json* ./
-RUN npm install
+COPY web/admin/package.json web/admin/pnpm-lock.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile
 COPY web/admin/ .
-RUN npm run build
+RUN pnpm build
 
 FROM nginx:alpine
 COPY deploy/docker/admin/nginx.conf /etc/nginx/conf.d/default.conf

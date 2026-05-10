@@ -63,7 +63,7 @@ test-go: ## Run Go tests
 	go test ./... -count=1
 
 test-smoke: ## Run BATS bootstrap smoke tests
-	npx bats tests/smoke/
+	pnpm exec bats tests/smoke/
 
 # ── Images ────────────────────────────────────────────────────
 
