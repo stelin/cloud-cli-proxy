@@ -34,6 +34,9 @@ services:
       CLOUD_CLI_PROXY_GATEWAY_IMAGE: ghcr.io/zanel1u/cloud-cli-proxy/sing-box-gateway:latest
     ports:
       - "${SSH_PROXY_PORT:-2222}:2222"
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/cloud-cli-proxy:/var/lib/cloud-cli-proxy
