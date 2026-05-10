@@ -295,7 +295,7 @@ func (w *Worker) createHost(ctx context.Context, request agentapi.HostActionRequ
 		return fmt.Errorf("prepare host home dir %s: %w", homeDir, err)
 	}
 
-	w.pullImage(ctx, request.TaskID, request.ImageName)
+	w.pullImage(ctx, request.TaskID, request.HostID, request.ImageName)
 
 	if exists, err := w.containerExists(ctx, containerName); err != nil {
 		return err
@@ -959,7 +959,7 @@ func loadProxyPublicKey() string {
 	return strings.TrimSpace(string(data))
 }
 
-func (w *Worker) pullImage(ctx context.Context, taskID, imageName string) {
+func (w *Worker) pullImage(ctx context.Context, taskID, hostID, imageName string) {
 	pullCtx, cancel := context.WithTimeout(ctx, pullImageTimeout)
 	defer cancel()
 
@@ -978,7 +978,7 @@ func (w *Worker) pullImage(ctx context.Context, taskID, imageName string) {
 		return
 	}
 
-	tracker := newPullProgressTracker(taskID, w)
+	tracker := newPullProgressTracker(taskID, hostID, w)
 	scanner := bufio.NewScanner(stderr)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -1011,15 +1011,17 @@ func (w *Worker) fallbackPullImage(ctx context.Context, imageName string) {
 
 type pullProgressTracker struct {
 	taskID     string
+	hostID     string
 	worker     *Worker
 	layers     map[string]string // layerID -> status
 	completed  int
 	lastReport time.Time
 }
 
-func newPullProgressTracker(taskID string, worker *Worker) *pullProgressTracker {
+func newPullProgressTracker(taskID, hostID string, worker *Worker) *pullProgressTracker {
 	return &pullProgressTracker{
 		taskID:     taskID,
+		hostID:     hostID,
 		worker:     worker,
 		layers:     make(map[string]string),
 		lastReport: time.Now().Add(-time.Second),
@@ -1095,6 +1097,22 @@ func (t *pullProgressTracker) maybeReport() {
 	}
 
 	t.worker.ReportTaskProgress(context.Background(), t.taskID, percent, message)
+
+	layersCopy := make(map[string]string, len(t.layers))
+	for k, v := range t.layers {
+		layersCopy[k] = v
+	}
+	broadcast.BroadcastJSON("tasks", map[string]any{
+		"topic":   "tasks",
+		"action":  "progress",
+		"id":      t.taskID,
+		"payload": map[string]any{
+			"percent":  percent,
+			"message":  message,
+			"host_id":  t.hostID,
+			"layers":   layersCopy,
+		},
+	})
 }
 
 func (w *Worker) containerExists(ctx context.Context, name string) (bool, error) {

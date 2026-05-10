@@ -1,9 +1,23 @@
 import { useState } from "react";
-import { Play, Square, RefreshCw, Trash2, AlertTriangle, ArrowUpCircle } from "lucide-react";
+import {
+  Play,
+  Square,
+  RefreshCw,
+  Trash2,
+  AlertTriangle,
+  ArrowUpCircle,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
 import { useHostAction, useDeleteHost } from "@/hooks/use-hosts";
 import type { HostImageInfo } from "@/hooks/use-hosts";
+import { useTaskPolling } from "@/hooks/use-tasks";
+import { useSSE } from "@/hooks/use-sse";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +30,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { RebuildDialog } from "./rebuild-dialog";
 
 interface HostLifecycleActionsProps {
@@ -36,6 +57,28 @@ export function HostLifecycleActions({
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [forceDeleteOpen, setForceDeleteOpen] = useState(false);
+  const [upgradeTaskId, setUpgradeTaskId] = useState<string | null>(null);
+  const [progressLayers, setProgressLayers] = useState<Record<string, string>>({});
+  const [showLayers, setShowLayers] = useState(false);
+
+  const { data: task } = useTaskPolling(upgradeTaskId);
+
+  useSSE(`${window.location.origin}/v1/admin/sse?topics=tasks`, (msg) => {
+    if (msg.topic === "tasks" && msg.action === "progress" && msg.id === upgradeTaskId) {
+      const payload = msg.payload as {
+        percent?: number;
+        message?: string;
+        layers?: Record<string, string>;
+      } | undefined;
+      if (payload?.layers) {
+        setProgressLayers(payload.layers);
+      }
+    }
+  });
+
+  const taskStatus = task?.status;
+  const isUpgradeRunning = upgradeTaskId !== null && taskStatus !== "succeeded" && taskStatus !== "failed" && taskStatus !== "canceled";
+  const isUpgradeDone = taskStatus === "succeeded" || taskStatus === "failed" || taskStatus === "canceled";
 
   function handleAction(action: "start" | "stop") {
     actionMutation.mutate(
@@ -107,21 +150,22 @@ export function HostLifecycleActions({
             <span className="text-left text-sm leading-snug">重建主机</span>
           </Button>
 
-          {imageInfo?.update_available && (
-            <Button
-              className="h-11 justify-start gap-2 sm:col-span-2 bg-emerald-600 hover:bg-emerald-700 text-white"
-              onClick={() => setUpgradeOpen(true)}
-              disabled={actionMutation.isPending}
-            >
-              <ArrowUpCircle className="h-4 w-4 shrink-0" />
-              <span className="text-left text-sm leading-snug">
-                升级镜像
-              </span>
+          <Button
+            variant={imageInfo?.update_available ? "default" : "secondary"}
+            className={`h-11 justify-start gap-2 sm:col-span-2 ${imageInfo?.update_available ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}`}
+            onClick={() => setUpgradeOpen(true)}
+            disabled={actionMutation.isPending}
+          >
+            <ArrowUpCircle className="h-4 w-4 shrink-0" />
+            <span className="text-left text-sm leading-snug">
+              {imageInfo?.update_available ? "升级镜像" : "强制升级镜像"}
+            </span>
+            {imageInfo?.update_available && (
               <Badge variant="secondary" className="ml-auto text-[10px] px-1.5 py-0 bg-white/20 text-white">
                 {imageInfo.latest_image_id}
               </Badge>
-            </Button>
-          )}
+            )}
+          </Button>
         </div>
       </div>
 
@@ -204,52 +248,174 @@ export function HostLifecycleActions({
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={upgradeOpen} onOpenChange={setUpgradeOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
+      <Dialog
+        open={upgradeOpen}
+        onOpenChange={(open) => {
+          setUpgradeOpen(open);
+          if (!open) {
+            setUpgradeTaskId(null);
+            setProgressLayers({});
+            setShowLayers(false);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
               <span className="flex items-center gap-2">
                 <ArrowUpCircle className="h-5 w-5 text-emerald-600" />
                 升级镜像版本
               </span>
-            </AlertDialogTitle>
-            <AlertDialogDescription className="space-y-3">
-              <span className="block">
+            </DialogTitle>
+          </DialogHeader>
+
+          {!upgradeTaskId ? (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
                 将使用最新镜像重建主机。系统会自动拉取最新镜像后重建容器。
-              </span>
+              </p>
               {imageInfo && (
-                <span className="block rounded-md border bg-muted/50 p-3 text-xs space-y-1">
-                  <span className="block"><strong>当前镜像：</strong><code>{imageInfo.container_image_id}</code></span>
-                  <span className="block"><strong>最新镜像：</strong><code>{imageInfo.latest_image_id}</code></span>
-                </span>
+                <div className="rounded-md border bg-muted/50 p-3 text-xs space-y-1">
+                  <p><strong>当前镜像：</strong><code>{imageInfo.container_image_id}</code></p>
+                  <p><strong>最新镜像：</strong><code>{imageInfo.latest_image_id || imageInfo.container_image_id}</code></p>
+                </div>
               )}
-              <span className="block">
-                升级会保留 home 目录数据，仅重置系统层。等同于"保留主目录"模式的重建。
-              </span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-emerald-600 text-white hover:bg-emerald-700"
-              onClick={() => {
-                actionMutation.mutate(
-                  { hostId, action: "rebuild", body: { mode: "preserve" } },
-                  {
-                    onSuccess: () => {
-                      toast.success("升级已启动，系统正在拉取最新镜像并重建");
+              <p className="text-sm text-muted-foreground">
+                升级会保留 home 目录数据，仅重置系统层。
+              </p>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setUpgradeOpen(false)}>
+                  取消
+                </Button>
+                <Button
+                  className="bg-emerald-600 text-white hover:bg-emerald-700"
+                  onClick={() => {
+                    actionMutation.mutate(
+                      { hostId, action: "rebuild", body: { mode: "preserve" } },
+                      {
+                        onSuccess: (data: any) => {
+                          setUpgradeTaskId(data?.task_id ?? null);
+                          toast.success("升级已启动，系统正在拉取最新镜像并重建");
+                        },
+                        onError: () => toast.error("升级操作提交失败"),
+                      },
+                    );
+                  }}
+                  disabled={actionMutation.isPending}
+                >
+                  {actionMutation.isPending ? "提交中..." : "确认升级"}
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <div className="space-y-4 py-2">
+              <div className="flex items-center gap-3">
+                {taskStatus === "succeeded" ? (
+                  <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+                ) : taskStatus === "failed" ? (
+                  <XCircle className="h-5 w-5 text-destructive shrink-0" />
+                ) : (
+                  <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className={`font-medium text-sm ${
+                    taskStatus === "succeeded"
+                      ? "text-emerald-600"
+                      : taskStatus === "failed"
+                      ? "text-destructive"
+                      : "text-foreground"
+                  }`}>
+                    {taskStatus === "succeeded"
+                      ? "升级完成"
+                      : taskStatus === "failed"
+                      ? "升级失败"
+                      : "升级中..."}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    任务 {upgradeTaskId.slice(0, 8)}...
+                  </p>
+                </div>
+              </div>
+
+              {isUpgradeRunning && (task?.progress_percent ?? 0) > 0 && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">
+                      {task?.progress_message || "处理中..."}
+                    </span>
+                    <span className="font-mono text-muted-foreground">
+                      {task?.progress_percent}%
+                    </span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all duration-500 ease-out"
+                      style={{ width: `${task?.progress_percent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {Object.keys(progressLayers).length > 0 && (
+                <div className="space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowLayers((s) => !s)}
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {showLayers ? (
+                      <ChevronUp className="h-3 w-3" />
+                    ) : (
+                      <ChevronDown className="h-3 w-3" />
+                    )}
+                    层详情 ({Object.keys(progressLayers).length} 层)
+                  </button>
+                  {showLayers && (
+                    <div className="max-h-40 overflow-auto rounded-md border bg-muted/30 p-2 space-y-1">
+                      {Object.entries(progressLayers).map(([layerId, status]) => (
+                        <div
+                          key={layerId}
+                          className="flex items-center gap-2 text-xs"
+                        >
+                          <code className="font-mono text-[10px] text-muted-foreground shrink-0">
+                            {layerId.slice(0, 12)}
+                          </code>
+                          <span className="truncate text-muted-foreground">
+                            {status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {taskStatus === "failed" && task?.last_error_summary && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+                  <p className="text-sm font-medium text-destructive">错误详情</p>
+                  <p className="mt-1 break-all text-xs text-destructive/80">
+                    {task.last_error_summary}
+                  </p>
+                </div>
+              )}
+
+              {isUpgradeDone && (
+                <DialogFooter>
+                  <Button
+                    onClick={() => {
                       setUpgradeOpen(false);
-                    },
-                    onError: () => toast.error("升级操作提交失败"),
-                  },
-                );
-              }}
-            >
-              确认升级
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+                      setUpgradeTaskId(null);
+                      setProgressLayers({});
+                    }}
+                  >
+                    {taskStatus === "succeeded" ? "完成" : "关闭"}
+                  </Button>
+                </DialogFooter>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
