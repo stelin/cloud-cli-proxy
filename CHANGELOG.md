@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v3.4.3 - 2026-05-11
+## What's Changed
+
+### Backend (Go / API)
+- fix(network): 移除 PREROUTING 中的非法 MASQUERADE 规则 (2633d61)
+- feat(reconciler): 扩展对账器自动恢复 failed 状态主机 (3de3d6a)
+- fix(rejoin): 修复 rejoin-networks 日志误导 (88d223c)
+
+### Runtime & Deployment
+- fixup! fix(systemd): 给控制面服务添加 CAP_NET_ADMIN + CAP_SYS_ADMIN capabilities (f6fdd70)
+- fix(systemd): 给控制面服务添加 CAP_NET_ADMIN + CAP_SYS_ADMIN capabilities (9dc5cae)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v3.4.2...v3.4.3
+
+
 ## v3.4.2 - 2026-05-10
 ## What's Changed
 
