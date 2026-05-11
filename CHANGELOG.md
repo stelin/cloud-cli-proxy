@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v3.4.4 - 2026-05-11
+## What's Changed
+
+### Backend (Go / API)
+- fix(network): 恢复 worker 默认路由指向 gateway 容器，修复 DNS 不通 (1d2f921)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v3.4.3...v3.4.4
+
+
 ## v3.4.3 - 2026-05-11
 ## What's Changed
 
