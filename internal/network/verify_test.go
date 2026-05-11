@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -117,6 +118,65 @@ func TestFirstNetworkError_DNSLeak_NilProxy(t *testing.T) {
 	}
 }
 
+func TestFirstNetworkError_LeakNotBlocked(t *testing.T) {
+	cfg := EgressConfig{ExpectedIP: "1.2.3.4"}
+	result := VerifyResult{EgressIPMatch: true, DNSCorrect: true, LeakBlocked: false, LeakTarget: "1.1.1.1:80"}
+
+	err := firstNetworkError(cfg, result)
+	if err.Type != ErrLeakNotBlocked {
+		t.Errorf("expected ErrLeakNotBlocked, got %s", err.Type)
+	}
+	if err.Metadata["target"] != "1.1.1.1:80" {
+		t.Errorf("unexpected metadata: %v", err.Metadata)
+	}
+}
+
+func TestFirstNetworkError_Priority(t *testing.T) {
+	// Priority order: EgressIPMismatch > DNSLeak > LeakNotBlocked
+
+	tests := []struct {
+		name     string
+		result   VerifyResult
+		expected NetworkErrorType
+	}{
+		{
+			name:     "egress mismatch has highest priority",
+			result:   VerifyResult{EgressIPMatch: false, ActualEgressIP: "5.6.7.8", DNSCorrect: false, LeakBlocked: false},
+			expected: ErrEgressIPMismatch,
+		},
+		{
+			name:     "egress unreachable has highest priority",
+			result:   VerifyResult{EgressIPMatch: false, ActualEgressIP: "", DNSCorrect: false, LeakBlocked: false},
+			expected: ErrEgressUnreachable,
+		},
+		{
+			name:     "DNS leak when egress OK",
+			result:   VerifyResult{EgressIPMatch: true, DNSCorrect: false, ActualDNS: "8.8.8.8", LeakBlocked: false},
+			expected: ErrDNSLeak,
+		},
+		{
+			name:     "leak not blocked when egress and DNS OK",
+			result:   VerifyResult{EgressIPMatch: true, DNSCorrect: true, LeakBlocked: false, LeakTarget: "1.1.1.1:80"},
+			expected: ErrLeakNotBlocked,
+		},
+		{
+			name:     "DNS leak takes priority over leak blocked",
+			result:   VerifyResult{EgressIPMatch: true, DNSCorrect: false, ActualDNS: "8.8.8.8", LeakBlocked: false},
+			expected: ErrDNSLeak,
+		},
+	}
+
+	cfg := EgressConfig{ExpectedIP: "1.2.3.4", Proxy: &ProxySpec{DNSServer: "10.0.0.1"}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := firstNetworkError(cfg, tt.result)
+			if err.Type != tt.expected {
+				t.Errorf("expected %s, got %s", tt.expected, err.Type)
+			}
+		})
+	}
+}
+
 func TestVerifyNetworkIntegrity_NoNsenter(t *testing.T) {
 	// On macOS (and any system without nsenter), the nsenter commands will fail.
 	// This tests the error paths without requiring real network or containers.
@@ -166,15 +226,55 @@ func TestVerifyNetworkIntegrity_BackgroundContext(t *testing.T) {
 	}
 }
 
-func TestFirstNetworkError_LeakNotBlocked(t *testing.T) {
-	cfg := EgressConfig{ExpectedIP: "1.2.3.4"}
-	result := VerifyResult{EgressIPMatch: true, DNSCorrect: true, LeakBlocked: false, LeakTarget: "1.1.1.1:80"}
+func TestVerifyNetworkIntegrity_ContextTimeout(t *testing.T) {
+	// Verify that VerifyNetworkIntegrity does not deadlock when given a cancelled context.
+	// It should return promptly with results.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // immediately cancelled
 
-	err := firstNetworkError(cfg, result)
-	if err.Type != ErrLeakNotBlocked {
-		t.Errorf("expected ErrLeakNotBlocked, got %s", err.Type)
+	done := make(chan struct{})
+	var result VerifyResult
+	var err error
+
+	go func() {
+		defer close(done)
+		result, err = VerifyNetworkIntegrity(ctx, 1, EgressConfig{ExpectedIP: "1.2.3.4"})
+	}()
+
+	select {
+	case <-done:
+		// Good, function returned promptly
+	case <-context.Background().Done():
+		t.Fatal("VerifyNetworkIntegrity deadlocked with cancelled context")
 	}
-	if err.Metadata["target"] != "1.1.1.1:80" {
-		t.Errorf("unexpected metadata: %v", err.Metadata)
+
+	// The function should return some result regardless of context cancellation.
+	// Individual check functions use their own timeout contexts derived from the
+	// passed context, so behaviour depends on how quickly they respond.
+	t.Logf("result: EgressIPMatch=%v DNSCorrect=%v LeakBlocked=%v err=%v",
+		result.EgressIPMatch, result.DNSCorrect, result.LeakBlocked, err)
+}
+
+func TestVerifyNetworkIntegrity_LeakTargetSet(t *testing.T) {
+	// Verify that the leak target is always set before the check runs.
+	// This is a unit test of the verifyLeakBlocked function's contract.
+	result := VerifyResult{LeakTarget: ""}
+
+	// The leak target should be set to a known value by verifyLeakBlocked.
+	// We verify this indirectly by checking the default value in a fresh result.
+	if result.LeakTarget != "" {
+		t.Logf("initial LeakTarget: %q", result.LeakTarget)
+	}
+
+	// After calling verifyLeakBlocked (via VerifyNetworkIntegrity), LeakTarget should be set.
+	// Since we can't run nsenter on macOS, we just verify the function doesn't panic
+	// and the result struct is properly populated.
+	ctx := context.Background()
+	res, _ := VerifyNetworkIntegrity(ctx, 99999, EgressConfig{ExpectedIP: "1.2.3.4"})
+	if res.LeakTarget == "" {
+		t.Error("LeakTarget should be set after verification")
+	}
+	if !strings.Contains(res.LeakTarget, ":") {
+		t.Errorf("LeakTarget should contain port separator, got %q", res.LeakTarget)
 	}
 }

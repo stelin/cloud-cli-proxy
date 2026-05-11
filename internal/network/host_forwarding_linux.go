@@ -37,12 +37,16 @@ func ensureHostMasquerade(ctx context.Context) error {
 // setupPortForwarding creates host iptables rules for port mapping and worker routing.
 //
 // Architecture:
-//   - Worker's default gateway points to the host's bridge IP (10.99.X.1).
-//   - All worker outbound traffic reaches the host first.
-//   - Host policy-routes worker subnet traffic to the gateway (10.99.X.2) -> sing-box tunnel.
+//   - Worker's default gateway points to the gateway container IP (10.99.X.2).
+//   - All worker outbound traffic goes through the gateway -> sing-box tunnel.
+//   - Host policy-routes worker subnet traffic to the gateway to ensure the tunnel path.
 //   - Port-mapped inbound traffic is DNAT'd to worker, then SNAT'd so the worker replies
-//     directly to the host (same subnet) instead of routing through the gateway where
-//     sing-box auto_route would hijack the reply into the proxy tunnel.
+//     directly to the host bridge IP (same subnet) instead of routing through the gateway
+//     where sing-box auto_route would hijack the reply into the proxy tunnel.
+//   - The worker has strict nftables DROP rules inside its netns; SNAT is required because
+//     the worker's firewall only allows outbound to gwIP and DNS. The reply to port-mapped
+//     inbound connections must go to bridgeGW (allowed by the INPUT rule matching bridgeGW
+//     as source IP).
 func setupPortForwarding(ctx context.Context, hostID, bridgeGW, gwIP string, ports []agentapi.PortMapping) error {
 	third := subnetThirdOctet(hostID)
 	workerIP := fmt.Sprintf("10.99.%d.3", third)
