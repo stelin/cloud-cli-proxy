@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v3.4.5 - 2026-05-11
+## What's Changed
+
+### Backend (Go / API)
+- fix(network): 恢复端口映射 + 策略路由保证所有流量走代理隧道 (39322d9)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v3.4.4...v3.4.5
+
+
 ## v3.4.4 - 2026-05-11
 ## What's Changed
 
