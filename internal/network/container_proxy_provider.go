@@ -247,13 +247,36 @@ func (p *ContainerProxyProvider) teardownGateway(ctx context.Context, hostID str
 
 	cleanupWorkerFirewall(ctx, workerName)
 
-	if cpID, _ := os.Hostname(); cpID != "" {
-		_ = exec.CommandContext(ctx, "docker", "network", "disconnect", "-f", netName, cpID).Run()
+	// Phase 45 WR-04：旧实现把 os.Hostname() 与所有 docker 命令的错误全部 `_ =` 吞掉，
+	// 控制面 disconnect 失败时既无审计也无 Warn 日志。现在统一 Warn 到 p.logger，
+	// 与 PrepareHost 的对应路径保持一致；任何错误都不阻断后续清理（best-effort）。
+	cpID, hostnameErr := os.Hostname()
+	if hostnameErr != nil {
+		p.logger.Warn("container-proxy: teardown get control-plane hostname failed",
+			"host_id", hostID, "error", hostnameErr)
+	} else if cpID != "" {
+		if err := exec.CommandContext(ctx, "docker", "network", "disconnect", "-f", netName, cpID).Run(); err != nil {
+			p.logger.Warn("container-proxy: teardown disconnect control-plane from isolated network failed",
+				"host_id", hostID, "cp_id", cpID, "network", netName, "error", err)
+		}
 	}
-	_ = exec.CommandContext(ctx, "docker", "network", "disconnect", "-f", netName, workerName).Run()
-	_ = exec.CommandContext(ctx, "docker", "rm", "-f", gwName).Run()
-	_ = exec.CommandContext(ctx, "docker", "network", "rm", netName).Run()
-	_ = os.RemoveAll(GatewayConfigDir(hostID))
+
+	if err := exec.CommandContext(ctx, "docker", "network", "disconnect", "-f", netName, workerName).Run(); err != nil {
+		p.logger.Warn("container-proxy: teardown disconnect worker from isolated network failed",
+			"host_id", hostID, "worker", workerName, "network", netName, "error", err)
+	}
+	if err := exec.CommandContext(ctx, "docker", "rm", "-f", gwName).Run(); err != nil {
+		p.logger.Warn("container-proxy: teardown remove gateway container failed",
+			"host_id", hostID, "gateway", gwName, "error", err)
+	}
+	if err := exec.CommandContext(ctx, "docker", "network", "rm", netName).Run(); err != nil {
+		p.logger.Warn("container-proxy: teardown remove isolated network failed",
+			"host_id", hostID, "network", netName, "error", err)
+	}
+	if err := os.RemoveAll(GatewayConfigDir(hostID)); err != nil {
+		p.logger.Warn("container-proxy: teardown remove gateway config dir failed",
+			"host_id", hostID, "dir", GatewayConfigDir(hostID), "error", err)
+	}
 }
 
 func GatewayImage() string {
