@@ -371,6 +371,17 @@ func (w *Worker) createHost(ctx context.Context, request agentapi.HostActionRequ
 	if err != nil {
 		return err
 	}
+	// Phase 45 CR-02：PrepareGateway 一旦写盘 + 启动 gateway 容器成功，
+	// 任何后续失败（buildCreateArgs / docker create / docker start /
+	// PrepareHost / waitForSSH）都必须把 gateway 容器 + DATA_DIR/gateway/<host>/*
+	// 清干净。否则残留的 sing-box gateway 仍在向上游代理转发流量（资源
+	// 泄漏 + 出口 IP 计费 + 攻击面），直到下次 createHost 进 PrepareGateway
+	// 第 85 行的 teardownGateway 才能自愈，间隔可能数小时。
+	//
+	// 用 gatewayPrepared 旗标 + defer 守护：成功路径末尾置 false 关闭 defer。
+	// defer 内用 context.Background() 而非 ctx，避免 task ctx 已超时取消时
+	// CleanupHost 也被中断。CleanupHost 内部已是 best-effort 幂等。
+	var gatewayPrepared bool
 	if egressCfg != nil {
 		spec := network.HostNetworkSpec{
 			HostID: request.HostID,
@@ -380,6 +391,16 @@ func (w *Worker) createHost(ctx context.Context, request agentapi.HostActionRequ
 			w.recordNetworkError(ctx, request.HostID, err)
 			return fmt.Errorf("prepare gateway before create: %w", err)
 		}
+		gatewayPrepared = true
+		defer func() {
+			if !gatewayPrepared {
+				return
+			}
+			cleanupCtx := context.Background()
+			if cleanupErr := w.provider.CleanupHost(cleanupCtx, network.HostNetworkSpec{HostID: request.HostID}); cleanupErr != nil {
+				w.recordNetworkError(cleanupCtx, request.HostID, fmt.Errorf("cleanup gateway after createHost failure: %w", cleanupErr))
+			}
+		}()
 	}
 
 	args, err := w.buildCreateArgs(request, containerName, hostname, egressCfg)
@@ -410,6 +431,8 @@ func (w *Worker) createHost(ctx context.Context, request agentapi.HostActionRequ
 		return err
 	}
 
+	// 全部成功，关闭 defer 清理。
+	gatewayPrepared = false
 	return nil
 }
 
