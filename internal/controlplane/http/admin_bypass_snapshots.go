@@ -110,16 +110,26 @@ func (h *AdminBypassSnapshotsHandler) collectRenderInput(ctx context.Context, ho
 			boundRuleIDs[*b.RuleID] = struct{}{}
 		}
 	}
+	// WR-01：caller 层基于 rule.ID 做 dedup。RenderBypassConfig 自己有 set 去重，
+	// 但 input.Rules 重复会让 totalRules 多计一次、summary 计数虚高。理论上
+	// host scope 规则 + global scope 同 ID 不会冲突（不同表语义），但 binding.rule_id
+	// 是任意 FK，留个统一 guard 不会有坏处。
+	seen := map[string]struct{}{}
 	for _, r := range allRules {
+		if _, ok := seen[r.ID]; ok {
+			continue
+		}
 		// host scope 自身规则：直接纳入（host 维度兜底）。
 		if r.Scope == "host" && r.HostID != nil && *r.HostID == hostID {
 			input.Rules = append(input.Rules, r)
+			seen[r.ID] = struct{}{}
 			continue
 		}
 		// global 规则：仅当被 binding 显式引用才纳入。
 		if r.Scope == "global" {
 			if _, ok := boundRuleIDs[r.ID]; ok {
 				input.Rules = append(input.Rules, r)
+				seen[r.ID] = struct{}{}
 			}
 		}
 	}
