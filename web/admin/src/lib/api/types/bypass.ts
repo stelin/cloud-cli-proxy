@@ -14,9 +14,9 @@ export interface BypassPreset {
   name: string; // 中文展示名
   description: string | null;
   is_system: boolean;
-  is_forced: boolean; // loopback 为 true，强制启用
-  rule_count: number;
-  sample_rules: BypassRuleSample[]; // 用于 Popover 展示
+  is_force_on: boolean; // loopback 为 true，强制启用（与后端 JSON tag 对齐）
+  is_active: boolean;
+  rules: BypassRuleSample[]; // 后端 BypassPreset.Rules 直接返回的内置规则
   created_at: string;
   updated_at: string;
 }
@@ -24,6 +24,7 @@ export interface BypassPreset {
 export interface BypassRuleSample {
   rule_type: BypassRuleType;
   value: string;
+  note?: string;
 }
 
 export interface BypassRule {

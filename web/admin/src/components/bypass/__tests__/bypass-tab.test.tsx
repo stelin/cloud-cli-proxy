@@ -26,8 +26,11 @@ describe("BypassTab", () => {
   it("渲染标题 + 预设规则集 + 自定义规则区", async () => {
     apiFetchMock.mockImplementation(async (path: string) => {
       if (path === "/bypass/presets") return { presets: [] };
-      if (path.includes("/bindings")) return { bindings: [] };
-      if (path.includes("/rules")) return { rules: [] };
+      // CR-04：bindings list 改走 /hosts/{hostId}/bypass
+      if (path.startsWith("/hosts/") && path.endsWith("/bypass"))
+        return { bindings: [] };
+      // CR-01：rules list 改走 /bypass/rules?host_id=...
+      if (path.startsWith("/bypass/rules")) return { rules: [] };
       return {};
     });
 
@@ -41,8 +44,9 @@ describe("BypassTab", () => {
   it("有规则时显示「N 条规则」徽章", async () => {
     apiFetchMock.mockImplementation(async (path: string) => {
       if (path === "/bypass/presets") return { presets: [] };
-      if (path.includes("/bindings")) return { bindings: [] };
-      if (path.includes("/rules"))
+      if (path.startsWith("/hosts/") && path.endsWith("/bypass"))
+        return { bindings: [] };
+      if (path.startsWith("/bypass/rules"))
         return {
           rules: [
             {

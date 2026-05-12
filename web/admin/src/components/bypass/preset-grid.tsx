@@ -16,7 +16,7 @@ interface PresetGridProps {
 /**
  * 3 列网格：loopback 锁定 / lan 可勾选 / 占位 disabled。
  * - 数据来源：useBypassPresets() + useBypassBindings(hostId) 求差集判定 selected
- * - 后续未来的 cn-dev 等预设由后端 is_system + is_forced=false 控制；如果系统返回的预设不足 3 个，
+ * - 后续未来的 cn-dev 等预设由后端 is_system + is_force_on=false 控制；如果系统返回的预设不足 3 个，
  *   用前端占位卡片填充至 3 列，提示「敬请期待」。
  */
 export function PresetGrid({ hostId }: PresetGridProps) {
@@ -72,7 +72,7 @@ export function PresetGrid({ hostId }: PresetGridProps) {
         <PresetCard
           key={preset.id}
           preset={preset}
-          forced={preset.is_forced}
+          forced={preset.is_force_on}
           selected={bindingByPreset.has(preset.id)}
           onToggle={(next) => togglePreset(preset, next)}
         />

@@ -26,9 +26,9 @@ const loopback: BypassPreset = {
   name: "loopback（本机回环）",
   description: "127.0.0.0/8 + 169.254.0.0/16，强制启用",
   is_system: true,
-  is_forced: true,
-  rule_count: 2,
-  sample_rules: [
+  is_force_on: true,
+  is_active: true,
+  rules: [
     { rule_type: "cidr", value: "127.0.0.0/8" },
     { rule_type: "cidr", value: "169.254.0.0/16" },
   ],
@@ -41,11 +41,14 @@ const lan: BypassPreset = {
   name: "lan（内网与 ULA）",
   description: "RFC1918 + CGNAT 100.64/10 + ULA fc00::/7",
   is_system: true,
-  is_forced: false,
-  rule_count: 5,
-  sample_rules: [
+  is_force_on: false,
+  is_active: true,
+  rules: [
     { rule_type: "cidr", value: "10.0.0.0/8" },
     { rule_type: "cidr", value: "172.16.0.0/12" },
+    { rule_type: "cidr", value: "192.168.0.0/16" },
+    { rule_type: "cidr", value: "100.64.0.0/10" },
+    { rule_type: "cidr", value: "fc00::/7" },
   ],
   created_at: "",
   updated_at: "",
@@ -65,7 +68,9 @@ describe("PresetGrid", () => {
   it("加载后 loopback 卡片处于 forced-on 状态（disabled checkbox + Lock 图标）", async () => {
     apiFetchMock.mockImplementation(async (path: string) => {
       if (path === "/bypass/presets") return { presets: [loopback, lan] };
-      if (path.includes("/bindings")) return { bindings: [] };
+      // CR-04：bindings list 路径已对齐为 /hosts/{hostId}/bypass
+      if (path.startsWith("/hosts/") && path.endsWith("/bypass"))
+        return { bindings: [] };
       throw new Error("unexpected path " + path);
     });
     renderWithClient(<PresetGrid hostId="h-1" />);
@@ -83,9 +88,11 @@ describe("PresetGrid", () => {
   it("lan 卡片可点击切换，触发 createBinding mutation", async () => {
     apiFetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
       if (path === "/bypass/presets") return { presets: [loopback, lan] };
-      if (path.includes("/bindings") && (!init || !init.method))
+      // CR-04：list/create binding 走 /hosts/{hostId}/bypass（无 /bindings 后缀）。
+      // delete 走 /bypass/bindings/{bindingId}，本测试只关心 list/create。
+      if (path.startsWith("/hosts/") && path.endsWith("/bypass") && (!init || !init.method))
         return { bindings: [] };
-      if (path.includes("/bindings") && init?.method === "POST") {
+      if (path.startsWith("/hosts/") && path.endsWith("/bypass") && init?.method === "POST") {
         return { binding: { id: "b-new" } };
       }
       throw new Error("unexpected path " + path);
@@ -101,11 +108,12 @@ describe("PresetGrid", () => {
     ) as HTMLInputElement;
     await user.click(lanCheckbox);
 
-    // 应该发出 POST bindings 请求
+    // 应该发出 POST /hosts/{hostId}/bypass 请求
     const postCalls = apiFetchMock.mock.calls.filter(
       (c) =>
         typeof c[0] === "string" &&
-        (c[0] as string).includes("/bindings") &&
+        (c[0] as string).startsWith("/hosts/") &&
+        (c[0] as string).endsWith("/bypass") &&
         (c[1] as RequestInit | undefined)?.method === "POST",
     );
     expect(postCalls.length).toBeGreaterThanOrEqual(1);
@@ -114,7 +122,9 @@ describe("PresetGrid", () => {
   it("3 个预设不足时填充 placeholder", async () => {
     apiFetchMock.mockImplementation(async (path: string) => {
       if (path === "/bypass/presets") return { presets: [loopback] };
-      if (path.includes("/bindings")) return { bindings: [] };
+      // CR-04：bindings list 走 /hosts/{hostId}/bypass
+      if (path.startsWith("/hosts/") && path.endsWith("/bypass"))
+        return { bindings: [] };
       throw new Error("unexpected " + path);
     });
     renderWithClient(<PresetGrid hostId="h-1" />);

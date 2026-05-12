@@ -36,11 +36,13 @@ export function PresetCard({
     ? "border-primary bg-primary/5"
     : "border-border bg-card";
 
+  // WR-08：后端 BypassPreset 没有 sample_rules / rule_count 字段，直接读 preset.rules
+  // 并在前端截取前 3 条用于 Tooltip 展示；卡片副文案用规则总数。
+  const ruleCount = preset.rules?.length ?? 0;
+  const sampleRules = preset.rules?.slice(0, 3) ?? [];
   const sampleText =
-    preset.sample_rules && preset.sample_rules.length > 0
-      ? preset.sample_rules
-          .map((s) => `${s.rule_type} · ${s.value}`)
-          .join("\n")
+    sampleRules.length > 0
+      ? sampleRules.map((s) => `${s.rule_type} · ${s.value}`).join("\n")
       : "暂无规则示例";
 
   return (
@@ -95,7 +97,7 @@ export function PresetCard({
                 </div>
                 <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                   {preset.description ||
-                    `共 ${preset.rule_count} 条规则`}
+                    `共 ${ruleCount} 条规则`}
                 </p>
               </div>
             </CardContent>
