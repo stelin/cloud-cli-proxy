@@ -285,6 +285,7 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 			mux.Handle("POST /v1/admin/hosts/{hostID}/bypass/apply", adminGuard(sh.Apply()))
 			mux.Handle("POST /v1/admin/hosts/{hostID}/bypass/rollback", adminGuard(sh.Rollback()))
 			mux.Handle("GET /v1/admin/hosts/{hostID}/bypass/effective", adminGuard(sh.Effective()))
+			mux.Handle("GET /v1/admin/hosts/{hostID}/bypass/consistency", adminGuard(sh.Consistency()))
 		}
 		if deps.AdminBypassAuditLog != nil {
 			ah := NewAdminBypassAuditLogHandler(deps.Logger, deps.AdminBypassAuditLog)
