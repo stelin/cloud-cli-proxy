@@ -61,10 +61,15 @@ export function ApplyProgressDialog({
 
   const { data: task } = useTaskPolling(taskId);
 
-  // SSE 仅用于更早唤醒 UI（task polling 已经每 2s 拉一次）
-  useSSE(`${window.location.origin}/v1/admin/sse?topics=tasks`, () => {
-    // 无需操作，react-query invalidate 已经在 useTasks 里处理
-  });
+  // SSE 仅用于更早唤醒 UI（task polling 已经每 2s 拉一次）。
+  // 未打开时传空 url，避免组件嵌入到父容器时常驻 EventSource 订阅
+  // （也让 jsdom 测试环境无需 mock window.EventSource）。
+  useSSE(
+    open ? `${window.location.origin}/v1/admin/sse?topics=tasks` : "",
+    () => {
+      // 无需操作，react-query invalidate 已经在 useTasks 里处理
+    },
+  );
 
   // Dialog 打开 → 自动调 apply mutation；关闭 → 清空所有状态
   useEffect(() => {
