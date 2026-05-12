@@ -124,8 +124,22 @@ export function ApplyProgressDialog({
       return ["done", "done", "done", "done", "done"];
     }
     if (isFailed) {
-      // 已有 taskId 但 task 失败：把 dispatch（第 2 阶段）标 failed
-      return ["done", "failed", "pending", "pending", "pending"];
+      // WR-07：用 task.progress_percent 推测失败阶段，不再一律落到 dispatch。
+      // - < 25：dispatch 阶段失败（agent 都没接到任务）
+      // - < 50：reload 阶段失败（agent 接到但 reload 报错）
+      // - < 75：health 阶段失败（reload 后健康检查失败）
+      // - >= 75：done 临门一脚失败（极少）
+      const pct = task?.progress_percent ?? 0;
+      if (pct < 25) {
+        return ["done", "failed", "pending", "pending", "pending"];
+      }
+      if (pct < 50) {
+        return ["done", "done", "failed", "pending", "pending"];
+      }
+      if (pct < 75) {
+        return ["done", "done", "done", "failed", "pending"];
+      }
+      return ["done", "done", "done", "done", "failed"];
     }
     if (isRunning) {
       const pct = task?.progress_percent ?? 0;
