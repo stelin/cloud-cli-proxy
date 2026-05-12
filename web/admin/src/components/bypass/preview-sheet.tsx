@@ -39,8 +39,13 @@ export function PreviewSheet({
 }: PreviewSheetProps) {
   const previewMutation = usePreviewBypass(hostId);
 
+  // WR-06：原版 useEffect 依赖只有 [open] 但 closure 读取 mutation.data/isPending/isError，
+  // 用 eslint-disable 屏蔽 exhaustive-deps。改成 mutation.status 做依赖让 React 在
+  // status 切换时重新评估（react-query mutation.status 是稳定的字面量串），
+  // 同时把 "关闭 sheet 时 reset" 拆到单独 effect 避免依赖纠缠。
   useEffect(() => {
-    if (open && !previewMutation.data && !previewMutation.isPending && !previewMutation.isError) {
+    if (!open) return;
+    if (previewMutation.status === "idle") {
       previewMutation.mutate(undefined, {
         onError: (err) => {
           const { message } = parseBypassError(err);
@@ -48,6 +53,10 @@ export function PreviewSheet({
         },
       });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, previewMutation.status]);
+
+  useEffect(() => {
     if (!open) {
       previewMutation.reset();
     }
