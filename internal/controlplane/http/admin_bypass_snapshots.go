@@ -2,6 +2,8 @@ package http
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -406,7 +408,8 @@ type rollbackResponse struct {
 //   - 若 target.ID == current latest applied → 幂等 200（不新建行，不 dispatch，不写 audit）
 //   - 否则新建 snapshot：version+1、复制 target.ConfigHash + cidrs/domains、source='rollback'
 //   - 若 UNIQUE(host_id, config_hash) 冲突（target hash 与现存 snapshot 同 hash），
-//     退一步用 target.ConfigHash + ":rollback:" + version_str 绕开，保证总能产生新历史行
+//     退一步用 target.ConfigHash + 8 字节 hex 后缀绕开（WR-05），保持整串为合法
+//     hex 字符不污染 nft set 标识；audit note 标记 rollback_hash_suffixed=true
 //   - 不调用 UpdateBypassSnapshotStatus(target.ID, ...) —— target.AppliedStatus 不变
 //   - dispatch ActionReloadHostBypass payload 是新 snapshot.ID，不是 target.ID
 //   - audit note 含 `rollback_target_snapshot_id=<id>` 前缀
@@ -492,11 +495,21 @@ func (h *AdminBypassSnapshotsHandler) Rollback() nethttp.Handler {
 			CreatedBy:            actorIDPtr(r.Context()),
 		}
 		newSnap, err := h.store.CreateBypassSnapshot(r.Context(), params)
+		rollbackHashSuffixed := false
 		if err != nil {
 			if isUniqueViolation(err) {
-				// UNIQUE(host_id, config_hash) 兜底：用 target hash + 后缀绕开
-				// 这是已知 trade-off，确保 rollback 总能产生新行（plan WARN-4 trade-off 描述）
-				params.ConfigHash = fmt.Sprintf("%s:rollback:%d", target.ConfigHash, nextVer)
+				// UNIQUE(host_id, config_hash) 兜底：用 target hash + 8 字节 hex 后缀绕开。
+				// WR-05：原版用 ":rollback:<version>" 含冒号，破坏「ConfigHash 是纯 sha256
+				// hex」的稳定语义（Phase 47 reload 可能用它做磁盘文件名 / nft set 标识）。
+				// 改成 hex 后缀让整个串仍是合法 hex 字符；同时把这一决策记入 audit note。
+				var rnd [8]byte
+				if _, randErr := rand.Read(rnd[:]); randErr != nil {
+					h.logger.Error("rollback: rand suffix failed", "host_id", hostID, "error", randErr)
+					writeBypassError(w, nethttp.StatusInternalServerError, "INTERNAL", "create rollback snapshot failed")
+					return
+				}
+				params.ConfigHash = target.ConfigHash + hex.EncodeToString(rnd[:])
+				rollbackHashSuffixed = true
 				newSnap, err = h.store.CreateBypassSnapshot(r.Context(), params)
 				if err != nil {
 					h.logger.Error("rollback: create snapshot (with suffix) failed", "host_id", hostID, "error", err)
@@ -523,6 +536,11 @@ func (h *AdminBypassSnapshotsHandler) Rollback() nethttp.Handler {
 
 		// 7. 双轨审计：note 含 rollback_target_snapshot_id 前缀。
 		note := "rollback_target_snapshot_id=" + target.ID
+		if rollbackHashSuffixed {
+			// WR-05：标记本次 rollback 因 UNIQUE 兜底走了 hex 后缀路径，方便审计回查
+			// 「为什么这条 snapshot 的 config_hash 比正常 hash 长 16 字符」。
+			note += "; rollback_hash_suffixed=true"
+		}
 		var currentForAudit any
 		if currentErr == nil {
 			currentForAudit = current
