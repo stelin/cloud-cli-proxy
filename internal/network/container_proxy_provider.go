@@ -366,24 +366,59 @@ func dockerNetworkConnect(ctx context.Context, netName, containerName, staticIP 
 	return nil
 }
 
+// waitGatewayHealthy 等待 gateway 容器内 sing-box 真正完成 tun0 监听。
+//
+// Phase 45 WR-03 修复：旧实现仅检查 docker `inspect.State.Running=true`
+// 与 logs 中是否含 "FATAL"/"panic:"，但 sing-box 启动序列包含：
+//   (1) 解析 config（可能因 schema 错误失败）
+//   (2) 建立 tun 设备（Linux 必须 NET_ADMIN + /dev/net/tun）
+//   (3) 启动 DoH 拨号到上游 DNS
+//   (4) 建立 proxy outbound
+//
+// 在 (1)~(2) 完成之前，容器虽然 Running=true，但 worker 容器内 ro-mount
+// 的 /etc/resolv.conf 指向 172.19.0.1（tun0），实际还没监听 → DNS 查询
+// 立即 SERVFAIL。同时 sing-box 1.11 在 config 解析错误时输出
+// "start service:" / "unmarshal:" 等关键字，旧的两关键字串匹配会漏掉。
+//
+// 新实现：
+//   - 探测策略改为「在 gateway 容器内 ip link show tun0」就绪检测，
+//     重试最多 30 次、间隔 200ms（总等待约 6 秒，与旧 20 秒上界相当但更精确）
+//   - 仍同时检查 logs 中扩展后的失败关键字，遇到立即返回错误
 func waitGatewayHealthy(ctx context.Context, gwName string) error {
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		cmd := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}}", gwName)
-		out, err := cmd.Output()
-		if err == nil && strings.TrimSpace(string(out)) == "true" {
-			logs, _ := exec.CommandContext(ctx, "docker", "logs", "--tail", "120", gwName).CombinedOutput()
-			s := string(logs)
-			if strings.Contains(s, "FATAL") || strings.Contains(s, "panic:") {
-				return fmt.Errorf("gateway sing-box failed: %s", strings.TrimSpace(s))
-			}
-			time.Sleep(500 * time.Millisecond)
+	const maxAttempts = 30
+	const interval = 200 * time.Millisecond
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		// 先确认容器仍在 Running，避免在已退出的容器上反复 exec 浪费时间。
+		inspect := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}}", gwName)
+		if out, err := inspect.Output(); err != nil || strings.TrimSpace(string(out)) != "true" {
+			lastErr = fmt.Errorf("container not running: %v", err)
+			time.Sleep(interval)
+			continue
+		}
+
+		// 关键改动：探测 tun0 是否已在容器 netns 内被 sing-box 创建并 UP。
+		// 用 `docker exec gwName ip link show tun0` 替代假设 nsenter 存在的方案，
+		// docker exec 与 macOS 开发机 + linux 生产机都兼容。
+		probe := exec.CommandContext(ctx, "docker", "exec", gwName, "ip", "link", "show", "tun0")
+		if probe.Run() == nil {
 			return nil
 		}
-		time.Sleep(300 * time.Millisecond)
+
+		// tun0 尚未就绪 → 检查 logs 中是否出现已知失败关键字；命中则提前 fail。
+		logs, _ := exec.CommandContext(ctx, "docker", "logs", "--tail", "120", gwName).CombinedOutput()
+		s := string(logs)
+		for _, kw := range []string{"FATAL", "panic:", "start service:", "unmarshal:", "failed to start"} {
+			if strings.Contains(s, kw) {
+				return fmt.Errorf("gateway sing-box failed (matched %q): %s", kw, strings.TrimSpace(s))
+			}
+		}
+
+		lastErr = fmt.Errorf("tun0 not ready yet")
+		time.Sleep(interval)
 	}
 	logs, _ := exec.CommandContext(ctx, "docker", "logs", gwName).CombinedOutput()
-	return fmt.Errorf("gateway container not healthy in time: %s", strings.TrimSpace(string(logs)))
+	return fmt.Errorf("gateway container tun0 not ready in time (last=%v): %s", lastErr, strings.TrimSpace(string(logs)))
 }
 
 func configureWorkerEgress(ctx context.Context, workerName, defaultGW, workerIP string) error {
