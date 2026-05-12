@@ -28,7 +28,25 @@ findings:
   warning: 8
   info: 5
   total: 15
-status: issues_found
+status: fixed
+fix_iteration: 1
+fixed_findings:
+  - CR-01
+  - CR-02
+  - WR-01
+  - WR-02
+  - WR-03
+  - WR-04
+  - WR-05
+  - WR-06
+  - WR-07
+  - WR-08
+skipped_findings:
+  - IN-01
+  - IN-02
+  - IN-03
+  - IN-04
+  - IN-05
 ---
 
 # Phase 45 网络配置基础与数据模型 — 代码评审报告
