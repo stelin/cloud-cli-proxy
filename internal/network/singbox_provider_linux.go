@@ -262,7 +262,15 @@ func ensureHostMasquerade(ctx context.Context) error {
 	return nil
 }
 
-func mustParseUint(b []byte) uint64 {
+// parseUintOrZero 解析字节串为 uint64；任何 strconv 错误都吞掉返回 0。
+//
+// Phase 45 WR-05：旧名 mustParseUint 违反 Go must* 习惯（must* 失败应 panic），
+// 调用方读到 must 前缀会误以为值经过校验，直接拿去拼 IP / PID 会触发后续路由
+// 错乱（如 PID=0 → `nsenter -t 0 -n` 会进入 systemd 命名空间挂掉 host）。
+//
+// 改名后语义明确：**失败返回 0，调用方必须自行 0 检查**。
+// 新加调用者前请明确该约定，否则改用 strconv.ParseUint 显式处理 error。
+func parseUintOrZero(b []byte) uint64 {
 	s := string(b)
 	for len(s) > 0 && (s[len(s)-1] == '\n' || s[len(s)-1] == '\r') {
 		s = s[:len(s)-1]
