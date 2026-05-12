@@ -349,18 +349,31 @@ func (h *AdminBypassSnapshotsHandler) Apply() nethttp.Handler {
 
 		// dispatch ActionReloadHostBypass —— Phase 47 worker 接管真实 reload。
 		// dispatch 失败不阻塞主请求（snapshot 已落 pending，可后续重试）。
+		// WR-02：dispatch 失败时把错误写进 audit note，让运维能从 audit_log /
+		// events 流里发现 pending 孤儿 snapshot。
 		var taskID string
+		var dispatchErr error
 		if h.actions != nil {
 			task, qErr := h.actions.QueueHostAction(r.Context(), hostID, agentapi.ActionReloadHostBypass, snap.ID)
 			if qErr != nil {
 				h.logger.Error("apply: queue host action failed", "host_id", hostID, "snapshot_id", snap.ID, "error", qErr)
+				dispatchErr = qErr
 			} else {
 				taskID = task.ID
 			}
 		}
 
 		// 双轨审计：host_bypass_audit_log + events.RecordEvent("bypass.apply")。
-		writeBypassAuditLog(r.Context(), h.logger, h.store, h.events, r, "apply", "snapshot", &snap.ID, prev, snap, req.Note)
+		auditAction := "apply"
+		auditNote := req.Note
+		if dispatchErr != nil {
+			auditAction = "apply_dispatch_failed"
+			if auditNote != "" {
+				auditNote += "; "
+			}
+			auditNote += "dispatch_error=" + dispatchErr.Error()
+		}
+		writeBypassAuditLog(r.Context(), h.logger, h.store, h.events, r, auditAction, "snapshot", &snap.ID, prev, snap, auditNote)
 
 		writeJSON(w, nethttp.StatusCreated, applyResponse{
 			SnapshotID:    snap.ID,
