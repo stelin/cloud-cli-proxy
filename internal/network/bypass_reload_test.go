@@ -35,23 +35,46 @@ func withTempGatewayBase(t *testing.T, hostID string) string {
 	return hostDir
 }
 
-// withFakeNftRunner 注入 fake nftRunner，并在测试结束还原；返回闭包内捕获到的 stdin。
-func withFakeNftRunner(t *testing.T, fn func(ctx context.Context, stdin string) ([]byte, error)) *[]string {
+// withFakeWorkerNetNSPIDLookup 注入 fake pid 解析器，避开 docker 依赖。
+// 默认返回一个非零 pid，并在测试结束还原。返回闭包内捕获到的 hostID 列表。
+func withFakeWorkerNetNSPIDLookup(t *testing.T, pid int) *[]string {
 	t.Helper()
 	captured := &[]string{}
 	var mu sync.Mutex
-	prev := nftRunner
-	nftRunner = func(ctx context.Context, stdin string) ([]byte, error) {
+	prev := workerNetNSPIDLookup
+	workerNetNSPIDLookup = func(_ context.Context, hostID string) (int, error) {
 		mu.Lock()
-		*captured = append(*captured, stdin)
+		*captured = append(*captured, hostID)
 		mu.Unlock()
-		return fn(ctx, stdin)
+		return pid, nil
+	}
+	t.Cleanup(func() { workerNetNSPIDLookup = prev })
+	return captured
+}
+
+// withFakeNftRunner 注入 fake nftRunner，并在测试结束还原；返回闭包内捕获到的 stdin。
+// 捕获结构含 pid 和 stdin，便于断言 nsenter 命令构造正确（BLOCKER-2 修复要求）。
+type capturedNftCall struct {
+	NetNSPID int
+	Stdin    string
+}
+
+func withFakeNftRunner(t *testing.T, fn func(ctx context.Context, netNSPID int, stdin string) ([]byte, error)) *[]capturedNftCall {
+	t.Helper()
+	captured := &[]capturedNftCall{}
+	var mu sync.Mutex
+	prev := nftRunner
+	nftRunner = func(ctx context.Context, netNSPID int, stdin string) ([]byte, error) {
+		mu.Lock()
+		*captured = append(*captured, capturedNftCall{NetNSPID: netNSPID, Stdin: stdin})
+		mu.Unlock()
+		return fn(ctx, netNSPID, stdin)
 	}
 	t.Cleanup(func() { nftRunner = prev })
 	return captured
 }
 
-func withFakeNftJSONLister(t *testing.T, fn func(ctx context.Context, setName string) ([]byte, error)) {
+func withFakeNftJSONLister(t *testing.T, fn func(ctx context.Context, netNSPID int, setName string) ([]byte, error)) {
 	t.Helper()
 	prev := nftJSONLister
 	nftJSONLister = fn
@@ -67,7 +90,8 @@ func withFakeNftJSONLister(t *testing.T, fn func(ctx context.Context, setName st
 func TestApplyBypassRuleSet_AtomicWrite(t *testing.T) {
 	hostID := "h-atomic"
 	hostDir := withTempGatewayBase(t, hostID)
-	withFakeNftRunner(t, func(_ context.Context, _ string) ([]byte, error) { return nil, nil })
+	withFakeWorkerNetNSPIDLookup(t, 4242)
+	withFakeNftRunner(t, func(_ context.Context, _ int, _ string) ([]byte, error) { return nil, nil })
 
 	cidrsJSON := json.RawMessage(`{"version":3,"rules":[{"ip_cidr":["10.0.0.0/8","192.168.1.0/24"]}]}`)
 	domainsJSON := json.RawMessage(`{"version":3,"rules":[{"domain":["example.com"]}]}`)
@@ -108,14 +132,19 @@ func TestApplyBypassRuleSet_AtomicWrite(t *testing.T) {
 // ===== Test 2: nft transaction stdin format =====
 
 // TestApplyBypassRuleSet_NftTransaction 守护 acceptance Test 2：
-//   - stdin 首行严格是 `flush set inet sbfw whitelist_v4`
-//   - 紧跟一行 `add element inet sbfw whitelist_v4 { ... }`
+//   - stdin 首行严格是 `flush set ip cloudproxy whitelist_v4`
+//   - 紧跟一行 `add element ip cloudproxy whitelist_v4 { ... }`
 //   - 单次 nft -f 调用承担整批；列表归一化后按字典序，包含全部入参 CIDR
+//   - nft 命令必须经 nsenter 进 worker netns —— 捕获到的 NetNSPID 必须等于
+//     fake workerNetNSPIDLookup 返回的 pid，断言 ApplyBypassRuleSet 真正把
+//     pid 透传给了 nftRunner（BLOCKER-2 修复要点）
 //   - 解析失败的 cidrsJSON（version 不对 / 非法 envelope）不下发 nft 也不写盘
 func TestApplyBypassRuleSet_NftTransaction(t *testing.T) {
 	hostID := "h-nft"
 	hostDir := withTempGatewayBase(t, hostID)
-	captured := withFakeNftRunner(t, func(_ context.Context, _ string) ([]byte, error) { return nil, nil })
+	const fakePID = 7777
+	withFakeWorkerNetNSPIDLookup(t, fakePID)
+	captured := withFakeNftRunner(t, func(_ context.Context, _ int, _ string) ([]byte, error) { return nil, nil })
 
 	cidrsJSON := json.RawMessage(`{"version":3,"rules":[{"ip_cidr":["192.168.1.0/24","10.0.0.0/8"]}]}`)
 	domainsJSON := json.RawMessage(`{"version":3,"rules":[]}`)
@@ -127,15 +156,19 @@ func TestApplyBypassRuleSet_NftTransaction(t *testing.T) {
 	if got := len(*captured); got != 1 {
 		t.Fatalf("nftRunner should be called exactly once (one nft -f - transaction), got %d", got)
 	}
-	stdin := (*captured)[0]
+	call := (*captured)[0]
+	if call.NetNSPID != fakePID {
+		t.Errorf("nftRunner NetNSPID = %d, want %d (nsenter target pid must be worker netns pid)", call.NetNSPID, fakePID)
+	}
+	stdin := call.Stdin
 	lines := strings.Split(strings.TrimRight(stdin, "\n"), "\n")
 	if len(lines) < 2 {
 		t.Fatalf("stdin must have at least 2 lines (flush + add), got %q", stdin)
 	}
-	if lines[0] != "flush set inet sbfw whitelist_v4" {
-		t.Errorf("stdin first line = %q, want exact 'flush set inet sbfw whitelist_v4'", lines[0])
+	if lines[0] != "flush set ip cloudproxy whitelist_v4" {
+		t.Errorf("stdin first line = %q, want exact 'flush set ip cloudproxy whitelist_v4'", lines[0])
 	}
-	if !strings.HasPrefix(lines[1], "add element inet sbfw whitelist_v4 { ") || !strings.HasSuffix(lines[1], " }") {
+	if !strings.HasPrefix(lines[1], "add element ip cloudproxy whitelist_v4 { ") || !strings.HasSuffix(lines[1], " }") {
 		t.Errorf("stdin second line = %q, want add-element with braces", lines[1])
 	}
 	for _, want := range []string{"10.0.0.0/8", "192.168.1.0/24"} {
@@ -167,9 +200,12 @@ func TestApplyBypassRuleSet_NftTransaction(t *testing.T) {
 // TestVerifyBypassConsistency_HashMatch 守护 acceptance Test 3：
 //   - rule-set 文件 CIDR 集合与 nft set CIDR 集合相同 → OK=true，两 hash 相等
 //   - 集合不同 → OK=false，两 hash 字面值不同，Detail 非空
+//   - nft 列表请求必须经 fake pid 解析 + 透传给 nftJSONLister（BLOCKER-2 修复）
 func TestVerifyBypassConsistency_HashMatch(t *testing.T) {
 	hostID := "h-verify"
 	hostDir := withTempGatewayBase(t, hostID)
+	const fakePID = 9999
+	withFakeWorkerNetNSPIDLookup(t, fakePID)
 
 	cidrsJSON := json.RawMessage(`{"version":3,"rules":[{"ip_cidr":["10.0.0.0/8","192.168.1.0/24"]}]}`)
 	if err := os.WriteFile(filepath.Join(hostDir, "whitelist-cidrs.json"), cidrsJSON, 0o644); err != nil {
@@ -179,13 +215,17 @@ func TestVerifyBypassConsistency_HashMatch(t *testing.T) {
 	// case A: nft 返回相同集合（混合 prefix + 裸 string 形式）
 	matchingNftJSON := []byte(`{"nftables":[
       {"metainfo":{}},
-      {"set":{"family":"inet","table":"sbfw","name":"whitelist_v4","type":"ipv4_addr",
+      {"set":{"family":"ip","table":"cloudproxy","name":"whitelist_v4","type":"ipv4_addr",
               "elem":[
                 {"prefix":{"addr":"10.0.0.0","len":8}},
                 {"prefix":{"addr":"192.168.1.0","len":24}}
               ]}}
     ]}`)
-	withFakeNftJSONLister(t, func(_ context.Context, _ string) ([]byte, error) { return matchingNftJSON, nil })
+	var listerPIDs []int
+	withFakeNftJSONLister(t, func(_ context.Context, pid int, _ string) ([]byte, error) {
+		listerPIDs = append(listerPIDs, pid)
+		return matchingNftJSON, nil
+	})
 
 	res, err := VerifyBypassConsistency(context.Background(), hostID)
 	if err != nil {
@@ -200,14 +240,17 @@ func TestVerifyBypassConsistency_HashMatch(t *testing.T) {
 	if res.RuleSetSHA256 != res.NftSetSHA256 {
 		t.Errorf("matching sets must produce equal hashes: %+v", res)
 	}
+	if len(listerPIDs) == 0 || listerPIDs[0] != fakePID {
+		t.Errorf("nftJSONLister should be called with worker netns pid=%d, got %v", fakePID, listerPIDs)
+	}
 
 	// case B: nft 返回不同集合
 	driftedNftJSON := []byte(`{"nftables":[
       {"metainfo":{}},
-      {"set":{"family":"inet","table":"sbfw","name":"whitelist_v4","type":"ipv4_addr",
+      {"set":{"family":"ip","table":"cloudproxy","name":"whitelist_v4","type":"ipv4_addr",
               "elem":[{"prefix":{"addr":"172.16.0.0","len":12}}]}}
     ]}`)
-	withFakeNftJSONLister(t, func(_ context.Context, _ string) ([]byte, error) { return driftedNftJSON, nil })
+	withFakeNftJSONLister(t, func(_ context.Context, _ int, _ string) ([]byte, error) { return driftedNftJSON, nil })
 
 	res2, err := VerifyBypassConsistency(context.Background(), hostID)
 	if err != nil {
@@ -233,6 +276,7 @@ func TestVerifyBypassConsistency_HashMatch(t *testing.T) {
 func TestApplyBypassRuleSet_NftFailureRollback(t *testing.T) {
 	hostID := "h-nft-fail"
 	hostDir := withTempGatewayBase(t, hostID)
+	withFakeWorkerNetNSPIDLookup(t, 1234)
 
 	// 预置旧内容：模拟之前已经 apply 过一次的 snapshot 文件
 	oldContent := []byte(`{"version":3,"rules":[{"ip_cidr":["172.20.0.0/16"]}]}`)
@@ -241,7 +285,7 @@ func TestApplyBypassRuleSet_NftFailureRollback(t *testing.T) {
 		t.Fatalf("seed old cidrs file: %v", err)
 	}
 
-	withFakeNftRunner(t, func(_ context.Context, _ string) ([]byte, error) {
+	withFakeNftRunner(t, func(_ context.Context, _ int, _ string) ([]byte, error) {
 		return []byte("nft: syntax error simulated"), errors.New("exit status 1")
 	})
 
@@ -275,6 +319,41 @@ func TestApplyBypassRuleSet_NftFailureRollback(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "nft") {
 		t.Errorf("err should mention nft: %v", err)
+	}
+}
+
+// TestApplyBypassRuleSet_PidLookupFailure 守护 BLOCKER-2 修复的逆向不变量：
+// 当 workerNetNSPIDLookup 解析失败（worker 容器不在线）时，ApplyBypassRuleSet
+// 必须立刻返回错误，**绝不**调用 nftRunner、**绝不**写盘。
+func TestApplyBypassRuleSet_PidLookupFailure(t *testing.T) {
+	hostID := "h-pid-fail"
+	hostDir := withTempGatewayBase(t, hostID)
+
+	prev := workerNetNSPIDLookup
+	workerNetNSPIDLookup = func(_ context.Context, _ string) (int, error) {
+		return 0, errors.New("worker container not running")
+	}
+	t.Cleanup(func() { workerNetNSPIDLookup = prev })
+
+	captured := withFakeNftRunner(t, func(_ context.Context, _ int, _ string) ([]byte, error) {
+		t.Fatalf("nftRunner must not be invoked when pid lookup fails")
+		return nil, nil
+	})
+
+	cidrs := json.RawMessage(`{"version":3,"rules":[{"ip_cidr":["10.0.0.0/8"]}]}`)
+	domains := json.RawMessage(`{"version":3,"rules":[]}`)
+	err := ApplyBypassRuleSet(context.Background(), hostID, cidrs, domains)
+	if err == nil {
+		t.Fatal("ApplyBypassRuleSet should return error when pid lookup fails")
+	}
+	if !strings.Contains(err.Error(), "worker netns pid") {
+		t.Errorf("err should mention 'worker netns pid', got %v", err)
+	}
+	if len(*captured) != 0 {
+		t.Errorf("nftRunner must not be called when pid lookup fails, got %d invocations", len(*captured))
+	}
+	if _, statErr := os.Stat(filepath.Join(hostDir, "whitelist-cidrs.json")); !os.IsNotExist(statErr) {
+		t.Errorf("whitelist-cidrs.json must not exist when pid lookup fails, stat=%v", statErr)
 	}
 }
 
