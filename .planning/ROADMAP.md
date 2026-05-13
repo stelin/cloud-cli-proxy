@@ -10,6 +10,7 @@
 - ✅ **v3.0 远端开发体验升级** — Phases 29-35 (shipped 2026-04-23) — [Archive](milestones/v3.0-ROADMAP.md)
 - ✅ **v3.1 映射语义补齐与懒加载** — Phases 36-37 (shipped 2026-04-24) — [Archive](milestones/v3.1-ROADMAP.md)
 - ✅ **v3.4 多形态容器接入** — Phases 38-44 (shipped 2026-05-08) — [Archive](milestones/v3.4-ROADMAP.md)
+- ✅ **v3.5 网络白名单与 DNS 拆分解析** — Phases 45-47 (shipped 2026-05-13) — [Archive](milestones/v3.5-ROADMAP.md)
 
 ## Phases
 

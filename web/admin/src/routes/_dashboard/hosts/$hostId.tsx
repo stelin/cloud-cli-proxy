@@ -35,6 +35,7 @@ import {
 } from "@/hooks/use-hosts";
 import { useTaskPolling } from "@/hooks/use-tasks";
 import { useSSE } from "@/hooks/use-sse";
+import { buildSSEUrl } from "@/lib/sse-manager";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -59,6 +60,7 @@ import { ChangeRootPasswordDialog } from "@/components/hosts/change-root-passwor
 import { ClaudeSettingsDialog } from "@/components/hosts/claude-settings-dialog";
 import { ClaudeStatusCard } from "@/components/hosts/claude-status-card";
 import { RebuildDialog } from "@/components/hosts/rebuild-dialog";
+import { BypassTab } from "@/components/bypass/bypass-tab";
 import {
   Dialog,
   DialogContent,
@@ -113,7 +115,7 @@ function HostDetailPage() {
 
   const { data: task } = useTaskPolling(upgradeTaskId);
 
-  useSSE(`${window.location.origin}/v1/admin/sse?topics=tasks`, (msg) => {
+  useSSE(buildSSEUrl("/v1/admin/sse", "tasks", getToken()), (msg) => {
     if (msg.topic === "tasks" && msg.action === "progress" && msg.id === upgradeTaskId) {
       const payload = msg.payload as {
         percent?: number;
@@ -415,6 +417,14 @@ function HostDetailPage() {
 
       {/* ===== Claude 状态 ===== */}
       <ClaudeStatusCard hostId={hostId} hostStatus={host.status} />
+
+      {/* ===== 代理白名单（BYPASS-UI-01） ===== */}
+      <div
+        id="bypass"
+        className="rounded-xl border border-border/60 bg-card p-6 shadow-sm"
+      >
+        <BypassTab hostId={hostId} />
+      </div>
 
       {/* ===== Dialogs ===== */}
       <RotatePasswordDialog userId={user.id} open={rotateLoginOpen} onOpenChange={setRotateLoginOpen} />

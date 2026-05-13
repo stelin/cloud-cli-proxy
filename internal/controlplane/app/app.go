@@ -155,6 +155,13 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		AdminUsers:     repo,
 		AdminEgressIPs: repo,
 		AdminBindings:  repo,
+		AdminBypassPresets:  repo,
+		AdminBypassRules:    repo,
+		AdminBypassBindings: repo,
+		// Phase 46 Plan 02：snapshot + audit log 读写。
+		AdminBypassSnapshots: repo,
+		AdminBypassAuditLog:  repo,
+		// AdminBypassProxy 留空，router 会自动复用 AdminEgressIPs。
 		AdminHosts:          repo,
 		AdminClaudeAccounts: repo, // Phase 33: 复用 Repository.BeginTx 满足 AdminClaudeAccountStore
 		AgentClient:         agentRunner,

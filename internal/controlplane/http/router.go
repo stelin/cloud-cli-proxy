@@ -45,6 +45,13 @@ type Dependencies struct {
 	AdminUsers      AdminUserStore
 	AdminEgressIPs  AdminEgressIPStore
 	AdminBindings   AdminBindingStore
+	AdminBypassPresets  AdminBypassPresetStore
+	AdminBypassRules    AdminBypassRuleStore
+	AdminBypassBindings AdminBypassBindingStore
+	AdminBypassProxy    AdminBypassProxyIPProvider // 通常复用 AdminEgressIPs
+	// Phase 46 Plan 02：snapshot / audit-log 写读分离。
+	AdminBypassSnapshots AdminBypassSnapshotStore
+	AdminBypassAuditLog  AdminBypassAuditLogStore
 	AdminHosts          AdminHostStore
 	AdminClaudeAccounts AdminClaudeAccountStore // Phase 33 D-17
 	AgentClient         HostActionRunner        // Phase 33 D-17 — interface 兼容 embedded + 远端两种模式
@@ -71,7 +78,11 @@ type HostLister interface {
 }
 
 type HostActionQueuer interface {
-	QueueHostAction(context.Context, string, agentapi.HostAction, string) (repository.Task, error)
+	// QueueHostAction 入队一个 host action。
+	// 第 4 参 requestedBy 是触发者标识（admin UI / system / user-id），用于 audit。
+	// 第 5 参 bypassSnapshotID 仅在 action=ActionReloadHostBypass 时承载 host_bypass_snapshots.id，
+	// 其它 action 传 "" 即可（runtime_service 会按 action 类型 gating）。
+	QueueHostAction(ctx context.Context, hostID string, action agentapi.HostAction, requestedBy string, bypassSnapshotID string) (repository.Task, error)
 }
 
 type TaskLister interface {
@@ -236,6 +247,51 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 			mux.Handle("DELETE /v1/admin/bindings/{bindingID}", adminGuard(bindingsHandler.Unbind()))
 		}
 
+		// Phase 46 Plan 01：Bypass Preset / Rule / Binding 后台 API
+		if deps.AdminBypassPresets != nil {
+			presetHandler := NewAdminBypassPresetsHandler(deps.Logger, deps.AdminBypassPresets, deps.EventRecorder)
+			mux.Handle("GET /v1/admin/bypass/presets", adminGuard(presetHandler.List()))
+			mux.Handle("POST /v1/admin/bypass/presets", adminGuard(presetHandler.Create()))
+			mux.Handle("GET /v1/admin/bypass/presets/{presetID}", adminGuard(presetHandler.Get()))
+			mux.Handle("PATCH /v1/admin/bypass/presets/{presetID}", adminGuard(presetHandler.Update()))
+			mux.Handle("DELETE /v1/admin/bypass/presets/{presetID}", adminGuard(presetHandler.Delete()))
+		}
+
+		if deps.AdminBypassRules != nil {
+			// 若未显式注入 ProxyIPProvider，退化到 AdminEgressIPs（接口子集兼容）。
+			var proxy AdminBypassProxyIPProvider = deps.AdminBypassProxy
+			if proxy == nil && deps.AdminEgressIPs != nil {
+				proxy = deps.AdminEgressIPs
+			}
+			ruleHandler := NewAdminBypassRulesHandler(deps.Logger, deps.AdminBypassRules, proxy, deps.EventRecorder)
+			mux.Handle("GET /v1/admin/bypass/rules", adminGuard(ruleHandler.List()))
+			mux.Handle("POST /v1/admin/bypass/rules", adminGuard(ruleHandler.Create()))
+			mux.Handle("POST /v1/admin/bypass/rules/validate", adminGuard(ruleHandler.Validate()))
+			mux.Handle("PATCH /v1/admin/bypass/rules/{ruleID}", adminGuard(ruleHandler.Update()))
+			mux.Handle("DELETE /v1/admin/bypass/rules/{ruleID}", adminGuard(ruleHandler.Delete()))
+		}
+
+		if deps.AdminBypassBindings != nil {
+			bypassBindingHandler := NewAdminBypassBindingsHandler(deps.Logger, deps.AdminBypassBindings, deps.EventRecorder)
+			mux.Handle("GET /v1/admin/hosts/{hostID}/bypass", adminGuard(bypassBindingHandler.ListByHost()))
+			mux.Handle("POST /v1/admin/hosts/{hostID}/bypass", adminGuard(bypassBindingHandler.Bind()))
+			mux.Handle("DELETE /v1/admin/bypass/bindings/{bindingID}", adminGuard(bypassBindingHandler.Unbind()))
+		}
+
+		// Phase 46 Plan 02：snapshot 写动作 + audit log 读端点。
+		if deps.AdminBypassSnapshots != nil {
+			sh := NewAdminBypassSnapshotsHandler(deps.Logger, deps.AdminBypassSnapshots, deps.HostActions, deps.EventRecorder)
+			mux.Handle("POST /v1/admin/hosts/{hostID}/bypass/preview", adminGuard(sh.Preview()))
+			mux.Handle("POST /v1/admin/hosts/{hostID}/bypass/apply", adminGuard(sh.Apply()))
+			mux.Handle("POST /v1/admin/hosts/{hostID}/bypass/rollback", adminGuard(sh.Rollback()))
+			mux.Handle("GET /v1/admin/hosts/{hostID}/bypass/effective", adminGuard(sh.Effective()))
+			mux.Handle("GET /v1/admin/hosts/{hostID}/bypass/consistency", adminGuard(sh.Consistency()))
+		}
+		if deps.AdminBypassAuditLog != nil {
+			ah := NewAdminBypassAuditLogHandler(deps.Logger, deps.AdminBypassAuditLog)
+			mux.Handle("GET /v1/admin/hosts/{hostID}/bypass/audit-log", adminGuard(ah.ListByHost()))
+		}
+
 		if deps.AdminHosts != nil {
 			hostsHandler := NewAdminHostsHandler(deps.Logger, deps.AdminHosts, deps.HostActions, deps.EventRecorder, deps.ImageLockPath)
 			mux.Handle("GET /v1/admin/hosts", adminGuard(hostsHandler.List()))
@@ -280,8 +336,10 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 			mux.Handle("GET /v1/admin/events", adminGuard(eventsHandler.List()))
 		}
 
-		// SSE 实时推送端点
-		mux.HandleFunc("GET /v1/admin/sse", broadcast.Subscribe)
+		// SSE 实时推送端点 —— 必须套 adminGuard（CR-07）。
+		// EventSource 不能附 Authorization header，前端用 ?token=... 方式认证；
+		// AuthMiddleware.extractToken 已支持从 query param 提取，无需额外改造。
+		mux.Handle("GET /v1/admin/sse", adminGuard(nethttp.HandlerFunc(broadcast.Subscribe)))
 
 		if deps.SSHKeys != nil {
 			sshKeyHandler := NewSSHKeyHandler(deps.Logger, deps.SSHKeys)
@@ -314,8 +372,8 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 			mux.Handle("/v1/user/hosts/{hostID}/vnc/{path...}", userGuard(userVNCProxy))
 		}
 
-		// 用户门户 SSE 实时推送端点
-		mux.HandleFunc("GET /v1/user/sse", broadcast.Subscribe)
+		// 用户门户 SSE 实时推送端点 —— 同样要求 userGuard 鉴权（CR-07）。
+		mux.Handle("GET /v1/user/sse", userGuard(nethttp.HandlerFunc(broadcast.Subscribe)))
 
 		if deps.SSHKeys != nil {
 			userSSHKeyHandler := NewSSHKeyHandler(deps.Logger, deps.SSHKeys)

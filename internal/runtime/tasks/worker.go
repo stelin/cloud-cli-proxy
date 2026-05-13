@@ -44,6 +44,11 @@ type WorkerRepo interface {
 	RecordEvent(ctx context.Context, params repository.RecordEventParams) (repository.Event, error)
 	UpsertClaudeAccountPersistentVolumeName(ctx context.Context, accountID, volumeName string) error // Phase 33 D-06
 	ReportTaskProgress(ctx context.Context, taskID string, percent int, message string) error
+	// Phase 47 Plan 01：worker.handleReloadHostBypass 依赖以下三个 Bypass 方法。
+	// Repository 已在 Phase 45-03 落地三套查询（见 internal/store/repository/queries_bypass.go）。
+	GetBypassSnapshotByID(ctx context.Context, id string) (repository.BypassSnapshot, error)
+	UpdateBypassSnapshotStatus(ctx context.Context, id string, status string) (repository.BypassSnapshot, error)
+	GetLatestAppliedBypassSnapshot(ctx context.Context, hostID string) (repository.BypassSnapshot, error)
 }
 
 type Worker struct {
@@ -98,6 +103,10 @@ func (w *Worker) Execute(ctx context.Context, request agentapi.HostActionRequest
 		err = w.validateAndPrepare(ctx, request.HostID)
 	case agentapi.ActionVolumeRemove:
 		err = w.removeVolumes(ctx, request)
+	case agentapi.ActionReloadHostBypass:
+		// Phase 47 Plan 01：真实 reload 流程在 worker_bypass_reload.go。
+		// 旧 Phase 46 占位字面量已移除（Plan 47-01 Task 3 success_criteria）。
+		err = w.handleReloadHostBypass(ctx, request)
 	default:
 		err = fmt.Errorf("unsupported host action: %s", request.Action)
 	}
@@ -110,6 +119,14 @@ func (w *Worker) Execute(ctx context.Context, request agentapi.HostActionRequest
 		errorCode := "host_action_failed"
 		if strings.HasPrefix(err.Error(), "volume_in_use:") {
 			errorCode = "volume_in_use"
+		}
+		// Phase 47 Plan 01：reload_host_bypass 错误码映射。
+		// ErrBypassReloadInvalidInput → 调用方契约违规（空 snapshot id），不可重试。
+		// ErrBypassReloadFailed → 健康检查耗尽且无可回滚 snapshot，状态终态。
+		if errors.Is(err, ErrBypassReloadInvalidInput) {
+			errorCode = "bypass_reload_invalid_input"
+		} else if errors.Is(err, ErrBypassReloadFailed) {
+			errorCode = "bypass_reload_failed"
 		}
 		var sshErr *SSHNotReadyError
 		var netErr *network.NetworkError
@@ -189,7 +206,7 @@ func actionToHostStatus(action agentapi.HostAction) string {
 	}
 }
 
-func (w *Worker) buildCreateArgs(request agentapi.HostActionRequest, containerName, hostname string) ([]string, error) {
+func (w *Worker) buildCreateArgs(request agentapi.HostActionRequest, containerName, hostname string, egressCfg *network.EgressConfig) ([]string, error) {
 	homeDir := firstNonEmpty(request.HomeDir, hostHomeDir(request.HostID))
 
 	args := []string{
@@ -205,7 +222,12 @@ func (w *Worker) buildCreateArgs(request agentapi.HostActionRequest, containerNa
 		"--label", fmt.Sprintf("cloud-cli-proxy.host_id=%s", request.HostID),
 		"--hostname", hostname,
 		"--shm-size", "1g",
+		// Phase 47 Plan 02 I6 双保险：disable_ipv6 同时锁 all + default。
+		// all 锁现有接口，default 锁未来创建的接口（如 Docker bridge reconnect）；
+		// 仅设 all 会在某些 Docker / 内核组合下被 default 路径绕过。配合 worker
+		// netns nft IPv6 表 input6 / output6 policy=drop，构成双层 fail-closed。
 		"--sysctl", "net.ipv6.conf.all.disable_ipv6=1",
+		"--sysctl", "net.ipv6.conf.default.disable_ipv6=1",
 	}
 
 	// macOS/Windows: expose SSH port via host port mapping because Docker Desktop
@@ -266,6 +288,21 @@ func (w *Worker) buildCreateArgs(request agentapi.HostActionRequest, containerNa
 
 	for key, value := range request.Labels {
 		args = append(args, "--label", fmt.Sprintf("%s=%s", key, value))
+	}
+
+	// Phase 45 Plan 02：容器 DNS 入口锁。当存在 sing-box gateway 出口配置时，
+	// 把 host 上由 PrepareGateway 写好的 resolv.conf / nsswitch.conf 以 ro
+	// bind mount 接管到容器内对应位置：
+	//   - /etc/resolv.conf  → nameserver 172.19.0.1（gateway tun0）
+	//   - /etc/nsswitch.conf → hosts: files dns
+	// ro 意味着容器内任何对这两个文件的写入都会被拒绝，闭合 BYPASS-DNS-03/04。
+	// 必须在 PrepareGateway 之后、docker create 之前注入（call-order 测试守护）。
+	if egressCfg != nil && egressCfg.Proxy != nil {
+		gwDir := network.GatewayConfigDir(request.HostID)
+		args = append(args,
+			"-v", gwDir+"/resolv.conf:/etc/resolv.conf:ro",
+			"-v", gwDir+"/nsswitch.conf:/etc/nsswitch.conf:ro",
+		)
 	}
 
 	args = append(args, request.ImageName)
@@ -348,7 +385,47 @@ func (w *Worker) createHost(ctx context.Context, request agentapi.HostActionRequ
 		hostname = containerName
 	}
 
-	args, err := w.buildCreateArgs(request, containerName, hostname)
+	// Phase 45 Plan 02：在 docker create 之前先起 sing-box gateway 并写好 DNS
+	// 源文件，保证 worker 容器一旦 docker start，ro bind mount 接管的
+	// /etc/resolv.conf 已指向监听的 tun0 (172.19.0.1)。调用顺序硬约束：
+	//   PrepareGateway → buildCreateArgs → docker create → docker start → PrepareHost
+	egressCfg, err := w.buildEgressConfig(ctx, request.HostID)
+	if err != nil {
+		return err
+	}
+	// Phase 45 CR-02：PrepareGateway 一旦写盘 + 启动 gateway 容器成功，
+	// 任何后续失败（buildCreateArgs / docker create / docker start /
+	// PrepareHost / waitForSSH）都必须把 gateway 容器 + DATA_DIR/gateway/<host>/*
+	// 清干净。否则残留的 sing-box gateway 仍在向上游代理转发流量（资源
+	// 泄漏 + 出口 IP 计费 + 攻击面），直到下次 createHost 进 PrepareGateway
+	// 第 85 行的 teardownGateway 才能自愈，间隔可能数小时。
+	//
+	// 用 gatewayPrepared 旗标 + defer 守护：成功路径末尾置 false 关闭 defer。
+	// defer 内用 context.Background() 而非 ctx，避免 task ctx 已超时取消时
+	// CleanupHost 也被中断。CleanupHost 内部已是 best-effort 幂等。
+	var gatewayPrepared bool
+	if egressCfg != nil {
+		spec := network.HostNetworkSpec{
+			HostID: request.HostID,
+			Egress: egressCfg,
+		}
+		if err := w.provider.PrepareGateway(ctx, spec); err != nil {
+			w.recordNetworkError(ctx, request.HostID, err)
+			return fmt.Errorf("prepare gateway before create: %w", err)
+		}
+		gatewayPrepared = true
+		defer func() {
+			if !gatewayPrepared {
+				return
+			}
+			cleanupCtx := context.Background()
+			if cleanupErr := w.provider.CleanupHost(cleanupCtx, network.HostNetworkSpec{HostID: request.HostID}); cleanupErr != nil {
+				w.recordNetworkError(cleanupCtx, request.HostID, fmt.Errorf("cleanup gateway after createHost failure: %w", cleanupErr))
+			}
+		}()
+	}
+
+	args, err := w.buildCreateArgs(request, containerName, hostname, egressCfg)
 	if err != nil {
 		return err
 	}
@@ -361,14 +438,10 @@ func (w *Worker) createHost(ctx context.Context, request agentapi.HostActionRequ
 		return fmt.Errorf("start container after create: %w", err)
 	}
 
-	egressCfg, err := w.buildEgressConfig(ctx, request.HostID)
-	if err != nil {
-		return err
-	}
 	if egressCfg != nil {
 		spec := network.HostNetworkSpec{
-			HostID:       request.HostID,
-			Egress:       egressCfg,
+			HostID: request.HostID,
+			Egress: egressCfg,
 		}
 		if err := w.provider.PrepareHost(ctx, spec); err != nil {
 			w.recordNetworkError(ctx, request.HostID, err)
@@ -380,6 +453,8 @@ func (w *Worker) createHost(ctx context.Context, request agentapi.HostActionRequ
 		return err
 	}
 
+	// 全部成功，关闭 defer 清理。
+	gatewayPrepared = false
 	return nil
 }
 
@@ -397,10 +472,10 @@ func (w *Worker) startHost(ctx context.Context, request agentapi.HostActionReque
 		}
 	}
 
-	if err := w.runDocker(ctx, "start", containerName); err != nil {
-		return err
-	}
-
+	// Phase 45 Plan 02：在 docker start 之前先起 gateway + 写 DNS 源文件，
+	// 保证 worker 容器一旦运行，ro bind mount 引用的 /etc/resolv.conf 指向已
+	// 监听的 tun0 (172.19.0.1)。PrepareGateway 内部含 teardownGateway → 幂等
+	// 重起，重复调用安全。
 	egressCfg, err := w.buildEgressConfig(ctx, request.HostID)
 	if err != nil {
 		return err
@@ -408,8 +483,23 @@ func (w *Worker) startHost(ctx context.Context, request agentapi.HostActionReque
 
 	if egressCfg != nil {
 		spec := network.HostNetworkSpec{
-			HostID:       request.HostID,
-			Egress:       egressCfg,
+			HostID: request.HostID,
+			Egress: egressCfg,
+		}
+		if err := w.provider.PrepareGateway(ctx, spec); err != nil {
+			w.recordNetworkError(ctx, request.HostID, err)
+			return fmt.Errorf("prepare gateway before start: %w", err)
+		}
+	}
+
+	if err := w.runDocker(ctx, "start", containerName); err != nil {
+		return err
+	}
+
+	if egressCfg != nil {
+		spec := network.HostNetworkSpec{
+			HostID: request.HostID,
+			Egress: egressCfg,
 		}
 		if err := w.provider.PrepareHost(ctx, spec); err != nil {
 			w.recordNetworkError(ctx, request.HostID, err)
