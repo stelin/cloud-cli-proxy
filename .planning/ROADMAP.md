@@ -135,7 +135,7 @@
 
 **Plans**: 5 plans
 
-- [ ] 45-01-PLAN.md — `tests/e2e/` 目录骨架 + testcontainers-go + testify/suite 接入
+- [x] 45-01-PLAN.md — `tests/e2e/` 目录骨架 + testcontainers-go + testify/suite 接入 — completed 2026-05-14
 - [ ] 45-02-PLAN.md — Scenario 抽象（控制面 + host-agent + Postgres + N 个用户容器 + sing-box gateway 拓扑声明式描述）
 - [ ] 45-03-PLAN.md — CI 双层架构（hosted runner 跑非特权测试 + self-hosted Linux runner 跑特权网络栈 e2e）
 - [ ] 45-04-PLAN.md — 失败自动归档 artifact 集成（容器日志 / nft ruleset / netns 列表 / 路由表 / pg dump）
