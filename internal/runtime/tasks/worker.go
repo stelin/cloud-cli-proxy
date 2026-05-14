@@ -214,8 +214,18 @@ func (w *Worker) buildCreateArgs(request agentapi.HostActionRequest, containerNa
 		"--name", containerName,
 		"--network", "bridge",
 		"--restart", "no",
+		// Phase 51 QUAL-06 / 闭 Phase 49 GAP-1：worker capability 收紧。
+		//   - 保留 --cap-add NET_ADMIN：sing-box 在 worker netns 内创建 tun0
+		//     设备需要 CAP_NET_ADMIN（sing-box 进程通过 nsenter -n 进入 netns
+		//     执行），无法运行时 setcap，必须容器级保留。
+		//   - 删除 --cap-add SYS_ADMIN：grep 业务代码不依赖；fuse mount 走
+		//     `--device /dev/fuse + apparmor=unconfined` 路径，fusermount setuid
+		//     root 即可，无需 SYS_ADMIN。
+		//   - 显式 --cap-drop NET_RAW：docker 默认 capability 集合含 CAP_NET_RAW，
+		//     必须显式 drop 才能去掉；移除后容器内 SOCK_RAW 创建立刻 PermissionDenied，
+		//     闭 Phase 49 LEAK-06 攻击面。
 		"--cap-add", "NET_ADMIN",
-		"--cap-add", "SYS_ADMIN",
+		"--cap-drop", "NET_RAW",
 		"--device", "/dev/fuse",
 		"--security-opt", "apparmor=unconfined",
 		"--label", "cloud-cli-proxy.managed=true",
