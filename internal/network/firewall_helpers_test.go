@@ -250,6 +250,97 @@ func TestBuildOifUDPDportDropExprs(t *testing.T) {
 	}
 }
 
+// TestBuildIPDaddrCIDRDropExprs_LinkLocal Phase 51 QUAL-05 + 闭 Phase 49 GAP-2：
+// 验证 169.254.0.0/16 显式 drop counter 规则的 expr 序列。
+func TestBuildIPDaddrCIDRDropExprs_LinkLocal(t *testing.T) {
+	exprs, err := buildIPDaddrCIDRDropExprs("169.254.0.0/16")
+	if err != nil {
+		t.Fatalf("buildIPDaddrCIDRDropExprs: %v", err)
+	}
+
+	// 必有 daddr Payload (offset=16, len=4)
+	foundDaddr := false
+	for _, e := range exprs {
+		p, ok := e.(*expr.Payload)
+		if !ok {
+			continue
+		}
+		if p.Base == expr.PayloadBaseNetworkHeader && p.Offset == 16 && p.Len == 4 {
+			foundDaddr = true
+			break
+		}
+	}
+	if !foundDaddr {
+		t.Fatal("missing daddr payload")
+	}
+
+	// 必有 Bitwise mask /16 (0xff 0xff 0x00 0x00)
+	foundMask := false
+	wantMask := []byte{0xff, 0xff, 0x00, 0x00}
+	for _, e := range exprs {
+		b, ok := e.(*expr.Bitwise)
+		if !ok {
+			continue
+		}
+		if bytes.Equal(b.Mask, wantMask) {
+			foundMask = true
+			break
+		}
+	}
+	if !foundMask {
+		t.Fatal("missing /16 bitwise mask")
+	}
+
+	// 必有 Cmp 比 169.254.0.0
+	foundNetwork := false
+	want := net.ParseIP("169.254.0.0").To4()
+	for _, e := range exprs {
+		c, ok := e.(*expr.Cmp)
+		if !ok {
+			continue
+		}
+		if bytes.Equal(c.Data, want) {
+			foundNetwork = true
+			break
+		}
+	}
+	if !foundNetwork {
+		t.Fatal("missing cmp 169.254.0.0")
+	}
+
+	// 必有 Counter
+	foundCounter := false
+	for _, e := range exprs {
+		if _, ok := e.(*expr.Counter); ok {
+			foundCounter = true
+			break
+		}
+	}
+	if !foundCounter {
+		t.Fatal("missing Counter expr")
+	}
+
+	// 末尾必须是 Verdict Drop
+	last, ok := exprs[len(exprs)-1].(*expr.Verdict)
+	if !ok || last.Kind != expr.VerdictDrop {
+		t.Fatalf("last expr verdict = %v, want Drop", last)
+	}
+}
+
+func TestBuildIPDaddrCIDRDropExprs_RejectsIPv6(t *testing.T) {
+	_, err := buildIPDaddrCIDRDropExprs("fe80::/10")
+	if err == nil {
+		t.Errorf("expected error for IPv6 CIDR")
+	}
+}
+
+func TestBuildIPDaddrCIDRDropExprs_RejectsGarbage(t *testing.T) {
+	_, err := buildIPDaddrCIDRDropExprs("not-a-cidr")
+	if err == nil {
+		t.Errorf("expected error for garbage input")
+	}
+}
+
 // TestBuildLogDropExprs 验证链末 counter + log + drop 兜底规则。
 func TestBuildLogDropExprs(t *testing.T) {
 	exprs := buildLogDropExprs(BypassNftLogPrefix)

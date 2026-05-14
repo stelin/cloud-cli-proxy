@@ -183,6 +183,15 @@ func applyWorkerIPv4Rules(conn *nftables.Conn, eth0IfIndex, loIfIndex int, gwIP,
 	// ESTABLISHED/RELATED 允许（eth0）
 	addOifCtEstablishedRule(conn, table, outputChain, eth0IfIndex)
 
+	// Phase 51 QUAL-05 / 闭 Phase 49 GAP-2：IPv4 169.254.0.0/16 link-local
+	// 显式 drop counter。放在 gwIP / DNS / 白名单 accept 之前，确保即便后续
+	// accept 规则误覆盖 169.254 子网（如 IMDS / link-local DHCP），也会先被
+	// 此 drop 命中。comment "linklocal-drop" 与 Phase 49 LEAK-07 用例
+	// HasLinkLocalDropRule 契约对齐。
+	// 错误处理：addIPDaddrCIDRDropRule 仅在 CIDR 解析失败时返回 err（常量字面
+	// 量，永远成功）；为不破坏 applyWorkerIPv4Rules 的 void 签名，吸收 err。
+	_ = addIPDaddrCIDRDropRule(conn, table, outputChain, "169.254.0.0/16", "linklocal-drop")
+
 	// 到 gwIP 的所有流量允许（eth0，代理隧道）
 	addOifDstIPAcceptRule(conn, table, outputChain, eth0IfIndex, gwIP)
 
@@ -264,6 +273,8 @@ func addIifSrcIPAcceptRule(conn *nftables.Conn, table *nftables.Table, chain *nf
 				Register: 1,
 				Data:     srcIP.To4(),
 			},
+			// Phase 51 QUAL-05：counter 表达式
+			&expr.Counter{},
 			&expr.Verdict{Kind: expr.VerdictAccept},
 		},
 	})
@@ -292,6 +303,8 @@ func addOifDstIPAcceptRule(conn *nftables.Conn, table *nftables.Table, chain *nf
 				Register: 1,
 				Data:     dstIP.To4(),
 			},
+			// Phase 51 QUAL-05：counter 表达式
+			&expr.Counter{},
 			&expr.Verdict{Kind: expr.VerdictAccept},
 		},
 	})
@@ -326,6 +339,8 @@ func addOifProtoDstPortAcceptRule(conn *nftables.Conn, table *nftables.Table, ch
 				Register: 1,
 				Data:     binaryutil.BigEndian.PutUint16(dport),
 			},
+			// Phase 51 QUAL-05：counter 表达式
+			&expr.Counter{},
 			&expr.Verdict{Kind: expr.VerdictAccept},
 		},
 	})

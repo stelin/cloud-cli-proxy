@@ -3,6 +3,7 @@
 package network
 
 import (
+	"fmt"
 	"net"
 
 	"github.com/google/nftables"
@@ -44,6 +45,9 @@ func addOifAcceptRule(conn *nftables.Conn, table *nftables.Table, chain *nftable
 				Register: 1,
 				Data:     binaryutil.NativeEndian.PutUint32(uint32(ifIndex)),
 			},
+			// Phase 51 QUAL-05：counter 表达式让 nft list ruleset 输出命中数，
+			// 便于 LEAK-* 用例与排障时识别哪些规则真的命中。
+			&expr.Counter{},
 			&expr.Verdict{Kind: expr.VerdictAccept},
 		},
 	})
@@ -60,6 +64,8 @@ func addIifAcceptRule(conn *nftables.Conn, table *nftables.Table, chain *nftable
 				Register: 1,
 				Data:     binaryutil.NativeEndian.PutUint32(uint32(ifIndex)),
 			},
+			// Phase 51 QUAL-05：counter 表达式
+			&expr.Counter{},
 			&expr.Verdict{Kind: expr.VerdictAccept},
 		},
 	})
@@ -89,6 +95,8 @@ func addOifCtEstablishedRule(conn *nftables.Conn, table *nftables.Table, chain *
 				Register: 1,
 				Data:     []byte{0, 0, 0, 0},
 			},
+			// Phase 51 QUAL-05：counter 表达式
+			&expr.Counter{},
 			&expr.Verdict{Kind: expr.VerdictAccept},
 		},
 	})
@@ -118,6 +126,8 @@ func addIifCtEstablishedRule(conn *nftables.Conn, table *nftables.Table, chain *
 				Register: 1,
 				Data:     []byte{0, 0, 0, 0},
 			},
+			// Phase 51 QUAL-05：counter 表达式
+			&expr.Counter{},
 			&expr.Verdict{Kind: expr.VerdictAccept},
 		},
 	})
@@ -151,6 +161,8 @@ func addIifTCPDportAcceptRule(conn *nftables.Conn, table *nftables.Table, chain 
 				Register: 1,
 				Data:     binaryutil.BigEndian.PutUint16(port),
 			},
+			// Phase 51 QUAL-05：counter 表达式
+			&expr.Counter{},
 			&expr.Verdict{Kind: expr.VerdictAccept},
 		},
 	})
@@ -219,6 +231,8 @@ func buildOifSkuidIPPortAcceptExprs(ifIndex int, uid uint32, dstIP net.IP, dport
 			Register: 1,
 			Data:     binaryutil.BigEndian.PutUint16(dport),
 		},
+		// Phase 51 QUAL-05：counter 表达式
+		&expr.Counter{},
 		&expr.Verdict{Kind: expr.VerdictAccept},
 	}
 }
@@ -242,6 +256,8 @@ func buildOifNameAcceptExprs(ifName string) []expr.Any {
 			Register: 1,
 			Data:     ifNameBytes(ifName),
 		},
+		// Phase 51 QUAL-05：counter 表达式
+		&expr.Counter{},
 		&expr.Verdict{Kind: expr.VerdictAccept},
 	}
 }
@@ -275,6 +291,8 @@ func buildOifNamedSetMatchAcceptExprs(ifIndex int, set *nftables.Set) []expr.Any
 			SetName:        set.Name,
 			SetID:          set.ID,
 		},
+		// Phase 51 QUAL-05：counter 表达式
+		&expr.Counter{},
 		&expr.Verdict{Kind: expr.VerdictAccept},
 	}
 }
@@ -315,6 +333,8 @@ func buildOifUDPDportDropExprs(ifIndex int, dport uint16) []expr.Any {
 			Register: 1,
 			Data:     binaryutil.BigEndian.PutUint16(dport),
 		},
+		// Phase 51 QUAL-05：counter 表达式
+		&expr.Counter{},
 		&expr.Verdict{Kind: expr.VerdictDrop},
 	}
 }
@@ -347,4 +367,72 @@ func addLogDropRule(conn *nftables.Conn, table *nftables.Table, chain *nftables.
 		Chain: chain,
 		Exprs: buildLogDropExprs(prefix),
 	})
+}
+
+// buildIPDaddrCIDRDropExprs Phase 51 QUAL-05 / 闭 Phase 49 GAP-2：构造
+// IPv4 daddr 落在 CIDR 内 → counter + drop 规则。专门用于 169.254.0.0/16
+// link-local 显式 drop 兜底（与 Phase 49 LEAK-07 用例锁定的契约对齐）。
+//
+// expr 序列：
+//   - Payload(daddr offset=16, len=4) → reg1
+//   - Bitwise(reg1 AND mask) → reg1
+//   - Cmp(reg1 == network)
+//   - Counter
+//   - Verdict(Drop)
+//
+// network / mask 来自 net.ParseCIDR。
+func buildIPDaddrCIDRDropExprs(cidr string) ([]expr.Any, error) {
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nil, err
+	}
+	ip4 := ipNet.IP.To4()
+	if ip4 == nil {
+		return nil, fmt.Errorf("only IPv4 CIDR supported, got %q", cidr)
+	}
+	if len(ipNet.Mask) != 4 {
+		return nil, fmt.Errorf("expected 4-byte mask, got %d bytes", len(ipNet.Mask))
+	}
+	maskBytes := []byte(ipNet.Mask)
+	networkBytes := []byte(ip4)
+
+	return []expr.Any{
+		&expr.Payload{
+			DestRegister: 1,
+			Base:         expr.PayloadBaseNetworkHeader,
+			Offset:       16,
+			Len:          4,
+		},
+		&expr.Bitwise{
+			SourceRegister: 1,
+			DestRegister:   1,
+			Len:            4,
+			Mask:           maskBytes,
+			Xor:            []byte{0, 0, 0, 0},
+		},
+		&expr.Cmp{
+			Op:       expr.CmpOpEq,
+			Register: 1,
+			Data:     networkBytes,
+		},
+		&expr.Counter{},
+		&expr.Verdict{Kind: expr.VerdictDrop},
+	}, nil
+}
+
+// addIPDaddrCIDRDropRule 把 buildIPDaddrCIDRDropExprs 包装为真实 conn.AddRule。
+// userData 字段写入 comment 便于 nft list ruleset 输出识别（Phase 49 LEAK-07
+// 用例通过 ParseNftRules 读取 comment 命中契约）。
+func addIPDaddrCIDRDropRule(conn *nftables.Conn, table *nftables.Table, chain *nftables.Chain, cidr, comment string) error {
+	exprs, err := buildIPDaddrCIDRDropExprs(cidr)
+	if err != nil {
+		return err
+	}
+	conn.AddRule(&nftables.Rule{
+		Table:    table,
+		Chain:    chain,
+		Exprs:    exprs,
+		UserData: []byte(comment),
+	})
+	return nil
 }
