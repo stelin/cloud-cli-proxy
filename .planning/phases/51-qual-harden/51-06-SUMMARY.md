@@ -1,69 +1,41 @@
 ---
 phase: 51-qual-harden
 plan: 51-06
+title: QUAL-06 worker cap-drop NET_RAW + 删 SYS_ADMIN
 status: completed
-completed_at: 2026-05-14
+completed: 2026-05-14
 gap_closure:
   - phase-49-gap-1
 ---
 
-# 51-06 SUMMARY — worker `--cap-drop NET_RAW` + 删 `--cap-add SYS_ADMIN`
+# 51-06 QUAL-06 — worker `--cap-drop NET_RAW` + 删 SYS_ADMIN — SUMMARY
 
-## 落地清单
+## 变更
 
-- `internal/runtime/tasks/worker.go` 行 217-220 附近的 `buildCreateArgs` args
-  切片：
-  - **保留** `--cap-add NET_ADMIN`（按源码依赖：sing-box 在 worker netns 内
-    创建 tun0 设备需要 CAP_NET_ADMIN，sing-box 进程通过 `nsenter -n` 进入
-    netns 执行，必须容器级保留；运行时 setcap 不可行）。
-  - **删除** `--cap-add SYS_ADMIN`（grep 业务代码不依赖；fuse mount 走
-    `--device /dev/fuse + apparmor=unconfined`，fusermount setuid root 即可）。
-  - **新增** `--cap-drop NET_RAW`（docker 默认 capability 集合含 CAP_NET_RAW，
-    必须显式 drop 才能去掉；移除后容器内 SOCK_RAW 创建 PermissionDenied，闭
-    Phase 49 LEAK-06 攻击面）。
-- `internal/runtime/tasks/worker_caps_test.go`（新）：`TestBuildCreateArgs_
-  CapabilitiesLocked` 单测锁定上述三条契约。
+- `internal/runtime/tasks/worker.go::buildCreateArgs`：
+  - **保留** `--cap-add NET_ADMIN`：sing-box 在 worker netns 内创建 tun0 设备必须依赖 `CAP_NET_ADMIN`（sing-box 进程通过 `nsenter -n` 进入 worker netns 执行，运行时 setcap 无法事先生效）。
+  - **删除** `--cap-add SYS_ADMIN`：grep 业务路径不依赖；fuse 已用 `--device /dev/fuse + --security-opt apparmor=unconfined`，fusermount setuid root 已足够。
+  - **显式追加** `--cap-drop NET_RAW`：docker 默认 capability 集合含 `CAP_NET_RAW`，必须显式 drop 才能去掉；移除后容器内 `socket(AF_INET, SOCK_RAW, ...)` 立即 `PermissionDenied`，闭 Phase 49 LEAK-06 攻击面。
+  - 顶部插入 doc comment 说明上述三条决策。
+- `internal/runtime/tasks/worker_caps_test.go`（新文件）：`TestBuildCreateArgs_CapabilitiesLocked` 断言 args 切片三条契约：含 `--cap-add NET_ADMIN`、不含 `--cap-add SYS_ADMIN`、含 `--cap-drop NET_RAW`。
 
-## 验证
+## 闸
 
-- `go build ./...` + `GOOS=linux go build ./...` PASS。
-- `go test ./internal/runtime/tasks/... -run BuildCreateArgs` PASS。
-- `go test ./... -count=1` 全绿。
+- `go build ./...` PASS。
+- `GOOS=linux go build ./...` + `GOOS=linux go build -tags='e2e linux' ./tests/e2e/...` PASS。
+- `go vet ./...` PASS。
+- `go test ./internal/runtime/tasks/... -run "Capabilities|BuildCreateArgs"`：5 个 PASS。
+- `go test ./... -count=1`：19 包全 PASS。
 
-## NET_ADMIN 保留决策（CONTEXT §Area 4 允许的折中）
+## 偏差与 fixture 影响
 
-CONTEXT §Area 4 明确允许「按源码实际依赖决定：若 host-agent / sing-box 真的
-依赖 worker netns 内 CAP_NET_ADMIN，则保留」。grep 结论：
+- **NET_ADMIN 保留**：CONTEXT §Area 4 已明确允许「保留 NET_ADMIN，仅删 NET_RAW + SYS_ADMIN」折中。理由：sing-box 在 worker netns 内创建 tun0 设备需要 `CAP_NET_ADMIN`，无法运行时 setcap 替代。
+- **Phase 49 LEAK-08 fixture `proc_status_clean.txt`**：原 fixture 期望 `CapEff/CapBnd` 同时**不含 NET_ADMIN/NET_RAW/SYS_ADMIN`。本 plan 落地后实际 `CapEff` 仍含 NET_ADMIN（保留），与 fixture 期望不一致。
+  - **处置**：fixture 修订属 Phase 49 范围；按 CONTEXT §Area 4 决策保留 NET_ADMIN 是已批权衡，Phase 49 fixture 应放宽为「不含 NET_RAW/SYS_ADMIN」即可，NET_ADMIN 保留不再视为违规。
+  - 本 plan 不修改 `tests/e2e/` 文件（CONTEXT §禁止条款）；后续 Phase 49 二次工作或 Phase 51 VERIFICATION 章节统一记录。
+- **LEAK-06 SOCK_RAW**：NET_RAW 已显式 drop，darwin 上无法验证，Linux runner 真机 e2e 预期由 fail → PASS。
 
-- `internal/network/singbox_provider_linux.go`：sing-box 通过
-  `nsenter -t <pid> -n -- sing-box run ...` 在 worker netns 内创建 tun 设备。
-  tun 设备 ioctl(TUNSETIFF) 必须有 CAP_NET_ADMIN。
-- 在 `host` netns 中通过 `nftables.WithNetNSFd(int(containerNS))` 操作 worker
-  netns 的 nft 规则：这条路径靠 host-agent 进程 cap，与 worker 容器内 cap
-  无关，本不要求 worker 含 CAP_NET_ADMIN。
-- `netlink.LinkAdd` 在 `InjectManagementVeth` 中通过 `runtime.LockOSThread +
-  netns.Set(containerNS)` 切到 worker netns 操作 —— 同样靠 host-agent cap。
+## 风险闭环
 
-因此 NET_ADMIN 必须保留以服务 sing-box tun 创建路径；SYS_ADMIN / NET_RAW
-均可去掉。
-
-## 与 Phase 49 GAP-1 闭环关系
-
-- LEAK-06 raw socket：Phase 49 fixture `python_raw_socket_perm.txt` 期望
-  PermissionError。本 plan 落地后容器内不再有 CAP_NET_RAW，SOCK_RAW
-  socket(2) 立即返回 EPERM，用例 Linux runner 转 PASS。
-- LEAK-08 capability 审计：Phase 49 fixture `proc_status_clean.txt` 期望
-  `CapEff` / `CapBnd` 不含 NET_RAW / NET_ADMIN / SYS_ADMIN。本 plan 落地后
-  实际 CapBnd 不含 SYS_ADMIN / NET_RAW，但**仍含 NET_ADMIN**（按 CONTEXT
-  允许的折中保留）。
-  - **此处与 fixture 严格期望存在差异**：fixture 期望 3 cap 全去掉，实际
-    仅 2 cap 去掉。
-  - 本 plan 不修改 e2e fixture（CONTEXT 锁定本 phase 不动 tests/e2e），
-    fixture 修订属 Phase 49 范围（如后续要求 NET_ADMIN 也运行时 setcap 化，
-    需另开 Phase 改造 sing-box 调用链）。
-  - 本 SUMMARY 明确披露该折中，VERIFICATION 中列入 human_verification 段
-    Linux runner 跑通时按实际情况判定 PASS / 维持 GAP。
-
-## 偏差
-
-- NET_ADMIN 保留（按源码依赖必要 + CONTEXT 允许的折中）。具体见上节。
+- 不交叉 51-01..05 / 51-09。
+- 既有 `TestBuildCreateArgs_VolumesMount / EmptyVolumes_NoExtraArgs / InvalidVolumeMount / EmptyEntryPassword_ReturnsError` 全 PASS（args 切片顺序变化不破坏既有断言）。
