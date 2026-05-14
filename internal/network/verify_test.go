@@ -188,6 +188,65 @@ func TestVerifyLeakBlockedMulti_EmptyTargets(t *testing.T) {
 	}
 }
 
+// ─── Phase 51 QUAL-03: parseAllNameservers 单测 ─────────────────────────────
+
+func TestParseAllNameservers_Empty(t *testing.T) {
+	if got := parseAllNameservers(""); got != nil {
+		t.Errorf("expected nil for empty input, got %v", got)
+	}
+}
+
+func TestParseAllNameservers_SingleNS(t *testing.T) {
+	got := parseAllNameservers("nameserver 172.19.0.1\n")
+	if len(got) != 1 || got[0] != "172.19.0.1" {
+		t.Errorf("unexpected: %v", got)
+	}
+}
+
+func TestParseAllNameservers_MultipleNS(t *testing.T) {
+	got := parseAllNameservers("nameserver 172.19.0.1\nnameserver 8.8.8.8\nnameserver 1.1.1.1\n")
+	want := []string{"172.19.0.1", "8.8.8.8", "1.1.1.1"}
+	if len(got) != len(want) {
+		t.Fatalf("len mismatch: got %v want %v", got, want)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("[%d] got %q want %q", i, got[i], w)
+		}
+	}
+}
+
+func TestParseAllNameservers_Comments(t *testing.T) {
+	in := "# auto-generated\n;another comment\nnameserver 172.19.0.1\noptions ndots:0\n"
+	got := parseAllNameservers(in)
+	if len(got) != 1 || got[0] != "172.19.0.1" {
+		t.Errorf("expected [172.19.0.1], got %v", got)
+	}
+}
+
+func TestParseAllNameservers_Garbage(t *testing.T) {
+	in := "search example.com\nnameserver\nbogus line\nnameserver 8.8.8.8 extra\n"
+	got := parseAllNameservers(in)
+	if len(got) != 1 || got[0] != "8.8.8.8" {
+		t.Errorf("expected [8.8.8.8], got %v", got)
+	}
+}
+
+func TestVerifyDNS_ReportsAllNameservers(t *testing.T) {
+	withFakeNsenterRunner(t, func(call fakeNsenterCall) ([]byte, error) {
+		return []byte("nameserver 172.19.0.1\nnameserver 8.8.8.8\n"), nil
+	})
+
+	var result VerifyResult
+	verifyDNS(context.Background(), []string{"nsenter"}, "172.19.0.1", &result)
+	if result.DNSCorrect {
+		t.Errorf("expected DNSCorrect=false when resolv.conf != locked content")
+	}
+	if result.ActualDNS != "172.19.0.1,8.8.8.8" {
+		t.Errorf("expected ActualDNS=172.19.0.1,8.8.8.8, got %q", result.ActualDNS)
+	}
+}
+
 // ─── Phase 47 Plan 03 / 既有单测 ─────────────────────────────────────────────
 
 func TestVerifyResult_AllPassed(t *testing.T) {

@@ -315,21 +315,13 @@ func verifyDNS(ctx context.Context, prefix []string, expectedDNS string, result 
 	//
 	// 修复：与 PrepareGateway 写盘的 resolvConfContent **整体逐字节相等**比对。
 	// 任何额外行、注释、缺行都会立即识别为 DNS lock-in 被破坏。
+	//
+	// Phase 51 QUAL-03 加固：把全部 nameserver 行通过 parseAllNameservers 汇总
+	// 写入 result.ActualDNS（逗号分隔），便于日志 / metadata 看到 fallback
+	// nameserver，而不是 silently 截断到第一行。判定逻辑（DNSCorrect）保持不变。
 	rawContent := string(out)
-
-	// 同时抓出第一行 nameserver 用作 ActualDNS 字段，便于日志与上层 metadata。
-	var firstNS string
-	for _, line := range strings.Split(rawContent, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "nameserver") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				firstNS = fields[1]
-				break
-			}
-		}
-	}
-	result.ActualDNS = firstNS
+	nameservers := parseAllNameservers(rawContent)
+	result.ActualDNS = strings.Join(nameservers, ",")
 
 	if rawContent != resolvConfContent {
 		result.DNSCorrect = false
@@ -337,7 +329,33 @@ func verifyDNS(ctx context.Context, prefix []string, expectedDNS string, result 
 	}
 	// 双保险：首行 nameserver 必须等于期望值（在内容完全相等的前提下永远成立，
 	// 但保持显式断言以便未来 resolvConfContent 演进时仍能 catch 该不变量）。
+	firstNS := ""
+	if len(nameservers) > 0 {
+		firstNS = nameservers[0]
+	}
 	result.DNSCorrect = firstNS == expectedDNS
+}
+
+// parseAllNameservers 从 /etc/resolv.conf 原文中提取所有 nameserver 行的 IP，
+// 按原文件顺序返回；空 / 无 nameserver / 全是注释行 → 返回 nil。
+//
+// Phase 51 QUAL-03：让 result.ActualDNS 报告全部 nameserver，而非仅第一行。
+func parseAllNameservers(rawContent string) []string {
+	var out []string
+	for _, line := range strings.Split(rawContent, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if !strings.HasPrefix(line, "nameserver") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			out = append(out, fields[1])
+		}
+	}
+	return out
 }
 
 // verifyLeakBlocked Phase 51 QUAL-02：保留旧签名 backward-compat shim，
