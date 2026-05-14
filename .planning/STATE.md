@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v3.6
 milestone_name: 端到端测试体系与网络隔离验证
-status: in_progress
+status: ready_for_audit
 stopped_at: null
-last_updated: "2026-05-14T14:30:00Z"
-last_activity: 2026-05-14 - Phase 51 完成（代码层加固 9 plan + 闭环 Phase 47/49 三 GAP + 新依赖仅 goleak）
+last_updated: "2026-05-14T15:00:00Z"
+last_activity: 2026-05-14 - Phase 52 完成（可观测性 3 plan + collect-artifacts.sh + e2e.yml upload）；v3.6 全部 39 plan 就绪，进 audit
 progress:
   total_phases: 8
-  completed_phases: 7
-  total_plans: 38
-  completed_plans: 36
-  percent: 95
+  completed_phases: 8
+  total_plans: 39
+  completed_plans: 39
+  percent: 100
 ---
 
 # Project State

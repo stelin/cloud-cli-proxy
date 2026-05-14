@@ -306,9 +306,9 @@
 
 **Plans**: 3 plans
 
-- [ ] 52-01-PLAN.md — `tests/e2e/harness/collect-artifacts.sh` 脚本（可在失败 trap 中调用）
-- [ ] 52-02-PLAN.md — artifact 目录结构（logs / network / docker / postgres / system 五个子目录）
-- [ ] 52-03-PLAN.md — CI workflow 在 e2e 失败时自动 `actions/upload-artifact@v4` 归档
+- [x] 52-01-PLAN.md — `tests/e2e/harness/collect-artifacts.sh` 一键采集脚本 + 6 单测 — completed 2026-05-14
+- [x] 52-02-PLAN.md — 5 子目录 README 模板 + metadata.txt + 单测扩展 — completed 2026-05-14
+- [x] 52-03-PLAN.md — DumpHook 切到脚本 + `.github/workflows/e2e.yml` `if: failure()` + `upload-artifact@v4` 完整化 — completed 2026-05-14
 
 **Details:**
 
@@ -332,8 +332,8 @@
 | 29-35. v3.0 远端开发体验升级 | v3.0 | 30/30 | Complete | 2026-04-23 |
 | 36-37. v3.1 映射语义补齐与懒加载 | v3.1 | 11/11 | Complete | 2026-04-24 |
 | 38-44. v3.4 多形态容器接入 | v3.4 | 14/14 | Complete | 2026-05-08 |
-| 45-52. v3.6 端到端测试体系 | v3.6 | 36/38 | In Progress | — |
+| 45-52. v3.6 端到端测试体系 | v3.6 | 39/39 | Ready for Audit | — |
 
 ---
 
-*Last updated: 2026-05-14 — Phase 48 完成（Kill-switch 核心 2 plan，20 新单测，tcpdump 走 netshoot sidecar）。*
+*Last updated: 2026-05-14 — v3.6 所有 phase 完成（45-52 共 8 phase / 39 plan，含 51-09 收口）。ship-ready，进 milestone audit → complete → cleanup。*
