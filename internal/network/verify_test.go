@@ -21,6 +21,99 @@ func allPassedBase() VerifyResult {
 	}
 }
 
+// ─── Phase 51 QUAL-01: voteEgressIP / verifyEgressIPMulti 单测 ───────────────
+
+func TestVoteEgressIP_MajorityWins3of3(t *testing.T) {
+	winner, ok := voteEgressIP([]string{"1.2.3.4", "1.2.3.4", "1.2.3.4"})
+	if !ok || winner != "1.2.3.4" {
+		t.Errorf("voteEgressIP(3 same): winner=%q ok=%v", winner, ok)
+	}
+}
+
+func TestVoteEgressIP_MajorityWins2of3(t *testing.T) {
+	winner, ok := voteEgressIP([]string{"1.2.3.4", "1.2.3.4", "9.9.9.9"})
+	if !ok || winner != "1.2.3.4" {
+		t.Errorf("voteEgressIP(2 vs 1): winner=%q ok=%v", winner, ok)
+	}
+}
+
+func TestVoteEgressIP_TieFails(t *testing.T) {
+	winner, ok := voteEgressIP([]string{"1.1.1.1", "2.2.2.2", "3.3.3.3"})
+	if ok {
+		t.Errorf("voteEgressIP(1-1-1 tie): expected ok=false, got winner=%q", winner)
+	}
+}
+
+func TestVoteEgressIP_AllEmpty(t *testing.T) {
+	winner, ok := voteEgressIP([]string{"", "", ""})
+	if ok {
+		t.Errorf("voteEgressIP(all empty): expected ok=false, got winner=%q", winner)
+	}
+}
+
+func TestVoteEgressIP_NilInput(t *testing.T) {
+	winner, ok := voteEgressIP(nil)
+	if ok || winner != "" {
+		t.Errorf("voteEgressIP(nil): winner=%q ok=%v", winner, ok)
+	}
+}
+
+func TestVerifyEgressIPMulti_MajorityMatch(t *testing.T) {
+	withFakeNsenterRunner(t, func(call fakeNsenterCall) ([]byte, error) {
+		joined := strings.Join(call.args, " ")
+		switch {
+		case strings.Contains(joined, "ip.me"):
+			return []byte("1.2.3.4\n"), nil
+		case strings.Contains(joined, "ifconfig.io"):
+			return []byte("1.2.3.4\n"), nil
+		case strings.Contains(joined, "ipinfo.io"):
+			return []byte("9.9.9.9\n"), nil
+		}
+		return nil, errors.New("unexpected source")
+	})
+
+	var result VerifyResult
+	verifyEgressIPMulti(context.Background(), []string{"nsenter"}, "1.2.3.4", egressIPSources, &result)
+	if !result.EgressIPMatch {
+		t.Errorf("expected EgressIPMatch=true (majority 1.2.3.4), got false; actual=%q", result.ActualEgressIP)
+	}
+	if result.ActualEgressIP != "1.2.3.4" {
+		t.Errorf("expected ActualEgressIP=1.2.3.4, got %q", result.ActualEgressIP)
+	}
+}
+
+func TestVerifyEgressIPMulti_MajorityMismatch(t *testing.T) {
+	withFakeNsenterRunner(t, func(call fakeNsenterCall) ([]byte, error) {
+		return []byte("8.8.8.8\n"), nil
+	})
+
+	var result VerifyResult
+	verifyEgressIPMulti(context.Background(), []string{"nsenter"}, "1.2.3.4", egressIPSources, &result)
+	if result.EgressIPMatch {
+		t.Errorf("expected EgressIPMatch=false (majority 8.8.8.8 != expected 1.2.3.4)")
+	}
+	if result.ActualEgressIP != "8.8.8.8" {
+		t.Errorf("expected ActualEgressIP=8.8.8.8, got %q", result.ActualEgressIP)
+	}
+}
+
+func TestVerifyEgressIPMulti_AllTimeout(t *testing.T) {
+	withFakeNsenterRunner(t, func(call fakeNsenterCall) ([]byte, error) {
+		return nil, errors.New("curl: (28) Connection timed out")
+	})
+
+	var result VerifyResult
+	verifyEgressIPMulti(context.Background(), []string{"nsenter"}, "1.2.3.4", egressIPSources, &result)
+	if result.EgressIPMatch {
+		t.Errorf("expected EgressIPMatch=false on all-source timeout")
+	}
+	if result.ActualEgressIP != "" {
+		t.Errorf("expected ActualEgressIP=\"\" on all-source timeout, got %q", result.ActualEgressIP)
+	}
+}
+
+// ─── Phase 47 Plan 03 / 既有单测 ─────────────────────────────────────────────
+
 func TestVerifyResult_AllPassed(t *testing.T) {
 	tests := []struct {
 		name     string

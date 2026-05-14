@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -35,6 +36,15 @@ const nonBypassProbeTargetURL = "https://api.example.com/sourceip"
 // 用 8.8.8.8 因为它是最常被工程师手动 dig 用来「试一下 DNS 通不通」的目标，nft
 // 阻断这一目标即覆盖 99% 的 DNS 旁路尝试。
 const publicDNSProbeServer = "8.8.8.8"
+
+// egressIPSources Phase 51 QUAL-01：把单源 ip.me 改造为 3 源轮询，多数派判定
+// 出口 IP。与 Phase 46 e2e 包 Vote 多数派语义对齐（production 不能 import
+// tests/e2e 包，所以本地 voteEgressIP 复刻同语义）。
+var egressIPSources = []string{
+	"https://ip.me",
+	"https://ifconfig.io",
+	"https://ipinfo.io/ip",
+}
 
 // nsenterRunner 在容器 netns 中执行命令的可注入 hook。
 //
@@ -104,7 +114,8 @@ func VerifyNetworkIntegrity(ctx context.Context, containerPID uint32, expected E
 	var result VerifyResult
 
 	// Check 1: egress IP matches binding
-	verifyEgressIP(ctx, prefix, expected.ExpectedIP, &result)
+	// Phase 51 QUAL-01：多源并发探测 + 多数派投票，比单源 ip.me 更稳健
+	verifyEgressIPMulti(ctx, prefix, expected.ExpectedIP, egressIPSources, &result)
 
 	// Check 2: DNS resolver points to tunnel DNS
 	// Phase 45 Plan 02：容器 /etc/resolv.conf 被 ro bind mount 锁死为 tun0
@@ -142,21 +153,118 @@ func detectHostEth0IPFallback() string {
 	return "192.168.0.1"
 }
 
+// verifyEgressIP Phase 51 QUAL-01：保留旧签名作为 backward-compat shim，
+// 内部走 verifyEgressIPMulti 单源模式。VerifyNetworkIntegrity 已切到 Multi 调用。
 func verifyEgressIP(ctx context.Context, prefix []string, expectedIP string, result *VerifyResult) {
+	verifyEgressIPMulti(ctx, prefix, expectedIP, []string{"https://ip.me"}, result)
+}
+
+// verifyEgressIPMulti 并发对多个回显 source 探测出口 IP，多数派一致即 PASS。
+//
+// 语义：
+//   - 每个 source 独立 8s timeout（受父 ctx 控制）；
+//   - 收集所有 trim 后的非空 source 返回值；
+//   - 走 voteEgressIP 求多数派；
+//   - PASS = winner == expectedIP；ok=false 视为 ActualEgressIP="" 的失败语义。
+//
+// 当所有 source 都失败时与旧 verifyEgressIP 单源失败行为完全一致
+// （EgressIPMatch=false + ActualEgressIP=""），既有单测零回归。
+func verifyEgressIPMulti(ctx context.Context, prefix []string, expectedIP string, sources []string, result *VerifyResult) {
 	checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	args := append(append([]string{}, prefix...), "curl", "-4", "--max-time", "10", "-s", "https://ip.me")
-	out, err := nsenterRunner(checkCtx, args...)
-	if err != nil {
+	if len(sources) == 0 {
 		result.EgressIPMatch = false
 		result.ActualEgressIP = ""
 		return
 	}
 
-	actual := strings.TrimSpace(string(out))
-	result.ActualEgressIP = actual
-	result.EgressIPMatch = actual == expectedIP
+	type srcResult struct {
+		ip string
+		ok bool
+	}
+	results := make(chan srcResult, len(sources))
+	var wg sync.WaitGroup
+	for _, src := range sources {
+		wg.Add(1)
+		go func(url string) {
+			defer wg.Done()
+			perSourceCtx, perCancel := context.WithTimeout(checkCtx, 8*time.Second)
+			defer perCancel()
+			args := append(append([]string{}, prefix...), "curl", "-4", "--max-time", "7", "-s", url)
+			out, err := nsenterRunner(perSourceCtx, args...)
+			if err != nil {
+				results <- srcResult{ok: false}
+				return
+			}
+			ip := strings.TrimSpace(string(out))
+			if ip == "" {
+				results <- srcResult{ok: false}
+				return
+			}
+			results <- srcResult{ip: ip, ok: true}
+		}(src)
+	}
+	wg.Wait()
+	close(results)
+
+	collected := make([]string, 0, len(sources))
+	for r := range results {
+		if r.ok {
+			collected = append(collected, r.ip)
+		}
+	}
+
+	winner, ok := voteEgressIP(collected)
+	if !ok {
+		result.EgressIPMatch = false
+		result.ActualEgressIP = ""
+		return
+	}
+	result.ActualEgressIP = winner
+	result.EgressIPMatch = winner == expectedIP
+}
+
+// voteEgressIP 实现简单多数派投票（≥2 个一致 → winner）。
+//
+// 与 tests/e2e/helpers.go::Vote 完全等价；之所以不直接 import 是因为 production
+// 代码不能依赖 tests 包。tie / 全空 / 单一 source 不一致全部返回 ok=false。
+func voteEgressIP(results []string) (string, bool) {
+	if len(results) == 0 {
+		return "", false
+	}
+	counts := make(map[string]int, len(results))
+	for _, r := range results {
+		r = strings.TrimSpace(r)
+		if r == "" {
+			continue
+		}
+		counts[r]++
+	}
+	if len(counts) == 0 {
+		return "", false
+	}
+
+	var winner string
+	var topCount, tieCount int
+	for ip, c := range counts {
+		switch {
+		case c > topCount:
+			winner = ip
+			topCount = c
+			tieCount = 1
+		case c == topCount:
+			tieCount++
+		}
+	}
+
+	if topCount >= 2 && tieCount == 1 {
+		return winner, true
+	}
+	if topCount == 1 && tieCount == 1 && len(results) == 1 {
+		return winner, true
+	}
+	return "", false
 }
 
 func verifyDNS(ctx context.Context, prefix []string, expectedDNS string, result *VerifyResult) {
