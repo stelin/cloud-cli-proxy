@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v3.6
 milestone_name: 端到端测试体系与网络隔离验证
-status: planning
+status: in_progress
 stopped_at: null
-last_updated: "2026-05-14T00:00:00Z"
-last_activity: 2026-05-14 - Started milestone v3.6 via /gsd:new-milestone
+last_updated: "2026-05-14T11:00:00Z"
+last_activity: 2026-05-14 - Phase 46 完成（MVS 骨架 + 24 纯函数单测 darwin PASS / Linux 真机 deferred-to-CI）
 progress:
-  total_phases: 0
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_phases: 8
+  completed_phases: 2
+  total_plans: 38
+  completed_plans: 10
+  percent: 26
 ---
 
 # Project State

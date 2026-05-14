@@ -161,11 +161,13 @@
 
 **Plans**: 5 plans
 
-- [ ] 46-01-PLAN.md — bootstrap 黄金路径 e2e（curl → 认证 → 容器启动 → SSH banner）
-- [ ] 46-02-PLAN.md — 出口 IP 匹配验证（容器内 `curl ifconfig.me`，三源轮询 ip.me / ifconfig.io / ipinfo.io）
-- [ ] 46-03-PLAN.md — DNS 强制走 tun（容器内 `dig @1.1.1.1 example.com` 被 tun 接管或被防火墙拒绝）
-- [ ] 46-04-PLAN.md — 默认拒绝生效（容器内直连 `bash -c 'echo >/dev/tcp/...'`，覆盖 1.1.1.1:80 / 8.8.8.8:443 / 9.9.9.9:443 / 169.254.169.254:80）
-- [ ] 46-05-PLAN.md — CLI 错误码契约（auth_invalid=10 / account_disabled=11 / account_expired=12 / host_not_found=13 / 其它=1/2）
+- [x] 46-01-PLAN.md — bootstrap 黄金路径骨架 + `GoldenPath`/`StartGoldenPath` + 24 个纯函数单测 — completed 2026-05-14
+- [x] 46-02-PLAN.md — 出口 IP 三源轮询 + `Vote` 多数派裁决（公网等值断言 deferred-to-CI）— completed 2026-05-14
+- [x] 46-03-PLAN.md — DNS OR 语义（`ClassifyDNSResult` Tunneled/Denied 二选一即 PASS）— completed 2026-05-14
+- [x] 46-04-PLAN.md — 默认拒绝矩阵（`DefaultDenyMatrix` 4 target × 3s timeout × 并发）— completed 2026-05-14
+- [x] 46-05-PLAN.md — CLI 错误码契约（被测 binary 为 `cloud-bootstrap.sh`，exit code 10/11/12/13 与 `bootstrap_errors.go` 源真相 cross-check）— completed 2026-05-14
+
+> 注：MVS-05 被测 binary 与 ROADMAP 草稿描述偏差 —— grep 源码后实际错误码 10/11/12/13 由 `internal/controlplane/http/bootstrap_errors.go` 定义、`deploy/bootstrap/cloud-bootstrap.sh` `case "$error_code"` 映射，按 CONTEXT §Area 3「以源码为准」决策落地为 bootstrap.sh。详见 `46-05-SUMMARY.md` 与 `46-VERIFICATION.md` ROADMAP 偏差节。
 
 **Details:**
 
@@ -320,8 +322,8 @@
 | 29-35. v3.0 远端开发体验升级 | v3.0 | 30/30 | Complete | 2026-04-23 |
 | 36-37. v3.1 映射语义补齐与懒加载 | v3.1 | 11/11 | Complete | 2026-04-24 |
 | 38-44. v3.4 多形态容器接入 | v3.4 | 14/14 | Complete | 2026-05-08 |
-| 45-52. v3.6 端到端测试体系 | v3.6 | 0/38 | In Progress | — |
+| 45-52. v3.6 端到端测试体系 | v3.6 | 10/38 | In Progress | — |
 
 ---
 
-*Last updated: 2026-05-14 — v3.6 milestone initialized. 38 requirements, 8 phases planned.*
+*Last updated: 2026-05-14 — Phase 46 完成（MVS 骨架 + 24 单测 darwin PASS，Linux 真机断言 deferred-to-CI）。*
