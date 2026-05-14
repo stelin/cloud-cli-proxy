@@ -191,6 +191,44 @@ func TestBaseSuite_TearDownTestSkipsOnSuccess(t *testing.T) {
 	}
 }
 
+// TestArtifactDumper_CollectInvokesScript：Phase 52 OBS-03 集成断言。
+//
+// Collect 内部调 collect-artifacts.sh 子进程后，目标目录应当出现脚本写入的
+// metadata.txt（Plan 01 契约 7 字段之一）；同时 Go 占位 README 因 Plan 02
+// 模板已落地、脚本先 cp 模板，应当读到 Plan 02 详尽 README（含「典型排障」
+// 关键字而非 Phase 45 简短占位）。
+func TestArtifactDumper_CollectInvokesScript(t *testing.T) {
+	tempDir := t.TempDir()
+	d := NewArtifactDumper(nil, tempDir)
+	dir, err := d.Collect(context.Background(), "ScriptIntegration")
+	if err != nil {
+		t.Fatalf("Collect err: %v", err)
+	}
+
+	metaPath := filepath.Join(dir, "metadata.txt")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("script must produce metadata.txt at %s: %v", metaPath, err)
+	}
+	meta := string(data)
+	if !strings.Contains(meta, "script_version=v1") {
+		t.Fatalf("metadata.txt missing script_version=v1: %s", meta)
+	}
+
+	// Plan 02 详尽 README 应当覆盖 Phase 45 简短占位（脚本的 cp 先于 Go fallback）
+	for _, sub := range ArtifactSubdirs {
+		readme := filepath.Join(dir, sub, "README.md")
+		content, err := os.ReadFile(readme)
+		if err != nil {
+			t.Fatalf("read %s: %v", readme, err)
+		}
+		if !strings.Contains(string(content), "典型排障场景") {
+			t.Fatalf("%s missing Plan 02 detailed marker '典型排障场景'; got: %s",
+				readme, string(content)[:min(120, len(content))])
+		}
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

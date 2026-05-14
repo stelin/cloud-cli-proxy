@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -64,18 +66,33 @@ func NewArtifactDumper(scenario *Scenario, baseDir string) *ArtifactDumper {
 //
 // timestamp 用 RFC3339-like 格式（20060102T150405Z），文件系统安全 + 字典序
 // 等价时间序，便于 ls 排序。
-func (d *ArtifactDumper) Collect(_ context.Context, name string) (string, error) {
+func (d *ArtifactDumper) Collect(ctx context.Context, name string) (string, error) {
 	timestamp := time.Now().UTC().Format("20060102T150405Z")
-	dir := filepath.Join(d.baseDir, sanitizeName(name), timestamp)
+	sanitized := sanitizeName(name)
+	dir := filepath.Join(d.baseDir, sanitized, timestamp)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("artifact: mkdir root: %w", err)
 	}
+
+	// Phase 52 OBS-03：先尽力调 collect-artifacts.sh 子进程把真实采集结果 +
+	// Plan 02 详尽 README 落到 dir/<sub>/。失败不影响 Collect 自身成败（best-effort）。
+	// 脚本接口 `<output-dir> <scenario-id>` 会在 <output-dir>/<scenario-id>/<sub>/
+	// 下建目录，所以传 outDir=baseDir/sanitized、scenarioID=timestamp，与下方 Go 侧
+	// 兜底逻辑的目录树完全重合。
+	scriptParent := filepath.Join(d.baseDir, sanitized)
+	if scriptErr := d.runCollectScript(ctx, scriptParent, timestamp); scriptErr != nil {
+		d.logger.Warn("collect-artifacts.sh failed (best-effort, ignored)",
+			"name", name, "dir", dir, "err", scriptErr)
+	}
+
 	for _, sub := range ArtifactSubdirs {
 		subDir := filepath.Join(dir, sub)
 		if err := os.MkdirAll(subDir, 0o755); err != nil {
 			return dir, fmt.Errorf("artifact: mkdir %s: %w", sub, err)
 		}
 		readmePath := filepath.Join(subDir, "README.md")
+		// 兜底：脚本未跑 / 模板缺失时 Go 占位 README 仍写入；脚本已写入时跳过，
+		// 与 Phase 45 ArtifactDumper.CollectIsIdempotent 单测的 mtime 检查兼容。
 		if _, err := os.Stat(readmePath); os.IsNotExist(err) {
 			if writeErr := os.WriteFile(readmePath, []byte(readmeContentFor(sub)), 0o644); writeErr != nil {
 				return dir, fmt.Errorf("artifact: write README %s: %w", sub, writeErr)
@@ -88,6 +105,36 @@ func (d *ArtifactDumper) Collect(_ context.Context, name string) (string, error)
 	}
 	d.logger.Info("artifact collected", "name", name, "dir", absDir)
 	return absDir, nil
+}
+
+// runCollectScript 调用 tests/e2e/harness/collect-artifacts.sh 把真实采集结果与
+// Plan 02 README 模板落到 outDir/scenarioID/<sub>/ 下。脚本路径由 runtime.Caller
+// 反推（与 artifacts.go 同目录），不依赖 CWD。
+//
+// 行为：
+//   - 脚本不存在 → 返回 nil（Phase 45 单元测试环境兼容）
+//   - 脚本退出非 0 → 返回 wrapped error，调用方决定吞 / 透
+//   - 30s 硬超时（CONTEXT §Area 1 决策），避免 e2e 在 dump 阶段卡死整个 suite
+//
+// 注意：脚本本身永远 exit 0（除非缺命令行参数），所以正常路径下 cmd.Run() 返回
+// nil；30s 超时主要兜 docker hang / pg_dump connection 卡死的边缘情况。
+func (d *ArtifactDumper) runCollectScript(ctx context.Context, outDir, scenarioID string) error {
+	_, thisFile, _, _ := runtime.Caller(0)
+	scriptPath := filepath.Join(filepath.Dir(thisFile), "collect-artifacts.sh")
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		return nil
+	}
+
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(cctx, "bash", scriptPath, outDir, scenarioID)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("collect-artifacts.sh: %w", err)
+	}
+	return nil
 }
 
 // OnWaitForTimeout 实现 DumpHook（Plan 03 接口）：

@@ -96,11 +96,22 @@ jobs:
           CLOUD_CLI_PROXY_E2E_ARTIFACT_DIR: ./out/e2e-artifacts
         run: go test -tags=e2e ./tests/e2e/... -count=1 -v -timeout=15m
 
+      # Phase 52 OBS-03：失败时跑一次脚本级全局快照（CI runner 视角，与
+      # 单用例级 ArtifactDumper 输出并存）。DATABASE_URL 未透传时 postgres
+      # 采集会优雅跳过；其它 4 子目录（logs/network/docker/system）在
+      # hosted ubuntu-24.04 runner 上有真实输出。
+      - name: Collect e2e artifacts on failure (script)
+        if: failure()
+        run: |
+          bash tests/e2e/harness/collect-artifacts.sh \
+            ./out/e2e-artifacts \
+            ci-${{ github.job }}-${{ github.run_attempt }}
+
       - name: Upload artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-artifacts-${{ github.run_id }}
+          name: e2e-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
           path: ./out/e2e-artifacts/
           if-no-files-found: warn
           retention-days: 30
@@ -117,16 +128,19 @@ jobs:
               '',
               `**Run:** ${runUrl}`,
               '',
-              `**Artifact 名称：** \`e2e-artifacts-${process.env.GITHUB_RUN_ID}\``,
+              `**Artifact 名称：** \`e2e-artifacts-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}\``,
               '',
               '点开上面的 Run 链接，滚到 "Artifacts" 段下载 zip；解压后在五子目录中查看：',
-              '- `logs/` 容器日志',
-              '- `network/` nft / netns / route',
-              '- `docker/` docker ps / inspect',
-              '- `postgres/` pg_dump',
-              '- `system/` 宿主机状态 + wait-timeout 备忘录',
+              '- `logs/` 容器日志（docker logs --tail 500 --timestamps）',
+              '- `network/` nft list ruleset / ip route / ss -tln',
+              '- `docker/` docker ps -a / inspect-<name>.json',
+              '- `postgres/` pg_dump --schema-only + key 表 SELECT（不含敏感列）',
+              '- `system/` uname / free / df / dmesg tail + wait-timeout.txt 备忘',
               '',
-              '（Phase 52 OBS-01..03 接入完整收集逻辑后，五子目录会有更详尽的内容；当前 Phase 45 阶段为占位 + waitFor 超时备忘。）',
+              '每个子目录内都有自己的 `README.md`（中文，含具体排障指引）。',
+              '同一 artifact 内会有两类目录：',
+              '- `<test-name>/<timestamp>/` 单用例级（ArtifactDumper 写）',
+              '- `ci-<job>-<attempt>/` CI runner 全局快照（脚本 if: failure() 跑一遍）',
             ].join('\n');
             await github.rest.issues.createComment({
               owner: context.repo.owner,

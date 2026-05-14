@@ -31,3 +31,9 @@ func (NoopDumpHook) OnWaitForTimeout(_ context.Context, _ string, _ error) error
 // 静态断言 ArtifactDumper（Plan 04）实现 DumpHook 接口。
 // 若 ArtifactDumper.OnWaitForTimeout 签名漂移，编译期立即失败。
 var _ DumpHook = (*ArtifactDumper)(nil)
+
+// Phase 52 OBS-03 注释挂点：
+// ArtifactDumper.Collect 内部已切到调 collect-artifacts.sh 子进程（见
+// artifacts.go::runCollectScript），DumpHook 公开接口签名零漂移。后续 phase
+// 如需切换到 Tetragon TracingPolicy 之类的内核 oracle，仍可保持本 interface，
+// 把 runCollectScript dispatch 到不同后端即可（v2 范围）。

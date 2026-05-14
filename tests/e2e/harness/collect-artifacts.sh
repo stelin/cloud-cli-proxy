@@ -169,12 +169,13 @@ collect_system() {
     fi
 }
 
-# README 模板复制（Plan 02 落地后激活；模板缺失走 || true 兜底）
+# README 模板复制（Plan 02 落地后激活；no-clobber：仅在目标不存在时复制，
+# 与 Phase 45 ArtifactDumper.Collect 的幂等单测兼容）
 copy_readmes() {
     local template_dir="$SCRIPT_DIR/artifacts"
     local sub
     for sub in logs network docker postgres system; do
-        if [[ -f "$template_dir/$sub/README.md" ]]; then
+        if [[ -f "$template_dir/$sub/README.md" && ! -f "$ROOT/$sub/README.md" ]]; then
             cp "$template_dir/$sub/README.md" "$ROOT/$sub/README.md" 2>/dev/null || true
         fi
     done
