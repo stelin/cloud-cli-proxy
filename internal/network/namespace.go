@@ -16,9 +16,54 @@ import (
 	"github.com/vishvananda/netns"
 )
 
+// nsConfig 控制 GetContainerNetNS 重试窗口与上限。Phase 51 QUAL-04 把原本
+// 硬编码的「5 次重试 × 300ms 间隔」抽出，允许 e2e harness 用更短窗口加速测试。
+// 默认值与 Phase 51 之前的硬编码保持一致，确保零回归。
+type nsConfig struct {
+	probeWindow time.Duration
+	maxRetries  int
+}
+
+// Option 是 GetContainerNetNS 的 functional option 类型。
+type Option func(*nsConfig)
+
+// WithProbeWindow 覆盖 netns 探测两次尝试之间的等待时长（默认 300ms）。
+func WithProbeWindow(d time.Duration) Option {
+	return func(c *nsConfig) {
+		if d > 0 {
+			c.probeWindow = d
+		}
+	}
+}
+
+// WithMaxRetries 覆盖 netns 探测最大重试次数（默认 5）。
+func WithMaxRetries(n int) Option {
+	return func(c *nsConfig) {
+		if n > 0 {
+			c.maxRetries = n
+		}
+	}
+}
+
+// defaultNsConfig 返回 Phase 51 QUAL-04 锁定的默认探测配置。
+func defaultNsConfig() nsConfig {
+	return nsConfig{
+		probeWindow: 300 * time.Millisecond,
+		maxRetries:  5,
+	}
+}
+
 // GetContainerNetNS retrieves the network namespace handle and init PID
 // for a running Docker container identified by name.
-func GetContainerNetNS(containerName string) (netns.NsHandle, uint32, error) {
+//
+// Phase 51 QUAL-04：暴露 functional option（WithProbeWindow / WithMaxRetries）
+// 以便 e2e 加速；默认行为不变。
+func GetContainerNetNS(containerName string, opts ...Option) (netns.NsHandle, uint32, error) {
+	cfg := defaultNsConfig()
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Pid}}", containerName).Output()
 	if err != nil {
 		return 0, 0, &NetworkError{
@@ -41,14 +86,12 @@ func GetContainerNetNS(containerName string) (netns.NsHandle, uint32, error) {
 		}
 	}
 
-	const maxRetry = 5
 	var lastErr error
-	for attempt := 1; attempt <= maxRetry; attempt++ {
-		// 每次重试前验证容器是否仍在运行
+	for attempt := 1; attempt <= cfg.maxRetries; attempt++ {
 		runningOut, runErr := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", containerName).Output()
 		if runErr != nil || strings.TrimSpace(string(runningOut)) != "true" {
-			if attempt < maxRetry {
-				time.Sleep(300 * time.Millisecond)
+			if attempt < cfg.maxRetries {
+				time.Sleep(cfg.probeWindow)
 				continue
 			}
 		}
@@ -58,12 +101,11 @@ func GetContainerNetNS(containerName string) (netns.NsHandle, uint32, error) {
 			return ns, uint32(pid), nil
 		}
 		lastErr = nsErr
-		if attempt < maxRetry {
-			time.Sleep(300 * time.Millisecond)
+		if attempt < cfg.maxRetries {
+			time.Sleep(cfg.probeWindow)
 		}
 	}
 
-	// 最后一次失败时，获取容器状态信息嵌入错误
 	statusOut, _ := exec.Command("docker", "inspect", "-f", "{{.State.Status}}|{{.State.ExitCode}}", containerName).Output()
 	statusInfo := strings.TrimSpace(string(statusOut))
 	if statusInfo == "" {
@@ -72,7 +114,7 @@ func GetContainerNetNS(containerName string) (netns.NsHandle, uint32, error) {
 
 	return 0, 0, &NetworkError{
 		Type:    ErrTunnelSetupFailed,
-		Message: fmt.Sprintf("get netns from pid %d after %d attempts (container status=%s): %v", pid, maxRetry, statusInfo, lastErr),
+		Message: fmt.Sprintf("get netns from pid %d after %d attempts (container status=%s): %v", pid, cfg.maxRetries, statusInfo, lastErr),
 	}
 }
 
