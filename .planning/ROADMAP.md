@@ -2,6 +2,7 @@
 
 ## Milestones
 
+- ⏳ **v4.0 sing-box 同容器化** — Phases 53-56 (in progress, started 2026-05-16) — **breaking change**
 - ✅ **v1.0 MVP** — Phases 1-6 (shipped 2026-03-28) — [Archive](milestones/v1.0-ROADMAP.md)
 - ✅ **v1.1 支持代理协议出网** — Phases 7-10 (shipped 2026-03-28) — [Archive](milestones/v1.1-ROADMAP.md)
 - ⏸️ **v1.2 用户自助面板与 Bootstrap 重设计** — Phases 11-16 (partially shipped, remaining deferred)
@@ -14,6 +15,90 @@
 - ✅ **v3.6 端到端测试体系与网络隔离验证** — Phases 45-52 (shipped 2026-05-14) — [Archive](milestones/v3.6-ROADMAP.md)
 
 ## Phases
+
+### ⏳ v4.0 sing-box 同容器化 (Phases 53-56) — IN PROGRESS
+
+**Milestone goal:** 把 sing-box 从独立 `cloudproxy-gw-*` 容器搬进用户容器内部，消灭"user 容器 default 路由不指向 gw"这一整类回归泄漏；单容器架构带来 breaking change，故升 major v4.0。
+
+**Locked decisions:** D-V4-1..6（见 `.planning/PROJECT.md` § Current Milestone）
+
+- [ ] Phase 53: 镜像与 entrypoint 基线（IMG-01..04 + EP-01..04 + NET-01..04，12 REQ）
+- [ ] Phase 54: 控制面单容器化（CTRL-01..05，5 REQ）
+- [ ] Phase 55: e2e 重构 + 同容器安全断言（SEC-01..03 + E2E-V4-01..06，9 REQ）
+- [ ] Phase 56: CI paths 扩面 + Makefile 入口（CI-01..03，3 REQ）
+
+---
+
+#### Phase 53: 镜像与 entrypoint 基线
+
+**Goal:** managed-user 镜像内置 sing-box + entrypoint 串接启动序列，本地手工 `docker run` 起来后 `curl ip.me` 走绑定的出口 IP；用户 SSH 进来非 root、无 NET_ADMIN、读不到 sing-box config。
+
+**Depends on:** v3.6 worker firewall ruleset、v3.6 sing-box config schema、v3.6 镜像构建路径
+
+**Requirements:** IMG-01 / IMG-02 / IMG-03 / IMG-04 / EP-01 / EP-02 / EP-03 / EP-04 / NET-01 / NET-02 / NET-03 / NET-04
+
+**Success criteria:**
+
+1. 本地 `docker run --rm --device /dev/net/tun --cap-add NET_ADMIN -v $config:/etc/sing-box/config.json:ro managed-user:v4-dev` 起来后，容器内 `curl https://ip.me` 返回绑定的出口 IP，不是宿主真实 IP。
+2. 容器内 `ps -o uid,user,comm -p $(pidof sing-box)` 显示 uid=9000 (`singbox` 账号)，验证 setuid 降权生效。
+3. 容器内 `cat /etc/sing-box/config.json` 失败（文件已 rm 或权限拒绝）。
+4. 容器内 user shell `getpcaps $$` 输出空 cap 集合，`ip link set tun0 down` 返回 `Operation not permitted`。
+5. `docker exec <container> kill -9 $(pidof sing-box)` 触发后容器在 ≤3s 内退出，docker `restart=on-failure` 在 ≤5s 内拉起新容器。
+
+---
+
+#### Phase 54: 控制面单容器化
+
+**Goal:** control-plane / host-agent 不再创建 gw 容器；`container_proxy_provider` 简化为单容器路径；`cloudproxy-net-*` 自定义 bridge 退役；双绑互斥契约不变。
+
+**Depends on:** Phase 53（managed-user v4 镜像已构建可用）
+
+**Requirements:** CTRL-01 / CTRL-02 / CTRL-03 / CTRL-04 / CTRL-05
+
+**Success criteria:**
+
+1. 创建一台 host 后只生成一个 docker 容器（`cloudproxy-<id>`），`docker network ls` 不再出现 `cloudproxy-net-<HostID>`。
+2. `internal/network/container_proxy_provider.go` 净行数减少 ≥ 300 行；teardownGateway 路径整体删除。
+3. sing-box config 由 host-agent 在 PrepareHost 时注入 user 容器，文件权限 root:root 0600；容器启动后该文件被 rm（`docker exec ls /etc/sing-box/` 不见 config.json）。
+4. v3.6 51-09 双绑互斥 pre-check（`ErrCodeEgressIPAlreadyBound` + 409 + 双语 message）API 行为契约保持不变。
+5. `deploy/docker/sing-box/` 目录退役；Makefile `gateway-image` target 删除；镜像构建产物不再产出 gw 镜像。
+
+---
+
+#### Phase 55: e2e 重构 + 同容器安全断言
+
+**Goal:** `harness.Scenario` builder 单容器化；v3.6 LEAK/KILL/MVS 用例迁移到新架构；新增 SEC-01..03 三条同容器架构特有的安全断言。
+
+**Depends on:** Phase 53 + Phase 54（v4 镜像 + 控制面就绪后才能跑端到端用例）
+
+**Requirements:** SEC-01 / SEC-02 / SEC-03 / E2E-V4-01 / E2E-V4-02 / E2E-V4-03 / E2E-V4-04 / E2E-V4-05 / E2E-V4-06
+
+**Success criteria:**
+
+1. `harness.Scenario` builder API `.WithSingBoxGateway(...)` 合并进 `.WithUser(...)`；所有旧调用点迁移完成，单容器拓扑覆盖。
+2. v3.6 LEAK-01..08 用例迁移后继续绿（抓包视角改为 host eth0 + 容器 veth pair，断言语义不变）。
+3. v3.6 KILL-01..04 用例迁移：`docker kill <gw>` 改为 `docker exec <user> kill -9 $(pidof sing-box)`；新增断言 "PID 1 死 → 容器死 → 出网立即断"。
+4. v3.6 MVS-01..10 + GoldenPath 用例迁移，出口 IP / DNS / default-deny / 错误码契约保持不变。
+5. 新增 e2e 用例 `SEC-01`（用户 kill sing-box 必须失败）、`SEC-02`（用户读 config 必须失败）、`SEC-03`（用户 cap 集合必须为空）；三条新用例独立可跑且全绿。
+6. 删除 v3.6 期间 cross-container 协调辅助代码（gw 启动同步、network connect 等待等）；删除净行数 ≥ 150 行。
+
+---
+
+#### Phase 56: CI paths 扩面 + Makefile 入口
+
+**Goal:** 把 v3.6 "偶尔改坏没拦住" 的 CI 触发盲区一并堵掉，本地 `make e2e` 一条命令入口落地。
+
+**Depends on:** Phase 55（e2e 套件迁移完成后扩 paths 才有意义）
+
+**Requirements:** CI-01 / CI-02 / CI-03
+
+**Success criteria:**
+
+1. `.github/workflows/e2e.yml` paths filter 扩面：新增 `internal/controlplane/http/**` / `internal/store/**` / `deploy/docker/**` / `Makefile` / `go.mod` / `go.sum`；测试 PR 修改其中任一路径都能触发 e2e job。
+2. `make e2e` 等价 `go test -tags=e2e ./tests/e2e/... -count=1 -v -timeout=15m`，本地一条命令跑通；新人按 README 走能直接跑起。
+3. `make e2e` 内串 `lint-no-bare-sleep` + `go vet -tags=e2e ./tests/e2e/...`，行为与 CI lint job 对齐；本地任一 step 失败时退出码与 CI 一致。
+
+---
 
 <details>
 <summary>✅ v1.0 MVP (Phases 1-6) — SHIPPED 2026-03-28</summary>
@@ -337,10 +422,11 @@
 
 ## Progress
 
-**Next milestone:** v3.7 — (待定，`/gsd-new-milestone` 进入)
+**Active milestone:** v4.0 sing-box 同容器化 — Phases 53-56 — breaking change
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
+| 53-56. v4.0 sing-box 同容器化 | v4.0 | 0/— | In Progress | — |
 | 1-6. v1.0 MVP | v1.0 | 19/19 | Complete | 2026-03-28 |
 | 7-10. v1.1 代理协议出网 | v1.1 | 11/11 | Complete | 2026-03-28 |
 | 11-12. v1.2 认证与自助面板 | v1.2 | 5/5 | Partial | 2026-03-29 |
@@ -354,4 +440,4 @@
 
 ---
 
-*Last updated: 2026-05-14 — v3.6 shipped (8 phase / 39 plan / 38 REQ satisfied / 8 tech debt deferred to v3.7+).*
+*Last updated: 2026-05-16 — v4.0 sing-box 同容器化 milestone started (Phases 53-56, 28 REQ, 6 locked decisions D-V4-1..6). v3.6 shipped & archived (8 phase / 39 plan / 38 REQ).*
