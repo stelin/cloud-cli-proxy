@@ -18,6 +18,13 @@
       "strict_route": true,
       "stack": "system",
       "endpoint_independent_nat": true
+    },
+    {
+      "type": "direct",
+      "tag": "dns-in",
+      "listen": "127.0.0.1",
+      "listen_port": 53,
+      "network": "udp"
     }
   ],
   "outbounds": [
@@ -28,7 +35,8 @@
   ],
   "route": {
     "rules": [
-      { "action": "sniff" }
+      { "action": "sniff" },
+      { "inbound": "dns-in", "action": "hijack-dns" }
     ],
     "final": "direct-out",
     "auto_detect_interface": true
