@@ -1,0 +1,55 @@
+#!/usr/sbin/nft -f
+# v4.0 同容器架构 default-deny ruleset
+# 等价于 v3.6 worker_firewall_linux.go::ApplyWorkerFirewallRules 输出链
+# 但应用位置从 host netns 切到容器内自身 netns。
+#
+# 策略：默认 DROP，仅放行 tun0 出口 + lo + 反向已建立连接。
+# DNS 强制走 sing-box stub resolver（127.0.0.1:53）—— D-V4-3。
+
+table inet cloud_proxy_v4
+delete table inet cloud_proxy_v4
+
+table inet cloud_proxy_v4 {
+    chain output {
+        type filter hook output priority filter; policy drop;
+
+        # 放行 lo（含 sing-box stub DNS 127.0.0.1:53）
+        oifname "lo" counter accept
+
+        # 放行 tun0（sing-box 接管）
+        oifname "tun0" counter accept
+
+        # 显式 drop 外部 DNS（防止用户 dig @8.8.8.8 旁路）
+        # D-V4-3：外部 UDP/53、TCP/53、TCP/853 全 drop
+        # 注：这条规则其实被 policy drop 兜底，显式写出来是为了 counter 可观测
+        meta l4proto udp udp dport 53 ip daddr != 127.0.0.0/8 counter drop comment "extdns-udp-drop"
+        meta l4proto tcp tcp dport { 53, 853 } ip daddr != 127.0.0.0/8 counter drop comment "extdns-tcp-drop"
+
+        # 显式 drop link-local（v3.6 LEAK-07 同款）
+        ip daddr 169.254.0.0/16 counter drop comment "linklocal-drop"
+
+        # 反向连接放行
+        ct state established,related counter accept
+
+        # 兜底（policy drop 已覆盖，这条 counter 用于可观测）
+        counter drop comment "default-deny-tail"
+    }
+
+    chain input {
+        type filter hook input priority filter; policy drop;
+
+        # 放行 lo
+        iifname "lo" counter accept
+
+        # 放行 SSH 入向（端口由 host-agent 配置，默认 22）
+        tcp dport 22 counter accept comment "ssh-in"
+
+        # 放行 KasmVNC 入向（MODE=remote 时）
+        tcp dport 6080 counter accept comment "kasmvnc-in"
+
+        # 反向连接放行
+        ct state established,related counter accept
+
+        counter drop comment "default-deny-input-tail"
+    }
+}
