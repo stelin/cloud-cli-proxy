@@ -406,20 +406,21 @@ func (w *Worker) createHost(ctx context.Context, request agentapi.HostActionRequ
 		hostname = containerName
 	}
 
-	// Phase 45 Plan 02：在 docker create 之前先起 sing-box gateway 并写好 DNS
-	// 源文件，保证 worker 容器一旦 docker start，ro bind mount 接管的
-	// /etc/resolv.conf 已指向监听的 tun0 (172.19.0.1)。调用顺序硬约束：
+	// Phase 54-01：在 docker create 之前先把 sing-box config 写到 host 端（54-02
+	// 实现真正写盘逻辑，54-01 stub 返回 nil 让链路骨架就位），保证 worker 容器
+	// 一旦 docker start，ro bind mount 接管的 /etc/sing-box/config.json 已存在。
+	// 调用顺序硬约束（call_order_test.go 守护）：
 	//   PrepareGateway → buildCreateArgs → docker create → docker start → PrepareHost
 	egressCfg, err := w.buildEgressConfig(ctx, request.HostID)
 	if err != nil {
 		return err
 	}
-	// Phase 45 CR-02：PrepareGateway 一旦写盘 + 启动 gateway 容器成功，
-	// 任何后续失败（buildCreateArgs / docker create / docker start /
-	// PrepareHost / waitForSSH）都必须把 gateway 容器 + DATA_DIR/gateway/<host>/*
-	// 清干净。否则残留的 sing-box gateway 仍在向上游代理转发流量（资源
-	// 泄漏 + 出口 IP 计费 + 攻击面），直到下次 createHost 进 PrepareGateway
-	// 第 85 行的 teardownGateway 才能自愈，间隔可能数小时。
+	// Phase 45 CR-02（语义保留，Phase 54-01 单容器化更新）：PrepareGateway 一旦
+	// 写盘成功（host 端 SingBoxConfigDir 已存在 config.json 源文件），任何后续
+	// 失败（buildCreateArgs / docker create / docker start / PrepareHost /
+	// waitForSSH）都必须把 host 端残留清干净，否则下次 createHost 之前 host
+	// 端遗留旧 config.json 可能让 docker create 用错配置启动 sing-box（资源
+	// 泄漏 + 出口 IP 错绑 + 攻击面）。
 	//
 	// 用 gatewayPrepared 旗标 + defer 守护：成功路径末尾置 false 关闭 defer。
 	// defer 内用 context.Background() 而非 ctx，避免 task ctx 已超时取消时
@@ -493,10 +494,9 @@ func (w *Worker) startHost(ctx context.Context, request agentapi.HostActionReque
 		}
 	}
 
-	// Phase 45 Plan 02：在 docker start 之前先起 gateway + 写 DNS 源文件，
-	// 保证 worker 容器一旦运行，ro bind mount 引用的 /etc/resolv.conf 指向已
-	// 监听的 tun0 (172.19.0.1)。PrepareGateway 内部含 teardownGateway → 幂等
-	// 重起，重复调用安全。
+	// Phase 54-01：在 docker start 之前先把 sing-box config 写到 host 端，保证
+	// worker 容器一旦运行，ro bind mount 引用的 /etc/sing-box/config.json 已就位。
+	// PrepareGateway 是「mkdir + 写盘」幂等操作，重复调用安全。
 	egressCfg, err := w.buildEgressConfig(ctx, request.HostID)
 	if err != nil {
 		return err
