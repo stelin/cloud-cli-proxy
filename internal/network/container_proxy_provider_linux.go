@@ -5,44 +5,18 @@ package network
 import (
 	"context"
 	"fmt"
-	"net"
 )
 
-func applyWorkerFirewall(ctx context.Context, workerName, gwIP, bridgeGW, proxyIP string) error {
-	containerNS, _, err := GetContainerNetNS(workerName)
-	if err != nil {
-		return fmt.Errorf("get worker netns: %w", err)
-	}
-	defer containerNS.Close()
-
-	gw := net.ParseIP(gwIP)
-	bgw := net.ParseIP(bridgeGW)
-	// proxyIP 允许为空（Phase 1+ 兼容路径，无代理 IP 时 ConfigureBypassFirewall skip uid 锁）
-	var pip net.IP
-	if proxyIP != "" {
-		pip = net.ParseIP(proxyIP)
-	}
-
-	if err := ApplyWorkerFirewallRules(containerNS, gw, bgw, pip, 22); err != nil {
-		return fmt.Errorf("apply worker firewall rules: %w", err)
-	}
-	return nil
-}
-
+// verifyWorkerNetwork 在 worker 容器 netns 中跑出口 IP / DNS / leak 三检。
+//
+// v4.0 (Phase 54) 改造（54-01）：删除 applyWorkerFirewall / cleanupWorkerFirewall
+// 入口（D-54-7）。entrypoint apply_nft_or_die 在容器内部用 root 身份 apply 全套
+// fail-closed nft 规则；host-agent 不再进入 worker netns 跑 ApplyWorkerFirewallRules，
+// 也不再持有清理责任（容器销毁即规则销毁）。
 func verifyWorkerNetwork(ctx context.Context, workerName string, egress EgressConfig) (VerifyResult, error) {
 	_, pid, err := GetContainerNetNS(workerName)
 	if err != nil {
 		return VerifyResult{}, fmt.Errorf("get worker pid: %w", err)
 	}
 	return VerifyNetworkIntegrity(ctx, pid, egress)
-}
-
-func cleanupWorkerFirewall(ctx context.Context, workerName string) {
-	containerNS, _, err := GetContainerNetNS(workerName)
-	if err != nil {
-		return
-	}
-	defer containerNS.Close()
-
-	_ = CleanupWorkerFirewallRules(containerNS)
 }

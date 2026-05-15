@@ -18,6 +18,13 @@ import (
 // 与 BypassRouterTun0IPv4。
 const containerExpectedDNS = "172.19.0.1"
 
+// resolvConfContent 是 v3.x sidecar gateway 时代写入 worker 容器
+// /etc/resolv.conf 的固定内容。Phase 54 单容器架构下 host-agent 不再写盘，
+// 但 verifyDNS 在过渡期仍以「整体逐字节相等」比对来判定 DNS 入口锁是否被破坏，
+// 因此保留常量在 verify.go 内 — 等 54-02 / 后续 plan 重新设计 verify 路径
+// 时再决定如何与容器内 sing-box DNS 入口对齐。
+const resolvConfContent = "nameserver 172.19.0.1\noptions ndots:0 single-request-reopen\n"
+
 // bypassProbeTargetURL Phase 47 Plan 03 verifyBypassEgressMatchesEth0 的探测端点。
 //
 // 选取要求：必须落在 v3.5 白名单（loopback 预设之外的 LAN/自定义白名单）内，并且
