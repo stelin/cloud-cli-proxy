@@ -87,6 +87,12 @@ if docker exec -u workspace "$CONTAINER_NAME" sudo -n true 2>/dev/null; then
   fail "T-53-4 workspace 居然能 sudo"
 fi
 
+# GAP-2 (53-VERIFICATION) / SC4 第二条 oracle：workspace 不能 ip link set tun0 down
+log "[T-53-4b] workspace 不能 ip link set tun0 down (NET_ADMIN cap inheritance check)"
+if ! docker exec -u workspace "$CONTAINER_NAME" sh -c 'ip link set tun0 down 2>&1' | grep -q "Operation not permitted"; then
+  fail "T-53-4b workspace 居然能 ip link set tun0 down（NET_ADMIN cap inheritance broken）"
+fi
+
 # ===== T-53-5: kill sing-box → 容器 ≤3s 死 =====
 log "[T-53-5] sing-box 死 → 容器死 fail-closed"
 start_ts=$(date +%s)
