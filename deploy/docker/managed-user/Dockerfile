@@ -1,6 +1,12 @@
 # syntax=docker/dockerfile:1.7
 FROM ubuntu:24.04
 
+# v4.0 (Phase 53): managed-user 镜像内置 sing-box，作单容器同容器架构基线。
+# - sing-box 1.13.3 via GitHub release，文件 cap cap_net_admin+eip
+# - singbox 系统账号 uid=9000 用于 sing-box 进程降权（D-V4-1 / D-53-2）
+# - workspace 用户去 sudo（D-53-4），breaking change vs v3.x
+# 详见 .planning/phases/53-entrypoint/53-CONTEXT.md
+
 ENV DEBIAN_FRONTEND=noninteractive
 ENV HOME=/workspace
 ENV WORKSPACE_USER=workspace
@@ -46,6 +52,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         sshfs \
         fuse3 \
         tini \
+        nftables \
+        libcap2-bin \
     && rm -rf /var/lib/apt/lists/*
 
 RUN sed -i 's/^#user_allow_other/user_allow_other/' /etc/fuse.conf \
@@ -101,12 +109,16 @@ ENV LANG=en_US.UTF-8
 ENV LANGUAGE=en_US:en
 ENV LC_ALL=en_US.UTF-8
 
+# v4.0: 删除 workspace 的 sudo NOPASSWD（IMG-04 / D-53-4）。
+# 原 `echo "${WORKSPACE_USER} ALL=(ALL) NOPASSWD:ALL" >/etc/sudoers.d/workspace` 已删除。
 RUN userdel -f ubuntu 2>/dev/null || true \
     && groupdel ubuntu 2>/dev/null || true \
     && groupadd --force --gid "${WORKSPACE_GID}" "${WORKSPACE_USER}" \
-    && useradd --uid "${WORKSPACE_UID}" --gid "${WORKSPACE_GID}" --home-dir /workspace --create-home --shell /bin/bash "${WORKSPACE_USER}" \
-    && echo "${WORKSPACE_USER} ALL=(ALL) NOPASSWD:ALL" >/etc/sudoers.d/workspace \
-    && chmod 0440 /etc/sudoers.d/workspace
+    && useradd --uid "${WORKSPACE_UID}" --gid "${WORKSPACE_GID}" --home-dir /workspace --create-home --shell /bin/bash "${WORKSPACE_USER}"
+
+# v4.0: singbox 系统账号（uid=9000 固定，避免与未来用户 uid 冲突）（IMG-02 / D-53-2）
+RUN groupadd --force --gid 9000 singbox \
+    && useradd --uid 9000 --gid 9000 --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin singbox
 
 RUN adduser "${WORKSPACE_USER}" ssl-cert 2>/dev/null || true
 
@@ -156,6 +168,26 @@ RUN set -eux; \
     fi; \
     chmod +x /usr/local/bin/claude; \
     claude --version
+
+# v4.0: sing-box tun 模式同容器透明代理（IMG-01 / D-53-1）。
+# 与 deploy/docker/sing-box-gateway/Dockerfile 完全一致；版本 ARG 共享，
+# 便于 Phase 54 退役 gateway 镜像时统一管理。
+ARG SINGBOX_VERSION=1.13.3
+RUN set -eux; \
+    ARCH="$(dpkg --print-architecture)"; \
+    curl -fsSL -o /tmp/sb.tgz "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-${ARCH}.tar.gz"; \
+    tar -xzf /tmp/sb.tgz -C /tmp; \
+    install -m 0755 "/tmp/sing-box-${SINGBOX_VERSION}-linux-${ARCH}/sing-box" /usr/local/bin/sing-box; \
+    rm -rf /tmp/sb.tgz "/tmp/sing-box-${SINGBOX_VERSION}-linux-${ARCH}"; \
+    sing-box version
+
+# v4.0: 给 sing-box binary 打文件 cap，进程拿 NET_ADMIN 而不需 root（D-V4-1 / D-53-2）。
+# cap_net_admin: 必须，sing-box 建 tun 设备需要
+# cap_net_bind_service: 备用，stub DNS 监听 127.0.0.1:53 需要绑定 <1024 端口
+# +eip: Effective + Inheritable + Permitted
+RUN setcap 'cap_net_admin+eip cap_net_bind_service+eip' /usr/local/bin/sing-box \
+    && getcap /usr/local/bin/sing-box | grep -q 'cap_net_admin' \
+    || { echo 'setcap failed' >&2; exit 1; }
 
 RUN mkdir -p /workspace/.ssh /var/run/sshd \
     && chown -R "${WORKSPACE_UID}:${WORKSPACE_GID}" /workspace \
