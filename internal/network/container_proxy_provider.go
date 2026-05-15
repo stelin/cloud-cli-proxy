@@ -6,7 +6,17 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// singboxGroupGID 与 deploy/docker/managed-user/Dockerfile `groupadd --gid 9000
+// singbox` 严格对齐（D-54-2）。写死 numeric gid 避免依赖 host 上是否安装了
+// `singbox` 系统组（控制面所在宿主机不一定有该组）。entrypoint
+// start_singbox_or_die 用 `stat -c '%G'` 读 group 名，要求结果 == "singbox"，
+// 故 host 端 9000 这个 GID 必须真的属于名为 singbox 的组 —— 这里是设计意图的
+// 安全失败：如果 host 上 9000 是其他组，chown 成功但容器内 entrypoint 立即
+// fail-closed (exit 1)。
+const singboxGroupGID = 9000
 
 type ContainerProxyProvider struct {
 	logger *slog.Logger
@@ -47,20 +57,92 @@ func (p *ContainerProxyProvider) PrepareGateway(ctx context.Context, spec HostNe
 		return fmt.Errorf("sing-box: mkdir config dir: %w", err)
 	}
 	if err := writeContainerSingBoxConfig(spec.HostID, spec.Egress); err != nil {
+		// darwin / 非 root 开发环境 chown root:singbox 必失败，但 config 文件本身
+		// 已经写到 fs（writeContainerSingBoxConfig 顺序：write → chown → chmod，
+		// chown 失败时文件已存在但 owner 仍是 dev user）。降级为 Warn 让 PrepareGateway
+		// 继续返回 nil；下游链路上：
+		//   - darwin docker desktop 由于无 /dev/net/tun，host create 本来就跑不通，
+		//     verifyWorkerNetwork 会更早失败；
+		//   - Linux 非 root 控制面（不是生产形态）会被容器内 entrypoint
+		//     start_singbox_or_die 的 hard-assert (perm/owner/group) 兜底 exit 1，
+		//     fail-closed 语义不漏。
+		// 真正的安全保证由 entrypoint 兜底，host-agent 不需要在写盘失败时阻断。
+		if isChownPermissionError(err) {
+			p.logger.Warn("container-proxy: chown root:singbox failed (likely non-root dev env); entrypoint hard-assert will fail-close on Linux prod",
+				"host_id", spec.HostID, "error", err)
+			return nil
+		}
 		return fmt.Errorf("sing-box: write config: %w", err)
 	}
 	p.logger.Info("container-proxy: sing-box config injected", "host_id", spec.HostID, "dir", dir)
 	return nil
 }
 
-// writeContainerSingBoxConfig 由 Plan 54-02 实现真正逻辑；54-01 留 stub 让单容器
-// 链路骨架就位。stub 返回 nil 是 **设计意图**：worker.buildCreateArgs 的 sing-box
-// config ro bind mount 在 config.json 不存在时会让 docker create 立即失败，避免
-// 静默旁路。
+// writeContainerSingBoxConfig 把生成的 sing-box config 写到 host 端
+// SingBoxConfigDir(hostID)/config.json，权限严格 root:singbox 0640（D-54-2）。
+//
+// 严格权限对齐 Phase 53 entrypoint start_singbox_or_die hard-assert
+// （deploy/docker/managed-user/entrypoint.sh L178-189）：
+//   - perm == 0o640（owner read+write，group read，other 0）
+//   - owner uid == 0（root）
+//   - group gid == 9000（singbox，与 Dockerfile groupadd --gid 9000 singbox 对齐）
+//
+// 任一不匹配 entrypoint 立即 fail-closed (exit 1)，容器永远起不来。
+//
+// 写盘三步顺序（重要）：
+//  1. os.WriteFile(path, data, 0o600) —— 先写最严格 owner-only，避免任何窗口期
+//     被同 group 用户提前读到（一致性窗口缩到 chmod 0640 之前）；
+//  2. os.Chown(path, 0, 9000) —— 切到 root:singbox 所有权；
+//  3. os.Chmod(path, 0o640) —— 放开 group read。
+//
+// chown 失败处理：调用方 PrepareGateway 通过 isChownPermissionError 判断；darwin
+// 非 root 开发环境降级为 Warn，prod Linux root 必成功。
 func writeContainerSingBoxConfig(hostID string, egress *EgressConfig) error {
-	_ = hostID
-	_ = egress
+	if egress == nil || egress.Proxy == nil {
+		return fmt.Errorf("writeContainerSingBoxConfig: nil egress / proxy")
+	}
+	serverIP, _, err := extractProxyServer(egress.Proxy.OutboundConfig)
+	if err != nil {
+		return fmt.Errorf("resolve proxy server: %w", err)
+	}
+	cfg, err := buildContainerSingBoxConfig(egress.Proxy.OutboundConfig, egress.Proxy.DNSServer, serverIP)
+	if err != nil {
+		return fmt.Errorf("build container sing-box config: %w", err)
+	}
+	dir := SingBoxConfigDir(hostID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("mkdir config dir: %w", err)
+	}
+	cfgPath := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(cfgPath, cfg, 0o600); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	if err := os.Chown(cfgPath, 0, singboxGroupGID); err != nil {
+		return fmt.Errorf("chown root:singbox: %w", err)
+	}
+	if err := os.Chmod(cfgPath, 0o640); err != nil {
+		return fmt.Errorf("chmod 0640: %w", err)
+	}
 	return nil
+}
+
+// isChownPermissionError 判定错误是否为 chown EPERM（darwin 非 root 跑测试或本地
+// 开发跑控制面时常见）。真实安全保证由 Phase 53 entrypoint hard-assert 兜底，
+// darwin 开发环境放过去即可（详见 PrepareGateway 内的降级注释）。
+//
+// 用字符串子串匹配而非 errors.Is(err, fs.ErrPermission)：writeContainerSingBoxConfig
+// 把 chown 错误用 fmt.Errorf("chown root:singbox: %w", err) 包了一层，需要靠
+// "chown" 前缀辨认是哪一步出错（mkdir / write 的 EPERM 不该走降级路径，应该真失败）。
+func isChownPermissionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	if !strings.Contains(s, "chown") {
+		return false
+	}
+	return strings.Contains(s, "operation not permitted") ||
+		strings.Contains(s, "permission denied")
 }
 
 // PrepareHost 在 worker 容器 docker start 之后调用。
