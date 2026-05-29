@@ -50,7 +50,7 @@ func TestKillSwitch_02_TunDevDown(t *testing.T) {
 		t.Skipf("worker container name unavailable: %v", err)
 		return
 	}
-	gatewayName, err := workerInspectName(ctx, g) // Phase 55: 单容器，gateway = worker
+	_, err = workerInspectName(ctx, g) // Phase 55: 单容器，gateway = worker
 	if err != nil {
 		t.Skipf("gateway container name unavailable: %v", err)
 		return
