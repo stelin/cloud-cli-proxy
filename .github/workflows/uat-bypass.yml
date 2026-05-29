@@ -123,7 +123,7 @@ jobs:
 
       - name: Build control plane
         if: steps.preflight.outputs.fixture_available == 'true'
-        run: go build -o /tmp/cloud-cli-proxy ./cmd/...
+        run: go build -o /tmp/cloud-cli-proxy ./cmd/control-plane
 
       - name: Bring up bypass fixture
         if: steps.preflight.outputs.fixture_available == 'true'

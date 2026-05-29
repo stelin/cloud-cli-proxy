@@ -531,8 +531,7 @@ func (p *GoldenPath) KillSingBox(ctx context.Context) error {
 	_ = cmd.Run() // kill 可能返回非 0 如果 sing-box 已死，不视为错
 
 	// 等待容器在 ≤3s 内退出（entrypoint fail-closed）
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
+	err = harness.WaitFor(ctx, "container_exit:"+name, func(_ context.Context) error {
 		var inspectOut bytes.Buffer
 		insp := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}}", name)
 		insp.Stdout = &inspectOut
@@ -542,9 +541,12 @@ func (p *GoldenPath) KillSingBox(ctx context.Context) error {
 		if strings.TrimSpace(inspectOut.String()) != "true" {
 			return nil // 容器已退出
 		}
-		time.Sleep(200 * time.Millisecond)
+		return fmt.Errorf("container %s still running", name)
+	}, harness.WithTimeout(3*time.Second), harness.WithPollInterval(200*time.Millisecond))
+	if err != nil {
+		return fmt.Errorf("kill sing-box: container %s still running after 3s (entrypoint fail-closed violation)", name)
 	}
-	return fmt.Errorf("kill sing-box: container %s still running after 3s (entrypoint fail-closed violation)", name)
+	return nil
 }
 
 // ProbeOutboundFromUser 在 worker 容器内跑 `curl -sS --max-time <N> <url>`，
