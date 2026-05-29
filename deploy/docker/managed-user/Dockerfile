@@ -142,15 +142,15 @@ RUN set -eux; \
       echo "Official install failed after ${INSTALL_MAX_RETRIES} attempts, falling back to GitHub release binary..."; \
       ARCH=$(dpkg --print-architecture); \
       case "${ARCH}" in \
-        amd64) GOARCH="x86_64" ;; \
-        arm64) GOARCH="aarch64" ;; \
+        amd64) GOARCH="x64" ;; \
+        arm64) GOARCH="arm64" ;; \
         *) echo "unsupported arch: ${ARCH}" >&2; exit 1 ;; \
       esac; \
       LATEST=$(curl -fsSL https://api.github.com/repos/anthropics/claude-code/releases/latest | jq -r .tag_name); \
       if [ -z "${LATEST}" ] || [ "${LATEST}" = "null" ]; then \
         echo "Failed to get latest release version" >&2; exit 1; \
       fi; \
-      BINARY_URL="https://github.com/anthropics/claude-code/releases/download/${LATEST}/claude-code-linux-${GOARCH}.tar.gz"; \
+      BINARY_URL="https://github.com/anthropics/claude-code/releases/download/${LATEST}/claude-linux-${GOARCH}.tar.gz"; \
       echo "Downloading ${BINARY_URL}..."; \
       curl -fsSL -o /tmp/claude-binary.tar.gz "${BINARY_URL}"; \
       tar -xzf /tmp/claude-binary.tar.gz -C /tmp; \

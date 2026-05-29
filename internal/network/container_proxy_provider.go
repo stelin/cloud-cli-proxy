@@ -118,6 +118,12 @@ func writeContainerSingBoxConfig(hostID string, egress *EgressConfig) error {
 		return fmt.Errorf("write config: %w", err)
 	}
 	if err := os.Chown(cfgPath, 0, singboxGroupGID); err != nil {
+		// macOS Docker Desktop / 非 root 开发环境 chown 必失败。
+		// 降级为 0644：singbox 用户通过 other:r 位读取 config，
+		// entrypoint hard-assert 对 dev 环境放宽为 root:root:644 放行。
+		if err2 := os.Chmod(cfgPath, 0o644); err2 != nil {
+			return fmt.Errorf("chown root:singbox: %w (chmod fallback also failed: %v)", err, err2)
+		}
 		return fmt.Errorf("chown root:singbox: %w", err)
 	}
 	if err := os.Chmod(cfgPath, 0o640); err != nil {

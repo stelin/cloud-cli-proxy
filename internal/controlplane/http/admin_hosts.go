@@ -987,7 +987,26 @@ func (h *AdminHostsHandler) UpdateClaude() nethttp.Handler {
 		ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 		defer cancel()
 
-		updateScript := `npm install -g @anthropic-ai/claude-code@latest 2>&1`
+		updateScript := `set -e
+ARCH=$(dpkg --print-architecture)
+case "${ARCH}" in
+  amd64) GOARCH="x64" ;;
+  arm64) GOARCH="arm64" ;;
+  *) echo "unsupported arch: ${ARCH}" >&2; exit 1 ;;
+esac
+LATEST=$(curl -fsSL https://api.github.com/repos/anthropics/claude-code/releases/latest | jq -r .tag_name)
+if [ -z "${LATEST}" ] || [ "${LATEST}" = "null" ]; then
+  echo "Failed to get latest release version" >&2; exit 1
+fi
+URL="https://github.com/anthropics/claude-code/releases/download/${LATEST}/claude-linux-${GOARCH}.tar.gz"
+echo "Downloading ${LATEST}..."
+curl -fsSL -o /tmp/claude-update.tar.gz "${URL}"
+tar -xzf /tmp/claude-update.tar.gz -C /tmp claude
+mv /tmp/claude /usr/local/bin/claude
+chmod +x /usr/local/bin/claude
+rm -f /tmp/claude-update.tar.gz
+claude --version
+2>&1`
 		cmd := exec.CommandContext(ctx, "docker", "exec", "-i", containerName, "bash", "-c", updateScript)
 		output, err := cmd.CombinedOutput()
 		if err != nil {

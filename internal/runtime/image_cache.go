@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -67,24 +68,30 @@ func (c *ImageCache) Refresh(ctx context.Context) error {
 	pullCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(pullCtx, "docker", "pull", spec.ImageName)
-	output, err := cmd.CombinedOutput()
+	var pullOutput []byte
+	var pullErr error
+	if os.Getenv("IMAGE_CACHE_SKIP_PULL") == "1" {
+		c.logger.Info("image cache: skipping docker pull (IMAGE_CACHE_SKIP_PULL=1)", "image", spec.ImageName)
+	} else {
+		cmd := exec.CommandContext(pullCtx, "docker", "pull", spec.ImageName)
+		pullOutput, pullErr = cmd.CombinedOutput()
+	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.status.Refreshing = false
 	c.status.LastRefreshAt = time.Now()
 
-	if err != nil {
-		c.status.LastRefreshError = strings.TrimSpace(string(output))
+	if pullErr != nil {
+		c.status.LastRefreshError = strings.TrimSpace(string(pullOutput))
 		if c.status.LastRefreshError == "" {
-			c.status.LastRefreshError = err.Error()
+			c.status.LastRefreshError = pullErr.Error()
 		}
 		c.logger.Warn("image cache refresh failed",
 			"image", spec.ImageName,
-			"error", err,
+			"error", pullErr,
 			"output", c.status.LastRefreshError)
-		return fmt.Errorf("docker pull %s: %w", spec.ImageName, err)
+		return fmt.Errorf("docker pull %s: %w", spec.ImageName, pullErr)
 	}
 
 	// 刷新本地 digest 和版本 label
@@ -106,7 +113,7 @@ func (c *ImageCache) Refresh(ctx context.Context) error {
 	c.logger.Info("image cache refreshed",
 		"image", spec.ImageName,
 		"digest", c.status.LocalDigest,
-		"output", strings.TrimSpace(string(output)))
+		"output", strings.TrimSpace(string(pullOutput)))
 	broadcast.Broadcast("image-status", "update", "")
 	return nil
 }

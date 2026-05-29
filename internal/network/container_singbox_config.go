@@ -34,11 +34,19 @@ func buildContainerSingBoxConfig(outboundRaw json.RawMessage, dnsServer, proxySe
 	if err != nil {
 		return nil, err
 	}
+	// direct inbound 监听 127.0.0.1:53 作为本地 DNS 转发器。
+	// resolv.conf 指向 127.0.0.1，应用 DNS 查询经此 inbound 进入 sing-box，
+	// 由 hijack-dns route 规则交给 DNS 模块处理。
+	// 不能用 tun0 IP (172.19.0.1) —— 内核本地处理该地址的包，tun 设备收不到。
+	dnsDirect, err := buildContainerDNSDirectInbound()
+	if err != nil {
+		return nil, err
+	}
 
 	cfg := map[string]any{
 		"log":       map[string]any{"level": "info"},
 		"dns":       buildContainerDNS(),
-		"inbounds":  []json.RawMessage{tunIn},
+		"inbounds":  []json.RawMessage{tunIn, dnsDirect},
 		"outbounds": []json.RawMessage{proxyOut, directOut},
 		"route": map[string]any{
 			"default_interface":       "eth0",
@@ -50,21 +58,41 @@ func buildContainerSingBoxConfig(outboundRaw json.RawMessage, dnsServer, proxySe
 	return json.MarshalIndent(cfg, "", "  ")
 }
 
+// buildContainerDNSDirectInbound 渲染 direct inbound 监听 127.0.0.1:53。
+// 作为本地 DNS 转发器：resolv.conf 指向 127.0.0.1，应用 DNS 查询经此
+// inbound 进入 sing-box，由 hijack-dns route 规则交给 DNS 模块处理。
+// 不能用 tun0 IP (172.19.0.1) 作为 DNS 地址 —— 内核本地处理该地址的包，
+// tun 设备收不到，DNS 查询会 connection refused。
+func buildContainerDNSDirectInbound() (json.RawMessage, error) {
+	raw, err := json.Marshal(map[string]any{
+		"type":        "direct",
+		"tag":         "dns-direct",
+		"listen":      "127.0.0.1",
+		"listen_port": 53,
+		"sniff":       true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal container dns direct inbound: %w", err)
+	}
+	return raw, nil
+}
+
 // buildContainerTunInbound 渲染容器内 tun inbound。
 //
 // 与 buildGatewayTunInbound 的关键差异：v4.0 同容器架构下不需要
 // endpoint_independent_nat —— 流量走向是 user 进程 → tun0 → sing-box → eth0
-// 单向链路，无回程 NAT 需求；strict_route + auto_route 与 v3.5 对齐，stack
-// 仍走内核 system 栈（性能优于 gvisor）。
+// 单向链路，无回程 NAT 需求；strict_route + auto_route 与 v3.5 对齐。
+// stack 使用 gvisor（用户态 TCP/IP 栈），避免依赖 iptables REDIRECT。
+// Ubuntu 24.04 最小镜像不含 iptables，system 栈的 NAT 无法工作。
 func buildContainerTunInbound() (json.RawMessage, error) {
 	raw, err := json.Marshal(map[string]any{
-		"type":         "tun",
-		"tag":          "tun-in",
-		"address":      []string{"172.19.0.1/30"},
-		"auto_route":   true,
-		"strict_route": true,
-		"stack":        "system",
-		"sniff":        true,
+		"type":          "tun",
+		"tag":           "tun-in",
+		"address":       []string{"172.19.0.1/30"},
+		"auto_route":    true,
+		"strict_route":  true,
+		"stack":         "gvisor",
+		"sniff":         true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal container tun inbound: %w", err)

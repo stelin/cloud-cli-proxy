@@ -3,7 +3,7 @@
 # 等价于 v3.6 worker_firewall_linux.go::ApplyWorkerFirewallRules 输出链
 # 但应用位置从 host netns 切到容器内自身 netns。
 #
-# 策略：默认 DROP，仅放行 tun0 出口 + lo + 反向已建立连接。
+# 策略：默认 DROP，仅放行 tun0 出口 + sing-box uid 直连 eth0 + lo + 反向已建立连接。
 # DNS 强制走 sing-box stub resolver（127.0.0.1:53）—— D-V4-3。
 
 table inet cloud_proxy_v4
@@ -18,6 +18,11 @@ table inet cloud_proxy_v4 {
 
         # 放行 tun0（sing-box 接管）
         oifname "tun0" counter accept
+
+        # 放行 sing-box (uid=9000) 通过 eth0 直连代理服务器
+        # sing-box direct outbound (proxy-out → direct) 使用 eth0 发起连接，
+        # 不走 tun0 避免回环。用户进程仍被 policy drop 限制在 tun0 内。
+        meta skuid 9000 oifname "eth0" counter accept comment "singbox-direct-egress"
 
         # 显式 drop 外部 DNS（防止用户 dig @8.8.8.8 旁路）
         # D-V4-3：外部 UDP/53、TCP/53、TCP/853 全 drop
