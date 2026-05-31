@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v4.1.2 - 2026-05-31
+## What's Changed
+
+### Backend (Go / API)
+- feat: 主机文件浏览支持 Windows 路径与目录选择器 (0a41582)
+
+### Frontend (Admin Web)
+- feat: 主机文件浏览支持 Windows 路径与目录选择器 (0a41582)
+
+### Docs
+- docs: 重新梳理 README 和文档站，精简表述 (492782a)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v4.1.1...v4.1.2
+
+
 ## v4.1.1 - 2026-05-31
 ## What's Changed
 
