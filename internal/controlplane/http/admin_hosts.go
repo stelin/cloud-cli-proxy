@@ -1293,11 +1293,9 @@ func resolveDisk(gb *int) *int {
 }
 
 // resolveResourceMemory PATCH 端点的三态解析：nil=不修改，0→NULL(无限制)，>0→传值。
+// 注意：0 不能转 nil，SQL 层需要区分"不传"和"传 0 设无限制"。
 func resolveResourceMemory(mb *int) *int {
 	if mb == nil {
-		return nil
-	}
-	if *mb == 0 {
 		return nil
 	}
 	return mb
@@ -1308,18 +1306,12 @@ func resolveResourceCPU(cpu *float64) *float64 {
 	if cpu == nil {
 		return nil
 	}
-	if *cpu == 0 {
-		return nil
-	}
 	return cpu
 }
 
 // resolveResourceDisk PATCH 端点的三态解析：nil=不修改，0→NULL(无限制)，>0→传值。
 func resolveResourceDisk(gb *int) *int {
 	if gb == nil {
-		return nil
-	}
-	if *gb == 0 {
 		return nil
 	}
 	return gb

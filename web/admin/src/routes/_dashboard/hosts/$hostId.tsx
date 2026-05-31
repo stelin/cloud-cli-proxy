@@ -22,6 +22,9 @@ import {
   CheckCircle2,
   XCircle,
   ChevronUp,
+  Download,
+  Upload,
+  FolderOpen,
 } from "lucide-react";
 import { toast } from "sonner";
 import { getToken } from "@/lib/auth";
@@ -29,6 +32,7 @@ import {
   useHostDetail,
   useHostImageInfo,
   useImportHostConfig,
+  useExportHostConfig,
   useHostLogs,
   useHostAction,
   useDeleteHost,
@@ -63,6 +67,7 @@ import { ClaudeSettingsDialog } from "@/components/hosts/claude-settings-dialog"
 import { ClaudeStatusCard } from "@/components/hosts/claude-status-card";
 import { RebuildDialog } from "@/components/hosts/rebuild-dialog";
 import { BypassTab } from "@/components/bypass/bypass-tab";
+import { HostFilesBrowser } from "@/components/hosts/host-files-browser";
 import {
   Dialog,
   DialogContent,
@@ -98,6 +103,7 @@ function HostDetailPage() {
   const { data, isLoading } = useHostDetail(hostId);
   const { data: imageInfo } = useHostImageInfo(hostId, !!data?.host);
   const importConfigMutation = useImportHostConfig();
+  const exportConfigMutation = useExportHostConfig();
   const actionMutation = useHostAction();
   const deleteMutation = useDeleteHost();
   const patchResourcesMutation = usePatchHostResources(hostId);
@@ -109,6 +115,7 @@ function HostDetailPage() {
   const [changeRootPwOpen, setChangeRootPwOpen] = useState(false);
   const [claudeSettingsOpen, setClaudeSettingsOpen] = useState(false);
   const [rebuildOpen, setRebuildOpen] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [forceDeleteOpen, setForceDeleteOpen] = useState(false);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
@@ -169,7 +176,8 @@ function HostDetailPage() {
   const displayName = host.hostname || user.username || host.id.slice(0, 8);
 
   const sshPort = data.connection_info?.ssh_port;
-  const egressIP = bindings?.[0]?.egress_ip?.ip_address;
+  const egressIP = bindings?.[0]?.egress_ip?.detected_ip_address
+  || (bindings?.[0]?.egress_ip?.ip_address !== "0.0.0.0" ? bindings?.[0]?.egress_ip?.ip_address : undefined);
 
   function openVNC() {
     const token = getToken();
@@ -279,6 +287,26 @@ function HostDetailPage() {
           </Button>
           <Button size="sm" variant="outline" className="h-9 gap-2" onClick={() => setRotateLoginOpen(true)}>
             <KeyRound className="h-3.5 w-3.5" /> 轮换密码
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-9 gap-2"
+            onClick={() => exportConfigMutation.mutate(hostId)}
+            disabled={exportConfigMutation.isPending}
+          >
+            <Download className="h-3.5 w-3.5" />
+            {exportConfigMutation.isPending ? "导出中..." : "导出配置"}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-9 gap-2"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importConfigMutation.isPending}
+          >
+            <Upload className="h-3.5 w-3.5" />
+            {importConfigMutation.isPending ? "导入中..." : "导入配置"}
           </Button>
 
           {/* 危险操作 */}
@@ -523,6 +551,31 @@ function HostDetailPage() {
 
       {/* ===== Claude 状态 ===== */}
       <ClaudeStatusCard hostId={hostId} hostStatus={host.status} />
+
+      {/* ===== 文件浏览 ===== */}
+      <div className="rounded-xl border border-border/60 bg-card shadow-sm">
+        <button
+          type="button"
+          onClick={() => setFilesOpen(!filesOpen)}
+          className="flex w-full items-center justify-between px-6 py-4 text-left transition-colors hover:bg-muted/30"
+        >
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+              <FolderOpen className="h-4 w-4 text-primary" />
+            </div>
+            <div>
+              <span className="block text-sm font-semibold">文件浏览</span>
+              <span className="text-xs text-muted-foreground">浏览容器内文件系统</span>
+            </div>
+          </div>
+          <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${filesOpen ? "" : "-rotate-90"}`} />
+        </button>
+        {filesOpen && (
+          <div className="border-t border-border/40 px-6 py-5">
+            <HostFilesBrowser hostId={hostId} />
+          </div>
+        )}
+      </div>
 
       {/* ===== 代理白名单（BYPASS-UI-01） ===== */}
       <div

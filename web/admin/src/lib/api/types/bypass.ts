@@ -128,3 +128,18 @@ export interface BypassAuditLogResponse {
   audit_log: BypassAuditLogEntry[];
   next_before: string;
 }
+
+// ===== 一致性校验 =====
+
+export interface BypassConsistencyDiff {
+  section: string;
+  field: string;
+  expected_value: string;
+  actual_value: string;
+}
+
+export interface BypassConsistencyResponse {
+  is_consistent: boolean;
+  diffs: BypassConsistencyDiff[];
+  checked_at: string;
+}

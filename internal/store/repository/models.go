@@ -112,14 +112,15 @@ type Event struct {
 }
 
 type EgressIP struct {
-	ID          string          `json:"id"`
-	Label       string          `json:"label"`
-	IPAddress   string          `json:"ip_address"`
-	Provider    string          `json:"provider"`
-	Status      string          `json:"status"`
-	ProxyConfig json.RawMessage `json:"proxy_config,omitempty"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
+	ID                 string          `json:"id"`
+	Label              string          `json:"label"`
+	IPAddress          string          `json:"ip_address"`
+	DetectedIPAddress  *string         `json:"detected_ip_address,omitempty"`
+	Provider           string          `json:"provider"`
+	Status             string          `json:"status"`
+	ProxyConfig        json.RawMessage `json:"proxy_config,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
 }
 
 type DashboardStats struct {
@@ -171,10 +172,11 @@ type BindingWithIP struct {
 
 type HostWithUsername struct {
 	Host
-	Username       string  `json:"username"`
-	EgressIPLabel  *string `json:"egress_ip_label,omitempty"`
-	EgressIPAddr   *string `json:"egress_ip_address,omitempty"`
-	DockerStatus   string  `json:"docker_status,omitempty"`
+	Username              string  `json:"username"`
+	EgressIPLabel         *string `json:"egress_ip_label,omitempty"`
+	EgressIPAddr          *string `json:"egress_ip_address,omitempty"`
+	EgressIPDetectedAddr  *string `json:"egress_ip_detected_address,omitempty"`
+	DockerStatus          string  `json:"docker_status,omitempty"`
 }
 
 // HostWithClaudeAccount D-23：纯 DB JOIN，避免在 detail handler 引入 docker exec。

@@ -1,0 +1,53 @@
+import { Component, type ErrorInfo, type ReactNode } from "react";
+
+interface Props {
+  children: ReactNode;
+  fallback?: ReactNode;
+}
+
+interface State {
+  hasError: boolean;
+  error: Error | null;
+}
+
+export class ErrorBoundary extends Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("ErrorBoundary caught:", error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      if (this.props.fallback) return this.props.fallback;
+      return (
+        <div className="flex min-h-[400px] flex-col items-center justify-center gap-4 p-8">
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-destructive/10">
+            <span className="text-3xl">!</span>
+          </div>
+          <h2 className="text-xl font-semibold">页面出现错误</h2>
+          <p className="max-w-md text-center text-sm text-muted-foreground">
+            {this.state.error?.message || "发生了未知错误"}
+          </p>
+          <button
+            onClick={() => {
+              this.setState({ hasError: false, error: null });
+              window.location.reload();
+            }}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            重新加载
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}

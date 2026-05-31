@@ -11,6 +11,7 @@ import {
   RotateCcw,
   Globe,
   Server,
+  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import { getToken } from "@/lib/auth";
@@ -18,6 +19,7 @@ import { useHosts, useDeleteHost, useHostAction } from "@/hooks/use-hosts";
 import { useTasks } from "@/hooks/use-tasks";
 import { CreateHostDialog } from "@/components/hosts/create-host-dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { StatusDot } from "@/components/ui/status-dot";
 import {
   Tooltip,
@@ -105,11 +107,23 @@ function HostsPage() {
   const deleteMutation = useDeleteHost();
   const hostAction = useHostAction();
   const [createOpen, setCreateOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<{
     id: string;
     username: string;
     status: string;
   } | null>(null);
+
+  const filteredHosts = hosts.filter((h) => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      (h.hostname ?? "").toLowerCase().includes(q) ||
+      h.username.toLowerCase().includes(q) ||
+      h.id.toLowerCase().includes(q) ||
+      (h.egress_ip_label ?? "").toLowerCase().includes(q)
+    );
+  });
 
   function getLatestTask(hostId: string) {
     return tasks.find((t) => t.host_id === hostId);
@@ -141,6 +155,16 @@ function HostsPage() {
         </Button>
       </PageHeader>
 
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          placeholder="搜索主机名、用户名、出口IP..."
+          className="pl-9"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+      </div>
+
       <CreateHostDialog open={createOpen} onOpenChange={setCreateOpen} />
 
       {isLoading ? (
@@ -169,17 +193,23 @@ function HostsPage() {
             />
           </Table>
         </DataTableShell>
-      ) : hosts.length === 0 ? (
+      ) : filteredHosts.length === 0 ? (
         <DataTableShell>
           <EmptyState
             icon={Server}
-            title="暂无主机"
-            description="创建主机后，可在此查看容器状态、出口 IP 绑定与运维操作"
+            title={searchQuery ? "无匹配结果" : "暂无主机"}
+            description={searchQuery ? `未找到与 "${searchQuery}" 匹配的主机` : "创建主机后，可在此查看容器状态、出口 IP 绑定与运维操作"}
             action={
-              <Button onClick={() => setCreateOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                新建主机
-              </Button>
+              searchQuery ? (
+                <Button variant="outline" size="sm" onClick={() => setSearchQuery("")}>
+                  清除搜索
+                </Button>
+              ) : (
+                <Button onClick={() => setCreateOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  新建主机
+                </Button>
+              )
             }
           />
         </DataTableShell>
@@ -197,7 +227,7 @@ function HostsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {hosts.map((host) => {
+              {filteredHosts.map((host) => {
                 const latestTask = getLatestTask(host.id);
                 const status = getHostStatus(host, latestTask);
                 const isRunning = host.status === "running";
@@ -229,7 +259,7 @@ function HostsPage() {
                               </span>
                             </TooltipTrigger>
                             <TooltipContent>
-                              {host.egress_ip_address}
+                              {host.egress_ip_detected_address || host.egress_ip_address}
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>

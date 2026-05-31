@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { ChevronDown, ChevronRight, RotateCcw, ScrollText } from "lucide-react";
+import { ChevronDown, ChevronRight, RotateCcw, ScrollText, Calendar } from "lucide-react";
 import { useEvents, eventTypeLabel, type EventItem } from "@/hooks/use-events";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -60,6 +61,8 @@ function formatDate(dateStr: string) {
 
 function EventsPage() {
   const [typeFilter, setTypeFilter] = useState<string>(ALL_EVENT_TYPES);
+  const [sinceDate, setSinceDate] = useState("");
+  const [untilDate, setUntilDate] = useState("");
   const [offset, setOffset] = useState(0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -68,6 +71,8 @@ function EventsPage() {
 
   const { data, isLoading } = useEvents({
     type: apiType,
+    since: sinceDate || undefined,
+    until: untilDate || undefined,
     limit: PAGE_SIZE,
     offset,
   });
@@ -77,6 +82,8 @@ function EventsPage() {
 
   function handleResetFilter() {
     setTypeFilter(ALL_EVENT_TYPES);
+    setSinceDate("");
+    setUntilDate("");
     setOffset(0);
   }
 
@@ -106,7 +113,27 @@ function EventsPage() {
             ))}
           </SelectContent>
         </Select>
-        {typeFilter !== ALL_EVENT_TYPES && (
+        <div className="flex items-center gap-2">
+          <Calendar className="h-4 w-4 text-muted-foreground shrink-0" />
+          <Input
+            type="datetime-local"
+            value={sinceDate}
+            onChange={(e) => { setSinceDate(e.target.value); setOffset(0); }}
+            placeholder="开始时间"
+            className="w-auto"
+            aria-label="开始时间"
+          />
+          <span className="text-muted-foreground text-sm">-</span>
+          <Input
+            type="datetime-local"
+            value={untilDate}
+            onChange={(e) => { setUntilDate(e.target.value); setOffset(0); }}
+            placeholder="结束时间"
+            className="w-auto"
+            aria-label="结束时间"
+          />
+        </div>
+        {(typeFilter !== ALL_EVENT_TYPES || sinceDate || untilDate) && (
           <Button variant="ghost" size="sm" onClick={handleResetFilter}>
             <RotateCcw className="mr-1 h-3 w-3" />
             重置

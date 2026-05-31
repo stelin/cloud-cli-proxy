@@ -52,6 +52,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { ApiError } from "@/lib/api";
 import { EgressIPDrawer } from "@/components/egress-ips/egress-ip-drawer";
 import { TestResultDialog } from "@/components/egress-ips/test-result-dialog";
 import { egressProxyEntryDisplay } from "@/lib/egress-display";
@@ -146,8 +147,7 @@ function EgressIPsPage() {
         setDeleteTarget(null);
       },
       onError: (err: Error) => {
-        // @ts-expect-error ApiError may have status
-        if (err.status === 409) {
+        if (err instanceof ApiError && err.status === 409) {
           toast.error("该出口 IP 已绑定到主机，请先解绑");
         } else {
           toast.error("删除失败");
@@ -238,7 +238,7 @@ function EgressIPsPage() {
             <TableBody>
               {egressIPs.map((ip) => {
                 const result = testResults.get(ip.id);
-                const actualIP = getActualIP(result);
+                const actualIP = ip.detected_ip_address || getActualIP(result);
                 const testState = sseTest.states.get(ip.id);
                 const isTestingThis = testState?.isRunning ?? false;
                 const stage = testState?.stage ?? null;

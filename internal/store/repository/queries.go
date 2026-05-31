@@ -152,7 +152,7 @@ func (r *Repository) ListHostsByUserID(ctx context.Context, userID string) ([]Ho
 
 func (r *Repository) ListHostsWithEgressByUserID(ctx context.Context, userID string) ([]UserHostSummary, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT h.id::text, h.hostname, h.status, COALESCE(host(e.ip_address), ''), h.created_at
+		SELECT h.id::text, h.hostname, h.status, COALESCE(host(e.detected_ip_address), host(e.ip_address), ''), h.created_at
 		FROM hosts h
 		LEFT JOIN host_egress_bindings b ON b.host_id = h.id
 		LEFT JOIN egress_ips e ON e.id = b.egress_ip_id
@@ -451,7 +451,7 @@ func (r *Repository) ListHostBindings(ctx context.Context, hostID string) ([]Hos
 
 func (r *Repository) ListEgressIPs(ctx context.Context) ([]EgressIP, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id::text, label, host(ip_address), provider, status,
+		SELECT id::text, label, host(ip_address), host(detected_ip_address), provider, status,
 			proxy_config, created_at, updated_at
 		FROM egress_ips
 		ORDER BY created_at DESC
@@ -465,7 +465,7 @@ func (r *Repository) ListEgressIPs(ctx context.Context) ([]EgressIP, error) {
 	for rows.Next() {
 		var item EgressIP
 		if err := rows.Scan(
-			&item.ID, &item.Label, &item.IPAddress, &item.Provider, &item.Status,
+			&item.ID, &item.Label, &item.IPAddress, &item.DetectedIPAddress, &item.Provider, &item.Status,
 			&item.ProxyConfig, &item.CreatedAt, &item.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan egress ip: %w", err)
@@ -483,13 +483,13 @@ func (r *Repository) CreateEgressIP(ctx context.Context, params CreateEgressIPPa
 	if err := r.db.QueryRow(ctx, `
 		INSERT INTO egress_ips (label, ip_address, provider, status, proxy_config)
 		VALUES ($1, $2::inet, $3, 'available', $4)
-		RETURNING id::text, label, host(ip_address), provider, status,
+		RETURNING id::text, label, host(ip_address), host(detected_ip_address), provider, status,
 			proxy_config, created_at, updated_at
 	`,
 		params.Label, params.IPAddress, params.Provider,
 		params.ProxyConfig,
 	).Scan(
-		&item.ID, &item.Label, &item.IPAddress, &item.Provider, &item.Status,
+		&item.ID, &item.Label, &item.IPAddress, &item.DetectedIPAddress, &item.Provider, &item.Status,
 		&item.ProxyConfig, &item.CreatedAt, &item.UpdatedAt,
 	); err != nil {
 		return EgressIP{}, fmt.Errorf("create egress ip: %w", err)
@@ -497,12 +497,22 @@ func (r *Repository) CreateEgressIP(ctx context.Context, params CreateEgressIPPa
 	return item, nil
 }
 
-// UpdateEgressIPAddress 仅更新出口 IP 地址字段，不影响 label/provider/status/proxy_config。
-// 用于验证阶段自动纠正用户填写的代理服务器 IP（如 38.246.232.120）为实际出口 IP（如 99.128.19.42）。
+// UpdateEgressIPAddress 更新出口 IP 地址和检测地址字段。
+// 用于验证阶段自动纠正用户填写的代理服务器 IP 为实际出口 IP。
 func (r *Repository) UpdateEgressIPAddress(ctx context.Context, egressIPID string, newIP string) error {
-	_, err := r.db.Exec(ctx, `UPDATE egress_ips SET ip_address = $1::inet, updated_at = NOW() WHERE id = $2`, newIP, egressIPID)
+	_, err := r.db.Exec(ctx, `UPDATE egress_ips SET ip_address = $1::inet, detected_ip_address = $1::inet, updated_at = NOW() WHERE id = $2`, newIP, egressIPID)
 	if err != nil {
 		return fmt.Errorf("update egress ip address: %w", err)
+	}
+	return nil
+}
+
+// UpdateEgressIPDetectedAddress 仅更新检测到的出口 IP 地址字段。
+// 用于探针检测完成后将真实出口 IP 写入数据库。
+func (r *Repository) UpdateEgressIPDetectedAddress(ctx context.Context, egressIPID string, detectedIP string) error {
+	_, err := r.db.Exec(ctx, `UPDATE egress_ips SET detected_ip_address = $1::inet, updated_at = NOW() WHERE id = $2`, detectedIP, egressIPID)
+	if err != nil {
+		return fmt.Errorf("update egress ip detected address: %w", err)
 	}
 	return nil
 }
@@ -515,14 +525,14 @@ func (r *Repository) UpdateEgressIP(ctx context.Context, egressIPID string, para
 			proxy_config = $6,
 			updated_at = NOW()
 		WHERE id = $1
-		RETURNING id::text, label, host(ip_address), provider, status,
+		RETURNING id::text, label, host(ip_address), host(detected_ip_address), provider, status,
 			proxy_config, created_at, updated_at
 	`,
 		egressIPID,
 		params.Label, params.IPAddress, params.Provider, params.Status,
 		params.ProxyConfig,
 	).Scan(
-		&item.ID, &item.Label, &item.IPAddress, &item.Provider, &item.Status,
+		&item.ID, &item.Label, &item.IPAddress, &item.DetectedIPAddress, &item.Provider, &item.Status,
 		&item.ProxyConfig, &item.CreatedAt, &item.UpdatedAt,
 	); err != nil {
 		return EgressIP{}, fmt.Errorf("update egress ip: %w", err)
@@ -604,7 +614,7 @@ func (r *Repository) GetHostDetail(ctx context.Context, hostID string) (HostDeta
 	}
 
 	rows, err := r.db.Query(ctx, `
-		SELECT b.id::text, e.id::text, e.label, host(e.ip_address), e.provider, e.status,
+		SELECT b.id::text, e.id::text, e.label, host(e.ip_address), host(e.detected_ip_address), e.provider, e.status,
 			e.proxy_config, e.created_at, e.updated_at, b.created_at
 		FROM host_egress_bindings b
 		JOIN egress_ips e ON e.id = b.egress_ip_id
@@ -621,7 +631,7 @@ func (r *Repository) GetHostDetail(ctx context.Context, hostID string) (HostDeta
 		var b BindingWithIP
 		if err := rows.Scan(
 			&b.BindingID,
-			&b.EgressIP.ID, &b.EgressIP.Label, &b.EgressIP.IPAddress, &b.EgressIP.Provider, &b.EgressIP.Status,
+			&b.EgressIP.ID, &b.EgressIP.Label, &b.EgressIP.IPAddress, &b.EgressIP.DetectedIPAddress, &b.EgressIP.Provider, &b.EgressIP.Status,
 			&b.EgressIP.ProxyConfig, &b.EgressIP.CreatedAt, &b.EgressIP.UpdatedAt, &b.CreatedAt,
 		); err != nil {
 			return HostDetail{}, fmt.Errorf("scan binding with ip: %w", err)
@@ -641,7 +651,7 @@ const listHostsWithUsernameSQL = `
 	       h.home_volume_name, h.slot_key, h.timezone, h.hostname,
 	       h.memory_limit_mb, h.cpu_limit, h.disk_limit_gb,
 	       h.host_mounts, h.created_at, h.updated_at, u.username,
-	       e.label, host(e.ip_address)
+	       e.label, host(e.ip_address), host(e.detected_ip_address)
 	FROM hosts h
 	JOIN users u ON u.id = h.user_id
 	LEFT JOIN LATERAL (
@@ -670,7 +680,7 @@ func (r *Repository) ListHostsWithUsername(ctx context.Context) ([]HostWithUsern
 			&rawMounts,
 			&item.CreatedAt, &item.UpdatedAt,
 			&item.Username,
-			&item.EgressIPLabel, &item.EgressIPAddr,
+			&item.EgressIPLabel, &item.EgressIPAddr, &item.EgressIPDetectedAddr,
 		); err != nil {
 			return nil, fmt.Errorf("scan host with username: %w", err)
 		}
@@ -688,7 +698,7 @@ func (r *Repository) ListHostsWithUsername(ctx context.Context) ([]HostWithUsern
 func (r *Repository) GetEgressIP(ctx context.Context, egressIPID string) (EgressIP, error) {
 	var item EgressIP
 	if err := r.db.QueryRow(ctx, `
-		SELECT id::text, label, host(ip_address), provider, status,
+		SELECT id::text, label, host(ip_address), host(detected_ip_address), provider, status,
 			proxy_config, created_at, updated_at
 		FROM egress_ips
 		WHERE id = $1
@@ -696,6 +706,7 @@ func (r *Repository) GetEgressIP(ctx context.Context, egressIPID string) (Egress
 		&item.ID,
 		&item.Label,
 		&item.IPAddress,
+		&item.DetectedIPAddress,
 		&item.Provider,
 		&item.Status,
 		&item.ProxyConfig,
@@ -711,7 +722,7 @@ func (r *Repository) GetEgressIP(ctx context.Context, egressIPID string) (Egress
 func (r *Repository) GetEgressIPByHost(ctx context.Context, hostID string) (EgressIP, error) {
 	var item EgressIP
 	if err := r.db.QueryRow(ctx, `
-		SELECT e.id::text, e.label, host(e.ip_address), e.provider, e.status,
+		SELECT e.id::text, e.label, host(e.ip_address), host(e.detected_ip_address), e.provider, e.status,
 			e.proxy_config, e.created_at, e.updated_at
 		FROM host_egress_bindings b
 		JOIN egress_ips e ON e.id = b.egress_ip_id
@@ -722,6 +733,7 @@ func (r *Repository) GetEgressIPByHost(ctx context.Context, hostID string) (Egre
 		&item.ID,
 		&item.Label,
 		&item.IPAddress,
+		&item.DetectedIPAddress,
 		&item.Provider,
 		&item.Status,
 		&item.ProxyConfig,

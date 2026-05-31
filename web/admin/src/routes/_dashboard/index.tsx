@@ -17,6 +17,7 @@ import {
   RotateCw,
   CheckCircle2,
   AlertCircle,
+  Activity,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -42,6 +43,35 @@ function DashboardPage() {
     queryKey: ["dashboard-stats"],
     queryFn: () => apiFetch<DashboardStats>("/dashboard/stats"),
   });
+
+  const { data: healthData } = useQuery({
+    queryKey: ["healthz"],
+    queryFn: () =>
+      fetch("/healthz").then((r) => r.json()) as Promise<{
+        status: string;
+        checks: Record<string, string>;
+      }>,
+    refetchInterval: 30000,
+    staleTime: 15000,
+  });
+
+  const healthStatus = healthData?.status ?? "unknown";
+  const healthLabel =
+    healthStatus === "ok"
+      ? "系统正常"
+      : healthStatus === "warning"
+        ? "Agent 离线"
+        : healthStatus === "degraded"
+          ? "服务降级"
+          : "检测中...";
+  const healthColor =
+    healthStatus === "ok"
+      ? "bg-emerald-500"
+      : healthStatus === "warning"
+        ? "bg-amber-500"
+        : healthStatus === "degraded"
+          ? "bg-red-500"
+          : "bg-muted-foreground";
 
   const { data: eventsData, isLoading: eventsLoading } = useEvents({
     limit: 5,
@@ -90,8 +120,8 @@ function DashboardPage() {
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <div className="flex items-center gap-1.5">
-            <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-            系统正常
+            <div className={`h-2 w-2 rounded-full ${healthColor} ${healthStatus === "ok" ? "animate-pulse" : ""}`} />
+            {healthLabel}
           </div>
         </div>
       </div>

@@ -3,11 +3,23 @@ import { clearCurrentSession, getToken } from "./auth";
 const API_BASE = "/v1/admin";
 
 export class ApiError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
+  status: number;
+
+  constructor(status: number, message: string) {
     super(message);
+    this.status = status;
+    this.name = "ApiError";
+  }
+
+  /** 尝试将响应体解析为 JSON 并提取 error 字段 */
+  parsedError(): string {
+    try {
+      const j = JSON.parse(this.message) as { error?: string };
+      if (j.error) return j.error;
+    } catch {
+      // not json
+    }
+    return this.message;
   }
 }
 

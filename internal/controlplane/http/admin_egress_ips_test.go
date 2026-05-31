@@ -56,6 +56,10 @@ func (s *stubEgressIPStore) DeleteEgressIP(_ context.Context, _ string) error {
 	return s.deleteErr
 }
 
+func (s *stubEgressIPStore) UpdateEgressIPDetectedAddress(_ context.Context, _ string, _ string) error {
+	return nil
+}
+
 func TestAdminEgressIPsHandler(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	sampleIP := repository.EgressIP{

@@ -17,7 +17,9 @@ trap cleanup INT TERM EXIT
 
 build() {
     echo "[dev-backend] building..."
-    if go build -o "$BIN" ./cmd/control-plane; then
+    # 清除 Makefile 导出的 GOOS/GOARCH，使用本机平台编译。
+    # Makefile 的 GOOS=linux 是给 release build 用的，开发机必须在本地平台运行。
+    if GOOS= GOARCH= go build -o "$BIN" ./cmd/control-plane; then
         echo "[dev-backend] built."
         return 0
     else

@@ -96,8 +96,12 @@ func (h *UserHostsHandler) Get() nethttp.Handler {
 		// Build response with sensitive fields filtered
 		bindings := make([]repository.UserEgressBinding, 0, len(detail.Bindings))
 		for _, b := range detail.Bindings {
+			ip := b.EgressIP.IPAddress
+			if b.EgressIP.DetectedIPAddress != nil && *b.EgressIP.DetectedIPAddress != "" {
+				ip = *b.EgressIP.DetectedIPAddress
+			}
 			bindings = append(bindings, repository.UserEgressBinding{
-				IPAddress: b.EgressIP.IPAddress,
+				IPAddress: ip,
 			})
 		}
 

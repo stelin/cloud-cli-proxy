@@ -47,6 +47,8 @@ export interface EventsParams {
   type?: string;
   userId?: string;
   hostId?: string;
+  since?: string;
+  until?: string;
   limit?: number;
   offset?: number;
 }
@@ -57,6 +59,8 @@ export function useEvents(params: EventsParams = {}) {
   if (params.type) searchParams.set("type", params.type);
   if (params.userId) searchParams.set("user_id", params.userId);
   if (params.hostId) searchParams.set("host_id", params.hostId);
+  if (params.since) searchParams.set("since", params.since);
+  if (params.until) searchParams.set("until", params.until);
   if (params.limit) searchParams.set("limit", String(params.limit));
   if (params.offset) searchParams.set("offset", String(params.offset));
 

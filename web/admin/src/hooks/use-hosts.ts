@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { getToken } from "@/lib/auth";
 import { buildSSEUrl } from "@/lib/sse-manager";
@@ -18,6 +19,7 @@ export interface HostWithUsername {
   username: string;
   egress_ip_label: string | null;
   egress_ip_address: string | null;
+  egress_ip_detected_address: string | null;
   docker_status: string;
   created_at: string;
   updated_at: string;

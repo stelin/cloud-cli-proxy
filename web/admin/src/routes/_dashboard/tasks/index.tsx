@@ -1,10 +1,20 @@
+import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { ListTodo } from "lucide-react";
+import { ListTodo, Search } from "lucide-react";
 import { useTasks } from "@/hooks/use-tasks";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/layout/page-header";
 import { DataTableShell } from "@/components/layout/data-table-shell";
 import { EmptyState } from "@/components/layout/empty-state";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -29,20 +39,27 @@ function formatDate(dateStr: string) {
   });
 }
 
+import { taskStatusConfig, taskKindLabels } from "@/lib/status-constants";
+
 const statusConfig: Record<
   string,
   { label: string; variant: "default" | "secondary" | "destructive" | "outline" }
 > = {
-  pending: { label: "等待中", variant: "outline" },
-  running: { label: "运行中", variant: "default" },
-  succeeded: { label: "成功", variant: "default" },
-  failed: { label: "失败", variant: "destructive" },
-  canceled: { label: "已取消", variant: "secondary" },
+  ...taskStatusConfig,
+  running: { label: "运行中", variant: "outline" },
 };
 
 function TasksPage() {
   const { data, isLoading } = useTasks();
   const tasks = data?.tasks ?? [];
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [kindFilter, setKindFilter] = useState<string>("all");
+
+  const filteredTasks = tasks.filter((t) => {
+    if (statusFilter !== "all" && t.status !== statusFilter) return false;
+    if (kindFilter !== "all" && t.kind !== kindFilter) return false;
+    return true;
+  });
 
   return (
     <div className="space-y-6">
@@ -50,6 +67,31 @@ function TasksPage() {
         title="任务列表"
         description="异步任务与主机操作编排的执行进度，每 5 秒自动刷新"
       />
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-[140px]">
+            <SelectValue placeholder="全部状态" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部状态</SelectItem>
+            {Object.entries(taskStatusConfig).map(([key, cfg]) => (
+              <SelectItem key={key} value={key}>{cfg.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={kindFilter} onValueChange={setKindFilter}>
+          <SelectTrigger className="w-[140px]">
+            <SelectValue placeholder="全部类型" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部类型</SelectItem>
+            {Object.entries(taskKindLabels).map(([key, label]) => (
+              <SelectItem key={key} value={key}>{label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
 
       <DataTableShell>
         <Table>
@@ -75,7 +117,7 @@ function TasksPage() {
                   ))}
                 </TableRow>
               ))
-            ) : tasks.length === 0 ? (
+            ) : filteredTasks.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="p-0">
                   <EmptyState
@@ -86,7 +128,7 @@ function TasksPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              tasks.map((task) => {
+              filteredTasks.map((task) => {
                 const sc = statusConfig[task.status] ?? {
                   label: task.status,
                   variant: "outline" as const,

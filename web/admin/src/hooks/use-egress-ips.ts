@@ -6,6 +6,7 @@ export interface EgressIP {
   id: string;
   label: string;
   ip_address: string;
+  detected_ip_address: string | null;
   provider: string;
   status: string;
   proxy_config: Record<string, unknown> | null;

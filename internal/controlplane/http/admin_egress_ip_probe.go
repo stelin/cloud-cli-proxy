@@ -611,6 +611,13 @@ func runProbeStream(ctx context.Context, h *AdminEgressIPsHandler, ipID string, 
 		result.Status = "failed"
 	}
 
+	// 探测成功时将检测到的真实出口 IP 持久化到数据库。
+	if result.Results.EgressIP.IP != "" && result.Results.EgressIP.Status == "pass" {
+		if err := h.store.UpdateEgressIPDetectedAddress(ctx, ipID, result.Results.EgressIP.IP); err != nil {
+			h.logger.Warn("update detected ip address failed", "ip_id", ipID, "error", err)
+		}
+	}
+
 	// Stage: done
 	ch <- ProbeStreamEvent{Stage: StageDone, Message: "检测完成", Result: &result}
 }
@@ -736,6 +743,13 @@ func (h *AdminEgressIPsHandler) TestProxy() nethttp.Handler {
 			result.Status = "partial"
 		} else {
 			result.Status = "failed"
+		}
+
+		// 探测成功时将检测到的真实出口 IP 持久化到数据库。
+		if result.Results.EgressIP.IP != "" && result.Results.EgressIP.Status == "pass" {
+			if err := h.store.UpdateEgressIPDetectedAddress(ctx, ipID, result.Results.EgressIP.IP); err != nil {
+				h.logger.Warn("update detected ip address failed", "ip_id", ipID, "error", err)
+			}
 		}
 
 		writeJSON(w, nethttp.StatusOK, result)

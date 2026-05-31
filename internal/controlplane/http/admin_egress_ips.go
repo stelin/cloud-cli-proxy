@@ -20,6 +20,7 @@ type AdminEgressIPStore interface {
 	GetEgressIP(context.Context, string) (repository.EgressIP, error)
 	CreateEgressIP(context.Context, repository.CreateEgressIPParams) (repository.EgressIP, error)
 	UpdateEgressIP(context.Context, string, repository.UpdateEgressIPParams) (repository.EgressIP, error)
+	UpdateEgressIPDetectedAddress(ctx context.Context, egressIPID string, detectedIP string) error
 	DeleteEgressIP(context.Context, string) error
 }
 

@@ -84,7 +84,7 @@ export function BindingManager({
               {currentBinding.egress_ip.label}
             </p>
             <p className="font-mono text-xs text-muted-foreground">
-              {currentBinding.egress_ip.ip_address}
+              {currentBinding.egress_ip.detected_ip_address || currentBinding.egress_ip.ip_address}
             </p>
           </div>
         </div>

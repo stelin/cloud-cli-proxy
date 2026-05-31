@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Eye, Play, RotateCcw, Shield } from "lucide-react";
+import { Eye, Play, RotateCcw, Shield, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
 import { CustomRulesTable } from "./custom-rules-table";
 import { PreviewSheet } from "./preview-sheet";
@@ -7,8 +7,10 @@ import { ApplyProgressDialog } from "./apply-progress-dialog";
 import { useBypassRules, useDeleteBypassRule } from "@/hooks/use-bypass-rules";
 import { useBypassPresets } from "@/hooks/use-bypass-presets";
 import { useBypassBindings, useCreateBypassBinding, useDeleteBypassBinding } from "@/hooks/use-bypass-bindings";
-import { usePreviewBypass } from "@/hooks/use-bypass-snapshots";
+import { usePreviewBypass, useEffectiveBypass } from "@/hooks/use-bypass-snapshots";
 import { parseBypassError } from "@/lib/i18n/bypass-error-codes";
+import { BypassAuditPanel } from "./bypass-audit-panel";
+import { BypassConsistencyCard } from "./bypass-consistency-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -100,6 +102,13 @@ export function BypassTab({ hostId }: BypassTabProps) {
   const [applyOpen, setApplyOpen] = useState(false);
   const [riskyCount, setRiskyCount] = useState(0);
   const [restoreConfirmOpen, setRestoreConfirmOpen] = useState(false);
+
+  // 折叠区域状态
+  const [effectiveExpanded, setEffectiveExpanded] = useState(false);
+  const [consistencyExpanded, setConsistencyExpanded] = useState(false);
+  const [auditExpanded, setAuditExpanded] = useState(false);
+
+  const effectiveQuery = useEffectiveBypass(hostId, effectiveExpanded);
   const deleteRule = useDeleteBypassRule(hostId);
   const previewMutation = usePreviewBypass(hostId);
 
@@ -211,6 +220,135 @@ export function BypassTab({ hostId }: BypassTabProps) {
           }}
         />
       </section>
+
+      {/* ===== 折叠区域：生效配置 / 一致性校验 / 操作审计 ===== */}
+      <div className="space-y-3 border-t pt-4" data-testid="bypass-advanced-sections">
+        {/* 生效配置 */}
+        <div>
+          <button
+            type="button"
+            data-testid="bypass-toggle-effective"
+            className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm font-medium transition-colors hover:bg-muted"
+            onClick={() => setEffectiveExpanded((v) => !v)}
+          >
+            <span>生效配置</span>
+            {effectiveExpanded ? (
+              <ChevronUp className="size-4 text-muted-foreground" />
+            ) : (
+              <ChevronDown className="size-4 text-muted-foreground" />
+            )}
+          </button>
+          {effectiveExpanded && (
+            <div className="mt-2">
+              {effectiveQuery.isLoading ? (
+                <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
+                  <span className="mr-2 size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  加载中...
+                </div>
+              ) : effectiveQuery.isError ? (
+                <div className="py-4 text-center text-sm text-muted-foreground">
+                  加载失败，请稍后重试
+                </div>
+              ) : effectiveQuery.data ? (
+                <div className="space-y-3">
+                  {effectiveQuery.data.presets_active.length > 0 && (
+                    <div>
+                      <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+                        活跃预设
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {effectiveQuery.data.presets_active.map((p) => (
+                          <Badge key={p.id} variant="secondary" className="text-xs">
+                            {p.name}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {effectiveQuery.data.rules_active.length > 0 && (
+                    <div>
+                      <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+                        活跃自定义规则（{effectiveQuery.data.rules_active.length} 条）
+                      </p>
+                      <div className="space-y-1">
+                        {effectiveQuery.data.rules_active.map((r) => (
+                          <div
+                            key={r.id}
+                            className="flex items-center gap-2 rounded bg-muted/50 px-2 py-1 text-xs"
+                          >
+                            <Badge variant="outline" className="text-[10px]">
+                              {r.rule_type}
+                            </Badge>
+                            <code className="flex-1 truncate">{r.value}</code>
+                            {r.is_risky && (
+                              <Badge
+                                variant="destructive"
+                                className="text-[10px]"
+                              >
+                                风险
+                              </Badge>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {effectiveQuery.data.rules_active.length === 0 &&
+                    effectiveQuery.data.presets_active.length === 0 && (
+                      <p className="py-4 text-center text-sm text-muted-foreground">
+                        当前无生效中的规则
+                      </p>
+                    )}
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
+
+        {/* 一致性校验 */}
+        <div>
+          <button
+            type="button"
+            data-testid="bypass-toggle-consistency"
+            className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm font-medium transition-colors hover:bg-muted"
+            onClick={() => setConsistencyExpanded((v) => !v)}
+          >
+            <span>一致性校验</span>
+            {consistencyExpanded ? (
+              <ChevronUp className="size-4 text-muted-foreground" />
+            ) : (
+              <ChevronDown className="size-4 text-muted-foreground" />
+            )}
+          </button>
+          {consistencyExpanded && (
+            <div className="mt-2">
+              <BypassConsistencyCard hostId={hostId} />
+            </div>
+          )}
+        </div>
+
+        {/* 操作审计 */}
+        <div>
+          <button
+            type="button"
+            data-testid="bypass-toggle-audit"
+            className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm font-medium transition-colors hover:bg-muted"
+            onClick={() => setAuditExpanded((v) => !v)}
+          >
+            <span>操作审计</span>
+            {auditExpanded ? (
+              <ChevronUp className="size-4 text-muted-foreground" />
+            ) : (
+              <ChevronDown className="size-4 text-muted-foreground" />
+            )}
+          </button>
+          {auditExpanded && (
+            <div className="mt-2">
+              <BypassAuditPanel hostId={hostId} />
+            </div>
+          )}
+        </div>
+      </div>
 
       <PreviewSheet
         hostId={hostId}

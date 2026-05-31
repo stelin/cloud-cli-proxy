@@ -5,6 +5,7 @@ import {
   rollbackBypass,
   effectiveBypass,
   auditLogBypass,
+  consistencyBypass,
 } from "@/lib/api/bypass";
 
 /**
@@ -58,6 +59,15 @@ export function useBypassAuditLog(hostId: string, before?: string) {
   return useQuery({
     queryKey: ["bypass", "audit-log", hostId, before ?? ""],
     queryFn: () => auditLogBypass(hostId, { limit: 20, before }),
+    staleTime: 30_000,
+  });
+}
+
+export function useBypassConsistency(hostId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["bypass", "consistency", hostId],
+    queryFn: () => consistencyBypass(hostId),
+    enabled,
     staleTime: 30_000,
   });
 }

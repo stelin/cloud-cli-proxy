@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/zanel1u/cloud-cli-proxy/internal/controlplane/credgen"
 	"github.com/zanel1u/cloud-cli-proxy/internal/store/repository"
@@ -22,6 +23,7 @@ type fakeSeedAdminRepo struct {
 	getUserErr            error
 	createUserResult      repository.User
 	createUserErr         error
+	updatePasswordErr     error
 	updateEntryErr        error
 	updateSSHKeysErr      error
 	createSSHKeyErr       error
@@ -29,13 +31,14 @@ type fakeSeedAdminRepo struct {
 	listInboundErr        error
 
 	// counters
-	getByIdentifierCalls int
-	getUserCalls         int
-	createUserCalls      int
-	updateEntryCalls     int
-	updateSSHKeysCalls   int
-	createSSHKeyCalls    int
-	listInboundCalls     int
+	getByIdentifierCalls  int
+	getUserCalls          int
+	createUserCalls       int
+	updatePasswordCalls   int
+	updateEntryCalls      int
+	updateSSHKeysCalls    int
+	createSSHKeyCalls     int
+	listInboundCalls      int
 
 	// captured args
 	lastCreatedSSHKeyPub  string
@@ -62,6 +65,11 @@ func (r *fakeSeedAdminRepo) CreateUserWithRole(ctx context.Context, p repository
 		return repository.User{ID: "u-new", Username: p.Username, ShortID: p.ShortID, Role: p.Role}, nil
 	}
 	return r.createUserResult, nil
+}
+
+func (r *fakeSeedAdminRepo) UpdateUserPassword(ctx context.Context, userID, passwordHash string) error {
+	r.updatePasswordCalls++
+	return r.updatePasswordErr
 }
 
 func (r *fakeSeedAdminRepo) UpdateUserEntryPassword(ctx context.Context, userID, entryPassword string) error {
@@ -176,11 +184,12 @@ func TestEnsureSeedAdmin_FreshInstall(t *testing.T) {
 }
 
 func TestEnsureSeedAdmin_BackfillExistingUser(t *testing.T) {
+	hash, _ := bcrypt.GenerateFromPassword([]byte("p4ss"), bcrypt.DefaultCost)
 	repo := &fakeSeedAdminRepo{
 		getByIdentifierResult: repository.User{ID: "u-1", Username: "admin"},
 		getByIdentifierErr:    nil,
 		getUserResult: repository.User{
-			ID: "u-1", Username: "admin",
+			ID: "u-1", Username: "admin", PasswordHash: string(hash),
 			EntryPassword: "", SSHPublicKey: "", SSHPrivateKey: "",
 		},
 		listInboundKeys: nil,
@@ -206,10 +215,11 @@ func TestEnsureSeedAdmin_BackfillExistingUser(t *testing.T) {
 }
 
 func TestEnsureSeedAdmin_NoOpWhenComplete(t *testing.T) {
+	hash, _ := bcrypt.GenerateFromPassword([]byte("p4ss"), bcrypt.DefaultCost)
 	repo := &fakeSeedAdminRepo{
 		getByIdentifierResult: repository.User{ID: "u-1", Username: "admin"},
 		getUserResult: repository.User{
-			ID: "u-1", Username: "admin",
+			ID: "u-1", Username: "admin", PasswordHash: string(hash),
 			EntryPassword: "x", SSHPublicKey: "p", SSHPrivateKey: "k", SSHKeyType: "ed25519",
 		},
 		listInboundKeys: []repository.SSHKey{
@@ -267,10 +277,11 @@ func TestEnsureSeedAdmin_PreservesExistingSSHKeyWhenOnlyRowMissing(t *testing.T)
 	if err != nil {
 		t.Fatalf("setup: generate existing key pair: %v", err)
 	}
+	hashPreexisting, _ := bcrypt.GenerateFromPassword([]byte("p4ss"), bcrypt.DefaultCost)
 	repo := &fakeSeedAdminRepo{
 		getByIdentifierResult: repository.User{ID: "u-1", Username: "admin"},
 		getUserResult: repository.User{
-			ID: "u-1", Username: "admin",
+			ID: "u-1", Username: "admin", PasswordHash: string(hashPreexisting),
 			EntryPassword: "x",
 			SSHPublicKey:  existingPub,
 			SSHPrivateKey: existingPriv,

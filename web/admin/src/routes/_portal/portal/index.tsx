@@ -6,6 +6,7 @@ import { useMyHosts } from "@/hooks/use-portal-hosts";
 import type { PortalHost } from "@/hooks/use-portal-hosts";
 import { useChangeLoginPassword } from "@/hooks/use-portal-password";
 import { ApiError } from "@/lib/api";
+import { hostStatusConfig, defaultHostStatus } from "@/lib/status-constants";
 import {
   Card,
   CardContent,
@@ -16,6 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/layout/page-header";
 import { EmptyState } from "@/components/layout/empty-state";
 
@@ -32,37 +34,8 @@ function formatDate(dateStr: string): string {
   });
 }
 
-const statusStyles: Record<string, { label: string; className: string }> = {
-  running: { label: "运行中", className: "bg-green-100 text-green-700" },
-  stopped: { label: "已停止", className: "bg-gray-100 text-gray-700" },
-  rebuilding: { label: "重建中", className: "bg-yellow-100 text-yellow-700" },
-  pending: { label: "等待中", className: "bg-blue-100 text-blue-700" },
-};
-
-const statusBarClass: Record<string, string> = {
-  running: "bg-emerald-500",
-  stopped: "bg-muted-foreground/35",
-  rebuilding: "bg-amber-500",
-  pending: "bg-sky-500",
-};
-
-function StatusBadge({ status }: { status: string }) {
-  const style = statusStyles[status] ?? {
-    label: status,
-    className: "bg-gray-100 text-gray-700",
-  };
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${style.className}`}
-    >
-      {style.label}
-    </span>
-  );
-}
-
 function HostCard({ host }: { host: PortalHost }) {
-  const bar =
-    statusBarClass[host.status] ?? "bg-muted-foreground/35";
+  const cfg = hostStatusConfig[host.status] ?? defaultHostStatus;
 
   return (
     <Link
@@ -72,7 +45,7 @@ function HostCard({ host }: { host: PortalHost }) {
     >
       <Card className="relative overflow-hidden rounded-xl border-border/80 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-md">
         <span
-          className={`absolute inset-y-0 left-0 w-1 ${bar}`}
+          className={`absolute inset-y-0 left-0 w-1 ${cfg.dot}`}
           aria-hidden
         />
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pl-5">

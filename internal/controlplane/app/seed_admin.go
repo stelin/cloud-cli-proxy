@@ -19,6 +19,7 @@ type seedAdminRepo interface {
 	GetUserByLoginIdentifierForAuth(ctx context.Context, identifier string) (repository.User, error)
 	GetUser(ctx context.Context, userID string) (repository.User, error)
 	CreateUserWithRole(ctx context.Context, p repository.CreateUserWithRoleParams) (repository.User, error)
+	UpdateUserPassword(ctx context.Context, userID, passwordHash string) error
 	UpdateUserEntryPassword(ctx context.Context, userID, entryPassword string) error
 	UpdateUserSSHKeys(ctx context.Context, userID, publicKey, privateKey, keyType string) error
 	CreateSSHKey(ctx context.Context, userID, purpose, label, publicKey, privateKey, keyType, fingerprint string) (repository.SSHKey, error)
@@ -94,6 +95,15 @@ func ensureSeedAdminWithRepo(ctx context.Context, logger *slog.Logger, repo seed
 		user, err = repo.GetUser(ctx, existing.ID)
 		if err != nil {
 			return fmt.Errorf("get seed admin full row: %w", err)
+		}
+
+		// 每次启动都校验密码是否与 .env 配置一致，不一致则自动同步。
+		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+			logger.Info("seed admin password changed in config, syncing to db")
+			if err := repo.UpdateUserPassword(ctx, user.ID, string(hash)); err != nil {
+				return fmt.Errorf("sync seed admin password: %w", err)
+			}
+			user.PasswordHash = string(hash)
 		}
 	default:
 		return fmt.Errorf("check seed admin: %w", err)

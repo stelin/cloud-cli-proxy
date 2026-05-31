@@ -38,11 +38,14 @@ export function PathAutocomplete({
   const { queryPath, filter } = getQueryAndFilter(value);
   const { data, isLoading } = useHostFiles(queryPath);
   const allEntries = data?.entries ?? [];
+  const dirNames = allEntries
+    .filter((e) => e.is_dir)
+    .map((e) => e.name);
   const entries = filter
-    ? allEntries.filter((e) =>
-        e.toLowerCase().startsWith(filter.toLowerCase()),
+    ? dirNames.filter((name) =>
+        name.toLowerCase().startsWith(filter.toLowerCase()),
       )
-    : allEntries;
+    : dirNames;
 
   const showDropdown = open && value.startsWith("/");
 

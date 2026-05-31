@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   LayoutDashboard,
@@ -8,9 +9,23 @@ import {
   ScrollText,
   LogOut,
   Cloud,
+  Monitor,
+  Menu,
+  X,
 } from "lucide-react";
 import { logout } from "@/lib/auth";
+import { useAuthSessions } from "@/hooks/use-auth-sessions";
 import { cn } from "@/lib/utils";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const navItems = [
   { label: "仪表板", to: "/", icon: LayoutDashboard },
@@ -24,56 +39,129 @@ const navItems = [
 export function Sidebar() {
   const routerState = useRouterState();
   const currentPath = routerState.location.pathname;
+  const { currentSession } = useAuthSessions();
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
 
   return (
-    <aside className="flex w-60 flex-col bg-sidebar text-sidebar-foreground">
-      <div className="flex h-16 items-center gap-2.5 px-5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-          <Cloud className="h-4.5 w-4.5 text-primary-foreground" />
+    <>
+      {/* 移动端汉堡按钮 */}
+      <button
+        type="button"
+        aria-label="打开菜单"
+        className="fixed left-3 top-3 z-50 rounded-lg border bg-background p-2 lg:hidden"
+        onClick={() => setMobileOpen(true)}
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+
+      {/* 移动端遮罩 */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 lg:hidden"
+          onClick={() => setMobileOpen(false)}
+          aria-hidden
+        />
+      )}
+
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-40 flex w-60 flex-col bg-sidebar text-sidebar-foreground transition-transform duration-200 lg:relative lg:translate-x-0",
+          mobileOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
+        {/* Logo */}
+        <div className="flex h-16 items-center justify-between gap-2.5 px-5">
+          <Link to="/" className="flex items-center gap-2.5" onClick={() => setMobileOpen(false)}>
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
+              <Cloud className="h-4.5 w-4.5 text-primary-foreground" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold text-white leading-tight">Cloud CLI</span>
+              <span className="text-[10px] font-medium text-sidebar-muted tracking-wider uppercase">Proxy</span>
+            </div>
+          </Link>
+          <button
+            type="button"
+            aria-label="关闭菜单"
+            className="rounded p-1 text-sidebar-foreground/50 hover:text-white lg:hidden"
+            onClick={() => setMobileOpen(false)}
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold text-white leading-tight">Cloud CLI</span>
-          <span className="text-[10px] font-medium text-sidebar-muted tracking-wider uppercase">Proxy</span>
+
+        {/* 导航 */}
+        <nav className="flex-1 px-3 pt-4 space-y-0.5 overflow-y-auto">
+          <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-muted">
+            管理
+          </p>
+          {navItems.map((item) => {
+            const isActive =
+              item.to === "/"
+                ? currentPath === "/"
+                : currentPath.startsWith(item.to);
+
+            return (
+              <Link
+                key={item.to}
+                to={item.to}
+                onClick={() => setMobileOpen(false)}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-all duration-150",
+                  isActive
+                    ? "bg-sidebar-accent text-white shadow-sm"
+                    : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-white",
+                )}
+              >
+                <item.icon className={cn("h-4 w-4", isActive && "text-primary-foreground")} />
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
+
+        {/* 底部操作区 */}
+        <div className="px-3 pb-2 space-y-1">
+          {/* Portal 预览入口（仅 admin 可见） */}
+          <Link
+            to="/portal"
+            onClick={() => setMobileOpen(false)}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium text-sidebar-foreground/50 transition-colors hover:bg-sidebar-accent/50 hover:text-white"
+          >
+            <Monitor className="h-4 w-4" />
+            用户门户预览
+          </Link>
+          <button
+            onClick={() => setLogoutConfirmOpen(true)}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium text-sidebar-foreground/50 transition-colors hover:bg-sidebar-accent/50 hover:text-white"
+          >
+            <LogOut className="h-4 w-4" />
+            退出登录
+          </button>
+          {currentSession && (
+            <div className="px-3 pt-2 text-[10px] text-sidebar-muted">
+              {currentSession.username ?? currentSession.shortId}
+              {" · 管理员"}
+            </div>
+          )}
         </div>
-      </div>
 
-      <nav className="flex-1 px-3 pt-4 space-y-0.5">
-        <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-muted">
-          管理
-        </p>
-        {navItems.map((item) => {
-          const isActive =
-            item.to === "/"
-              ? currentPath === "/"
-              : currentPath.startsWith(item.to);
-
-          return (
-            <Link
-              key={item.to}
-              to={item.to}
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-all duration-150",
-                isActive
-                  ? "bg-sidebar-accent text-white shadow-sm"
-                  : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-white",
-              )}
-            >
-              <item.icon className={cn("h-4 w-4", isActive && "text-primary-foreground")} />
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
-
-      <div className="px-3 pb-4">
-        <button
-          onClick={logout}
-          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium text-sidebar-foreground/50 transition-colors hover:bg-sidebar-accent/50 hover:text-white"
-        >
-          <LogOut className="h-4 w-4" />
-          退出登录
-        </button>
-      </div>
-    </aside>
+        <AlertDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>确认退出登录？</AlertDialogTitle>
+              <AlertDialogDescription>
+                退出后将返回登录页面。
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>取消</AlertDialogCancel>
+              <AlertDialogAction onClick={logout}>确认退出</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </aside>
+    </>
   );
 }

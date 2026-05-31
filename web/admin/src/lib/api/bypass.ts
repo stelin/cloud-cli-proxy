@@ -10,6 +10,7 @@ import type {
   BypassRollbackResponse,
   BypassEffectiveResponse,
   BypassAuditLogResponse,
+  BypassConsistencyResponse,
 } from "./types/bypass";
 
 // 系统预设列表（admin 全局可用预设）
@@ -122,5 +123,11 @@ export function auditLogBypass(
   const qs = q.toString();
   return apiFetch<BypassAuditLogResponse>(
     `/hosts/${hostId}/bypass/audit-log${qs ? "?" + qs : ""}`,
+  );
+}
+
+export function consistencyBypass(hostId: string) {
+  return apiFetch<BypassConsistencyResponse>(
+    `/hosts/${hostId}/bypass/consistency`,
   );
 }

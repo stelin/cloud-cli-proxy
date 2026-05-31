@@ -19,13 +19,11 @@ func setupTestDir(t *testing.T) string {
 			t.Fatalf("mkdir %s: %v", name, err)
 		}
 	}
-	// create a file — should be filtered out
 	f, err := os.Create(filepath.Join(dir, "file.txt"))
 	if err != nil {
 		t.Fatalf("create file: %v", err)
 	}
 	f.Close()
-	// create a symlink — should be filtered out
 	_ = os.Symlink(filepath.Join(dir, "dir1"), filepath.Join(dir, "link"))
 	return dir
 }
@@ -41,15 +39,9 @@ func TestAdminHostFiles_NormalRequest(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"dir1", "dir2", "subdir"} {
+	for _, want := range []string{"dir1", "dir2", "subdir", "file.txt", "link"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("expected body to contain %q, got %s", want, body)
-		}
-	}
-	// file and symlink must NOT appear
-	for _, avoid := range []string{"file.txt", "link"} {
-		if strings.Contains(body, avoid) {
-			t.Errorf("expected body NOT to contain %q, got %s", avoid, body)
 		}
 	}
 }
