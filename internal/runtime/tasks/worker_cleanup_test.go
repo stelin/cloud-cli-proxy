@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"os/exec"
 	"sync"
 	"testing"
 
@@ -65,6 +66,9 @@ func (r *fakeEgressRepo) GetEgressIPByHost(_ context.Context, _ string) (reposit
 //
 // 旧实现只在 Execute 失败路径 `docker stop`，从不调 CleanupHost，资源持续泄漏。
 func TestWorker_CreateHost_CleanupOnFailure(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker unavailable on this runner")
+	}
 	repo := &fakeEgressRepo{}
 	provider := &fakeCleanupProvider{}
 	w := NewWorker(repo, provider)
