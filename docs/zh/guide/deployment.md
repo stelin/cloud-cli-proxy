@@ -59,42 +59,28 @@ curl http://127.0.0.1:8080/healthz
 
 ## 中国大陆用户
 
-由于 `ghcr.io` 在国内访问不稳定，建议使用镜像源或开启代理后拉取。
+### 方案一：使用 docker-compose.cn.yml（推荐）
 
-### 方案一：走代理拉取（推荐）
+项目提供了 `docker-compose.cn.yml`，已将镜像源替换为 `ghcr.1ms.run`（毫秒镜像）。直接通过覆盖文件启动：
 
-确保本机已开 TUN 模式或全局代理：
+```bash
+docker compose -f docker-compose.yml -f docker-compose.cn.yml pull
+docker compose -f docker-compose.yml -f docker-compose.cn.yml up -d
+```
+
+源码构建（兜底）：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.cn.yml -f docker-compose.build.yaml --profile build-only build --no-cache
+docker compose -f docker-compose.yml -f docker-compose.cn.yml -f docker-compose.build.yaml up -d --force-recreate
+```
+
+### 方案二：走本地代理拉取
+
+本机已开 TUN 模式或全局代理，镜像走代理出站，直接用默认 compose 文件即可：
 
 ```bash
 docker compose pull
-docker compose up -d
-```
-
-镜像走代理出站，后续无需额外配置。
-
-### 方案二：替换为国内镜像
-
-编辑 `docker-compose.yml`，将 `ghcr.io` 替换为以下任一可用镜像站：
-
-```
-ghcr.io/zanel1u/cloud-cli-proxy/control-plane
-→ ghcr.nju.edu.cn/zanel1u/cloud-cli-proxy/control-plane
-→ ghcr.nuaa.edu.cn/zanel1u/cloud-cli-proxy/control-plane
-→ docker.1ms.run/zanel1u/cloud-cli-proxy/control-plane
-```
-
-或直接在拉取时指定镜像前缀：
-
-```bash
-# 替换 REGISTRY 为可用镜像站
-REGISTRY=ghcr.nju.edu.cn
-
-docker pull $REGISTRY/zanel1u/cloud-cli-proxy/control-plane:latest
-docker pull $REGISTRY/zanel1u/cloud-cli-proxy/admin:latest
-
-docker tag $REGISTRY/zanel1u/cloud-cli-proxy/control-plane:latest ghcr.io/zanel1u/cloud-cli-proxy/control-plane:latest
-docker tag $REGISTRY/zanel1u/cloud-cli-proxy/admin:latest ghcr.io/zanel1u/cloud-cli-proxy/admin:latest
-
 docker compose up -d
 ```
 

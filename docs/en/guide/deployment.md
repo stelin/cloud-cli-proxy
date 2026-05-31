@@ -59,41 +59,28 @@ curl http://127.0.0.1:8080/healthz
 
 ## Users in Mainland China
 
-`ghcr.io` may be slow or unreachable from within mainland China. Use one of the following workarounds.
+### Option 1: Use docker-compose.cn.yml (recommended)
 
-### Option 1: Pull through a proxy (recommended)
+The repo includes `docker-compose.cn.yml`, which pre-configures the `ghcr.1ms.run` mirror. Start with the override file:
 
-If your machine already has a TUN-mode proxy or global proxy set up:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.cn.yml pull
+docker compose -f docker-compose.yml -f docker-compose.cn.yml up -d
+```
+
+Building from source (fallback):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.cn.yml -f docker-compose.build.yaml --profile build-only build --no-cache
+docker compose -f docker-compose.yml -f docker-compose.cn.yml -f docker-compose.build.yaml up -d --force-recreate
+```
+
+### Option 2: Pull through a local proxy
+
+If your machine already has a TUN-mode proxy or global proxy, the default compose file works:
 
 ```bash
 docker compose pull
-docker compose up -d
-```
-
-Images will be pulled through the proxy. No further configuration needed.
-
-### Option 2: Use a mirror registry
-
-Replace `ghcr.io` with one of the available mirrors:
-
-```
-ghcr.io/zanel1u/cloud-cli-proxy/control-plane
-→ ghcr.nju.edu.cn/zanel1u/cloud-cli-proxy/control-plane
-→ ghcr.nuaa.edu.cn/zanel1u/cloud-cli-proxy/control-plane
-→ docker.1ms.run/zanel1u/cloud-cli-proxy/control-plane
-```
-
-Or pull and re-tag with a mirror prefix:
-
-```bash
-REGISTRY=ghcr.nju.edu.cn
-
-docker pull $REGISTRY/zanel1u/cloud-cli-proxy/control-plane:latest
-docker pull $REGISTRY/zanel1u/cloud-cli-proxy/admin:latest
-
-docker tag $REGISTRY/zanel1u/cloud-cli-proxy/control-plane:latest ghcr.io/zanel1u/cloud-cli-proxy/control-plane:latest
-docker tag $REGISTRY/zanel1u/cloud-cli-proxy/admin:latest ghcr.io/zanel1u/cloud-cli-proxy/admin:latest
-
 docker compose up -d
 ```
 
