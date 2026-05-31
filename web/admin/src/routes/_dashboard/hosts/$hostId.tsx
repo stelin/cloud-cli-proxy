@@ -401,7 +401,7 @@ function HostDetailPage() {
             </div>
             <div>
               <span className="block text-sm font-semibold">配置详情</span>
-              <span className="text-xs text-muted-foreground">出口 IP 绑定、挂载路径</span>
+              <span className="text-xs text-muted-foreground">出口 IP 绑定、挂载路径、资源限制</span>
             </div>
           </div>
           <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${configOpen ? "" : "-rotate-90"}`} />
