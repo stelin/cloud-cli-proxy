@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v4.1.3 - 2026-05-31
+## What's Changed
+
+### Backend (Go / API)
+- fix: SSH 代理选择容器最后加入的 Docker 网络 IP (3881929)
+- feat: CONTAINER_REGISTRY 环境变量统一控制运行时镜像源 (666c928)
+
+### Runtime & Deployment
+- fix: image.lock 默认 image_name 改为 ghcr.io 完整路径 (588ae5b)
+- feat: docker-compose.yml 镜像引用变量化，setup-env.sh 自动检测中国大陆并换源 (26c31f9)
+
+### Docs
+- feat: docker-compose.yml 镜像引用变量化，setup-env.sh 自动检测中国大陆并换源 (26c31f9)
+- feat: CONTAINER_REGISTRY 环境变量统一控制运行时镜像源 (666c928)
+- docs: 新增 docker-compose.cn.yml，修正毫秒镜像地址 (f9bbb4f)
+- docs: 精简部署指南，突出 Docker Compose 一键部署 (8039644)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v4.1.2...v4.1.3
+
+
 ## v4.1.2 - 2026-05-31
 ## What's Changed
 
