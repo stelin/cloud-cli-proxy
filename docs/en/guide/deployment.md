@@ -1,156 +1,121 @@
 # Deployment Guide
 
-For system administrators with Linux experience, deploying on a single host from scratch.
+Docker Compose is the recommended way to deploy. No need to install PostgreSQL, Go, or compile from source.
 
-## Prerequisites
+## 1. Install Docker
 
-- Ubuntu 22.04+ / Debian 12+ (or equivalent systemd-based distro)
-- Root or sudo access
-- Public IP (for bootstrap endpoint and user SSH access)
-- At least one proxy config for an egress IP
-
-## 1. Environment Setup
-
-### Dependency Check
-
-```bash
-sudo bash deploy/scripts/host-preflight.sh
-```
-
-Checks: Docker Engine 28+, FUSE kernel module, nftables, nsenter, curl, ip, systemctl, Go 1.26+, PostgreSQL 18.x, Node.js 24 LTS (optional).
-
-### Install Missing Dependencies
-
-**Docker Engine:**
+### Linux
 
 ```bash
 curl -fsSL https://get.docker.com | sh
-systemctl enable --now docker
 ```
 
-**nftables / nsenter / curl:**
+Add your user to the `docker` group:
 
 ```bash
-apt-get install -y nftables util-linux curl
+sudo usermod -aG docker $USER
+# Log out and back in for it to take effect
 ```
 
-**FUSE kernel module:**
+### macOS
+
+Install [Docker Desktop](https://www.docker.com/products/docker-desktop/), or via Homebrew:
 
 ```bash
-modprobe fuse
-echo fuse >> /etc/modules-load.d/fuse.conf
+brew install --cask docker
 ```
 
-Verify: `ls -la /dev/fuse` should show a character device with `crw-rw-rw-` permissions.
+### Windows
 
-**Go 1.26:**
+Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) with WSL 2 backend enabled.
+
+## 2. Start
 
 ```bash
-wget https://go.dev/dl/go1.26.1.linux-amd64.tar.gz
-rm -rf /usr/local/go && tar -C /usr/local -xzf go1.26.1.linux-amd64.tar.gz
-echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile.d/go.sh
-source /etc/profile.d/go.sh
+git clone https://github.com/ZaneL1u/cloud-cli-proxy.git
+cd cloud-cli-proxy
+
+bash deploy/scripts/setup-env.sh
+docker compose pull
+docker compose up -d
 ```
 
-**PostgreSQL 18:**
+`setup-env.sh` interactively generates all passwords and secrets. It supports:
+
+- **Built-in PostgreSQL (recommended)**: auto-created, managed by Docker Compose, zero config
+- **External PostgreSQL**: provide your existing database connection details
+
+After startup:
+
+- Admin dashboard: `http://YOUR_HOST:3000`
+- API: `http://YOUR_HOST:8080`
+
+Verify:
 
 ```bash
-apt-get install -y postgresql-18
-systemctl enable --now postgresql
+curl http://127.0.0.1:8080/healthz
+# {"status":"ok"}
 ```
 
-### FUSE & AppArmor Compatibility
+## Users in Mainland China
 
-sshfs inside containers requires FUSE. Docker's default AppArmor profile includes a `deny mount` rule. The system automatically adds `--security-opt apparmor=unconfined` when creating containers.
+`ghcr.io` may be slow or unreachable from within mainland China. Use one of the following workarounds.
 
-| Host OS | Impact | Handling |
-|---------|--------|----------|
-| Ubuntu 24.04 | Default AppArmor blocks FUSE mount | Handled automatically |
-| Ubuntu 25.04+ | Additional fusermount3 profile may block | `aa-disable /usr/bin/fusermount3` |
-| Debian 12+ | No AppArmor | No action needed |
+### Option 1: Pull through a proxy (recommended)
 
-Verify FUSE compatibility:
+If your machine already has a TUN-mode proxy or global proxy set up:
 
 ```bash
-sudo bash scripts/verify-fuse-compat.sh
+docker compose pull
+docker compose up -d
 ```
 
-## 2. PostgreSQL Configuration
+Images will be pulled through the proxy. No further configuration needed.
+
+### Option 2: Use a mirror registry
+
+Replace `ghcr.io` with one of the available mirrors:
+
+```
+ghcr.io/zanel1u/cloud-cli-proxy/control-plane
+→ ghcr.nju.edu.cn/zanel1u/cloud-cli-proxy/control-plane
+→ ghcr.nuaa.edu.cn/zanel1u/cloud-cli-proxy/control-plane
+→ docker.1ms.run/zanel1u/cloud-cli-proxy/control-plane
+```
+
+Or pull and re-tag with a mirror prefix:
 
 ```bash
-sudo -u postgres psql <<'SQL'
-CREATE DATABASE cloudproxy;
-CREATE USER cloudproxy WITH PASSWORD 'replace-with-strong-password';
-GRANT ALL PRIVILEGES ON DATABASE cloudproxy TO cloudproxy;
-ALTER DATABASE cloudproxy OWNER TO cloudproxy;
-\c cloudproxy
-GRANT ALL ON SCHEMA public TO cloudproxy;
-SQL
+REGISTRY=ghcr.nju.edu.cn
+
+docker pull $REGISTRY/zanel1u/cloud-cli-proxy/control-plane:latest
+docker pull $REGISTRY/zanel1u/cloud-cli-proxy/admin:latest
+
+docker tag $REGISTRY/zanel1u/cloud-cli-proxy/control-plane:latest ghcr.io/zanel1u/cloud-cli-proxy/control-plane:latest
+docker tag $REGISTRY/zanel1u/cloud-cli-proxy/admin:latest ghcr.io/zanel1u/cloud-cli-proxy/admin:latest
+
+docker compose up -d
 ```
 
-Verify connection:
+## Environment Variables
+
+After running `setup-env.sh`, manual changes are usually unnecessary. See [Configuration](./configuration) for the full reference.
+
+## Building from Source
+
+Only needed when prebuilt images are unavailable:
 
 ```bash
-psql "postgresql://cloudproxy:password@127.0.0.1:5432/cloudproxy" -c "SELECT 1"
+docker compose -f docker-compose.yml -f docker-compose.build.yaml --profile build-only build --no-cache
+docker compose -f docker-compose.yml -f docker-compose.build.yaml up -d --force-recreate
 ```
 
-## 3. Build
+## Bare-metal Deployment
 
-```bash
-git clone https://github.com/ZaneL1u/cloud-cli-proxy.git /opt/cloud-cli-proxy
-cd /opt/cloud-cli-proxy
-
-go build -o /opt/cloud-cli-proxy/bin/control-plane ./cmd/control-plane
-go build -o /opt/cloud-cli-proxy/bin/host-agent ./cmd/host-agent
-bash deploy/docker/managed-user/build-managed-image.sh
-
-# Frontend (optional)
-cd web/admin && pnpm install && pnpm build && cd /opt/cloud-cli-proxy
-```
-
-## 4. Configuration
-
-```bash
-useradd --system --no-create-home --shell /usr/sbin/nologin cloudproxy
-usermod -aG docker cloudproxy
-
-mkdir -p /var/lib/cloud-cli-proxy /run/cloud-cli-proxy /etc/cloud-cli-proxy
-chown cloudproxy:cloudproxy /var/lib/cloud-cli-proxy /run/cloud-cli-proxy /etc/cloud-cli-proxy
-```
-
-Create `/etc/cloud-cli-proxy/env`. See [Configuration](./configuration) for the full variable reference.
-
-## 5. Install systemd Services
-
-```bash
-cp deploy/systemd/cloud-cli-proxy-control-plane.service /etc/systemd/system/
-cp deploy/systemd/cloud-cli-proxy-host-agent.service /etc/systemd/system/
-
-systemctl daemon-reload
-systemctl enable --now cloud-cli-proxy-control-plane
-systemctl enable --now cloud-cli-proxy-host-agent
-```
-
-Or use the automated deploy script:
+For scenarios that require native systemd deployment:
 
 ```bash
 sudo bash deploy/scripts/deploy.sh
 ```
 
-## 6. Verify
-
-```bash
-systemctl status cloud-cli-proxy-control-plane
-systemctl status cloud-cli-proxy-host-agent
-curl -s http://127.0.0.1:8080/healthz
-# {"status":"ok"}
-```
-
-## Post-deploy Layout
-
-```
-/opt/cloud-cli-proxy/bin/     # binaries
-/etc/cloud-cli-proxy/env      # environment variables (chmod 600)
-/var/lib/cloud-cli-proxy/     # data directory
-/run/cloud-cli-proxy/         # Unix socket
-```
+This automates: creating the system user → building binaries and images → generating config → installing systemd units → starting services. See `deploy/scripts/deploy.sh` in the repo for details.

@@ -1,156 +1,122 @@
 # 部署指南
 
-面向有 Linux 运维经验的技术人员，从零完成单宿主机部署。
+推荐使用 Docker Compose 一键部署，无需手动安装 PostgreSQL、Go 或编译源码。
 
-## 前置条件
+## 1. 安装 Docker
 
-- Ubuntu 22.04+ / Debian 12+（或等效 systemd-based 发行版）
-- Root 或 sudo 权限
-- 公网 IP（用于 bootstrap 入口和用户 SSH 接入）
-- 至少一个出口 IP 的代理配置
-
-## 1. 环境准备
-
-### 依赖检查
-
-```bash
-sudo bash deploy/scripts/host-preflight.sh
-```
-
-检查项：Docker Engine 28+、FUSE 内核模块、nftables、nsenter、curl、ip、systemctl、Go 1.26+、PostgreSQL 18.x、Node.js 24 LTS（可选）。
-
-### 安装缺失依赖
-
-**Docker Engine：**
+### Linux
 
 ```bash
 curl -fsSL https://get.docker.com | sh
-systemctl enable --now docker
 ```
 
-**nftables / nsenter / curl：**
+安装后确保当前用户在 `docker` 组：
 
 ```bash
-apt-get install -y nftables util-linux curl
+sudo usermod -aG docker $USER
+# 退出重新登录生效
 ```
 
-**FUSE 内核模块：**
+### macOS
+
+安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/)，或通过 Homebrew：
 
 ```bash
-modprobe fuse
-echo fuse >> /etc/modules-load.d/fuse.conf
+brew install --cask docker
 ```
 
-验证：`ls -la /dev/fuse` 应输出 `crw-rw-rw-` 权限的字符设备。
+### Windows
 
-**Go 1.26：**
+安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/)，启用 WSL 2 后端。
+
+## 2. 启动
 
 ```bash
-wget https://go.dev/dl/go1.26.1.linux-amd64.tar.gz
-rm -rf /usr/local/go && tar -C /usr/local -xzf go1.26.1.linux-amd64.tar.gz
-echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile.d/go.sh
-source /etc/profile.d/go.sh
+git clone https://github.com/ZaneL1u/cloud-cli-proxy.git
+cd cloud-cli-proxy
+
+bash deploy/scripts/setup-env.sh
+docker compose pull
+docker compose up -d
 ```
 
-**PostgreSQL 18：**
+`setup-env.sh` 交互式生成所有密码和密钥。支持：
+
+- **内置 PostgreSQL（推荐）**：自动创建，Docker Compose 统一管理，零配置
+- **外部 PostgreSQL**：填入已有数据库的连接信息
+
+启动后：
+
+- 管理后台：`http://YOUR_HOST:3000`
+- API：`http://YOUR_HOST:8080`
+
+验证：
 
 ```bash
-apt-get install -y postgresql-18
-systemctl enable --now postgresql
+curl http://127.0.0.1:8080/healthz
+# {"status":"ok"}
 ```
 
-### FUSE 与 AppArmor 兼容性
+## 中国大陆用户
 
-容器内的 sshfs 依赖 FUSE。Docker 默认 AppArmor profile 包含 `deny mount` 规则，系统已在创建容器时自动添加 `--security-opt apparmor=unconfined`。
+由于 `ghcr.io` 在国内访问不稳定，建议使用镜像源或开启代理后拉取。
 
-| 宿主机 OS | 影响 | 处理 |
-|-----------|------|------|
-| Ubuntu 24.04 | 默认 AppArmor 阻断 FUSE mount | 系统自动处理 |
-| Ubuntu 25.04+ | fusermount3 额外 profile 可能阻断 | `aa-disable /usr/bin/fusermount3` |
-| Debian 12+ | 无 AppArmor | 无需处理 |
+### 方案一：走代理拉取（推荐）
 
-验证 FUSE 兼容性：
+确保本机已开 TUN 模式或全局代理：
 
 ```bash
-sudo bash scripts/verify-fuse-compat.sh
+docker compose pull
+docker compose up -d
 ```
 
-## 2. PostgreSQL 配置
+镜像走代理出站，后续无需额外配置。
+
+### 方案二：替换为国内镜像
+
+编辑 `docker-compose.yml`，将 `ghcr.io` 替换为以下任一可用镜像站：
+
+```
+ghcr.io/zanel1u/cloud-cli-proxy/control-plane
+→ ghcr.nju.edu.cn/zanel1u/cloud-cli-proxy/control-plane
+→ ghcr.nuaa.edu.cn/zanel1u/cloud-cli-proxy/control-plane
+→ docker.1ms.run/zanel1u/cloud-cli-proxy/control-plane
+```
+
+或直接在拉取时指定镜像前缀：
 
 ```bash
-sudo -u postgres psql <<'SQL'
-CREATE DATABASE cloudproxy;
-CREATE USER cloudproxy WITH PASSWORD '替换为强密码';
-GRANT ALL PRIVILEGES ON DATABASE cloudproxy TO cloudproxy;
-ALTER DATABASE cloudproxy OWNER TO cloudproxy;
-\c cloudproxy
-GRANT ALL ON SCHEMA public TO cloudproxy;
-SQL
+# 替换 REGISTRY 为可用镜像站
+REGISTRY=ghcr.nju.edu.cn
+
+docker pull $REGISTRY/zanel1u/cloud-cli-proxy/control-plane:latest
+docker pull $REGISTRY/zanel1u/cloud-cli-proxy/admin:latest
+
+docker tag $REGISTRY/zanel1u/cloud-cli-proxy/control-plane:latest ghcr.io/zanel1u/cloud-cli-proxy/control-plane:latest
+docker tag $REGISTRY/zanel1u/cloud-cli-proxy/admin:latest ghcr.io/zanel1u/cloud-cli-proxy/admin:latest
+
+docker compose up -d
 ```
 
-验证连接：
+## 环境变量
+
+使用 `setup-env.sh` 生成后通常不需要手动修改。完整列表见 [配置参考](./configuration)。
+
+## 源码构建
+
+预构建镜像不可用时才需要本地构建：
 
 ```bash
-psql "postgresql://cloudproxy:密码@127.0.0.1:5432/cloudproxy" -c "SELECT 1"
+docker compose -f docker-compose.yml -f docker-compose.build.yaml --profile build-only build --no-cache
+docker compose -f docker-compose.yml -f docker-compose.build.yaml up -d --force-recreate
 ```
 
-## 3. 构建
+## 宿主机直接部署
 
-```bash
-git clone https://github.com/ZaneL1u/cloud-cli-proxy.git /opt/cloud-cli-proxy
-cd /opt/cloud-cli-proxy
-
-go build -o /opt/cloud-cli-proxy/bin/control-plane ./cmd/control-plane
-go build -o /opt/cloud-cli-proxy/bin/host-agent ./cmd/host-agent
-bash deploy/docker/managed-user/build-managed-image.sh
-
-# 前端（可选）
-cd web/admin && pnpm install && pnpm build && cd /opt/cloud-cli-proxy
-```
-
-## 4. 配置
-
-```bash
-useradd --system --no-create-home --shell /usr/sbin/nologin cloudproxy
-usermod -aG docker cloudproxy
-
-mkdir -p /var/lib/cloud-cli-proxy /run/cloud-cli-proxy /etc/cloud-cli-proxy
-chown cloudproxy:cloudproxy /var/lib/cloud-cli-proxy /run/cloud-cli-proxy /etc/cloud-cli-proxy
-```
-
-创建 `/etc/cloud-cli-proxy/env`，完整变量列表见 [配置参考](./configuration)。
-
-## 5. 安装 systemd 服务
-
-```bash
-cp deploy/systemd/cloud-cli-proxy-control-plane.service /etc/systemd/system/
-cp deploy/systemd/cloud-cli-proxy-host-agent.service /etc/systemd/system/
-
-systemctl daemon-reload
-systemctl enable --now cloud-cli-proxy-control-plane
-systemctl enable --now cloud-cli-proxy-host-agent
-```
-
-也可以使用自动化脚本一键完成：
+对于需要裸机 systemd 部署的场景，提供自动化脚本：
 
 ```bash
 sudo bash deploy/scripts/deploy.sh
 ```
 
-## 6. 验证
-
-```bash
-systemctl status cloud-cli-proxy-control-plane
-systemctl status cloud-cli-proxy-host-agent
-curl -s http://127.0.0.1:8080/healthz
-# {"status":"ok"}
-```
-
-## 部署后文件布局
-
-```
-/opt/cloud-cli-proxy/bin/     # 二进制文件
-/etc/cloud-cli-proxy/env      # 环境变量（chmod 600）
-/var/lib/cloud-cli-proxy/     # 数据目录
-/run/cloud-cli-proxy/         # Unix socket
-```
+会自动完成：创建系统用户 → 构建二进制和镜像 → 生成配置 → 安装 systemd 服务 → 启动。详细步骤见仓库内的 `deploy/scripts/deploy.sh`。
