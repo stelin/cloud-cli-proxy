@@ -236,6 +236,12 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	if a.reconciler != nil {
 		jobs = append(jobs, scheduler.Job{Name: "reconcile", Interval: reconcileInterval, Fn: a.reconciler.Run})
+		// 启动时立即执行一次协调，将宿主机重启后的容器恢复运行
+		go func() {
+			if err := a.reconciler.Run(ctx); err != nil {
+				a.logger.Warn("initial reconciliation failed", "error", err)
+			}
+		}()
 	}
 	if a.imageCache != nil {
 		jobs = append(jobs, scheduler.Job{Name: "image-cache-refresh", Interval: 30 * time.Minute, Fn: a.imageCache.Refresh})

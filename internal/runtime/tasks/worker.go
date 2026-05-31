@@ -224,13 +224,8 @@ func (w *Worker) buildCreateArgs(request agentapi.HostActionRequest, containerNa
 		"create",
 		"--name", containerName,
 		"--network", "bridge",
-		// 容器进程异常退出时由 docker 自动拉起恢复服务（user 在 SSH 内 `exit`
-		// 不会触发 restart，因为 OpenSSH 是前台 PID 1 ≠ exit-code 0）。
-		// on-failure 让 sing-box 崩溃 / nft apply 失败 → 容器异常退出时由 docker
-		// 兜底重启。
-		// 注意：on-failure 仅在容器进程以非零退出码退出时重启，Docker daemon
-		// 重启后容器变为 exited 状态不会自动恢复，需由外层 reconcile 逻辑兜底。
-		"--restart", "on-failure",
+		// unless-stopped：容器进程崩溃时 docker 自动重启，docker daemon 重启后也会恢复运行。
+		"--restart", "unless-stopped",
 		// 防止 fork 炸弹耗尽宿主机 pid；防止容器日志撑满磁盘。
 		"--pids-limit", "512",
 		"--log-opt", "max-size=10m",
