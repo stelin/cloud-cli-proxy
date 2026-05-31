@@ -40,6 +40,7 @@ type AdminHostStore interface {
 	ListRunningHosts(ctx context.Context) ([]repository.Host, error)
 	GetHostWithClaudeAccount(ctx context.Context, hostID string) (repository.HostWithClaudeAccount, error) // Phase 33 D-22
 	UpdateHostMounts(ctx context.Context, hostID string, mounts repository.HostMounts) error
+	UpdateHostResources(ctx context.Context, hostID string, memoryLimitMB *int, cpuLimit *float64, diskLimitGB *int) error
 }
 
 type AdminHostsHandler struct {
@@ -150,9 +151,9 @@ func (h *AdminHostsHandler) Create() nethttp.Handler {
 			UserID        string                `json:"user_id"`
 			EgressIPID    string                `json:"egress_ip_id"`
 			Timezone      string                `json:"timezone"`
-			MemoryLimitMB int                   `json:"memory_limit_mb"`
-			CPULimit      float64               `json:"cpu_limit"`
-			DiskLimitGB   int                   `json:"disk_limit_gb"`
+			MemoryLimitMB *int                  `json:"memory_limit_mb"`
+			CPULimit      *float64              `json:"cpu_limit"`
+			DiskLimitGB   *int                  `json:"disk_limit_gb"`
 			HostMounts    repository.HostMounts `json:"host_mounts"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.UserID == "" {
@@ -224,9 +225,9 @@ func (h *AdminHostsHandler) Create() nethttp.Handler {
 				SlotKey:          "primary",
 				Timezone:         timezone,
 				Hostname:         hostname,
-				MemoryLimitMB:    body.MemoryLimitMB,
-				CPULimit:         body.CPULimit,
-				DiskLimitGB:      body.DiskLimitGB,
+				MemoryLimitMB:    resolveMemory(body.MemoryLimitMB),
+				CPULimit:         resolveCPU(body.CPULimit),
+				DiskLimitGB:      resolveDisk(body.DiskLimitGB),
 				HostMounts:       expandHostMountSources(body.HostMounts),
 			})
 			if err == nil {
@@ -1079,6 +1080,93 @@ func (h *AdminHostsHandler) UpdateMounts() nethttp.Handler {
 	})
 }
 
+// PatchResources 处理 PATCH /v1/admin/hosts/{hostID}/resources。
+func (h *AdminHostsHandler) PatchResources() nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		hostID := r.PathValue("hostID")
+
+		var body struct {
+			MemoryLimitMB *int     `json:"memory_limit_mb"`
+			CPULimit      *float64 `json:"cpu_limit"`
+			DiskLimitGB   *int     `json:"disk_limit_gb"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+
+		if body.MemoryLimitMB != nil && *body.MemoryLimitMB > 0 {
+			if *body.MemoryLimitMB < 128 {
+				writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "memory_limit_mb 不能小于 128 MB"})
+				return
+			}
+			if *body.MemoryLimitMB > 262144 {
+				writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "memory_limit_mb 不能大于 262144 MB (256 GB)"})
+				return
+			}
+		}
+		if body.CPULimit != nil && *body.CPULimit > 0 {
+			if *body.CPULimit < 0.1 {
+				writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "cpu_limit 不能小于 0.1 核"})
+				return
+			}
+			if *body.CPULimit > 64 {
+				writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "cpu_limit 不能大于 64 核"})
+				return
+			}
+		}
+		if body.DiskLimitGB != nil && *body.DiskLimitGB > 0 {
+			if *body.DiskLimitGB < 1 {
+				writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "disk_limit_gb 不能小于 1 GB"})
+				return
+			}
+			if *body.DiskLimitGB > 2048 {
+				writeJSON(w, nethttp.StatusBadRequest, map[string]string{"error": "disk_limit_gb 不能大于 2048 GB (2 TB)"})
+				return
+			}
+		}
+
+		host, err := h.store.GetHost(r.Context(), hostID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeJSON(w, nethttp.StatusNotFound, map[string]string{"error": "host not found"})
+				return
+			}
+			h.logger.Error("get host for resource patch failed", "host_id", hostID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "get host failed"})
+			return
+		}
+
+		if host.Status != "stopped" {
+			writeJSON(w, nethttp.StatusConflict, map[string]string{"error": "主机正在运行中，请先停止"})
+			return
+		}
+
+		if err := h.store.UpdateHostResources(r.Context(), hostID,
+			resolveResourceMemory(body.MemoryLimitMB),
+			resolveResourceCPU(body.CPULimit),
+			resolveResourceDisk(body.DiskLimitGB),
+		); err != nil {
+			h.logger.Error("update host resources failed", "host_id", hostID, "error", err)
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{"error": "update resources failed"})
+			return
+		}
+
+		if h.events != nil {
+			hid := hostID
+			if _, err := h.events.RecordEvent(r.Context(), repository.RecordEventParams{
+				HostID: &hid, Level: "info", Type: "admin.host.resources_updated",
+				Message: "管理员更新主机资源限制",
+				Metadata: map[string]any{"operator": "admin"},
+			}); err != nil {
+				h.logger.Error("record event failed", "type", "admin.host.resources_updated", "error", err)
+			}
+		}
+
+		writeJSON(w, nethttp.StatusOK, map[string]string{"status": "ok"})
+	})
+}
+
 // syncContainerPassword updates the Linux user password inside a running container via docker exec.
 // Exposed as a package-level var so unit tests can inject a fake implementation (Phase 29.1).
 var syncContainerPassword = func(containerName, user, password string) error {
@@ -1164,3 +1252,76 @@ func (h *AdminHostsHandler) GetLogs() nethttp.Handler {
 		writeJSON(w, nethttp.StatusOK, result)
 	})
 }
+
+func intPtr(v int) *int          { return &v }
+func floatPtr(v float64) *float64 { return &v }
+
+// resolveMemory 三态解析：nil → 默认值(4096) / 0 → NULL(无限制) / >0 → 传值。
+func resolveMemory(mb *int) *int {
+	if mb == nil {
+		def := 4096
+		return &def
+	}
+	if *mb == 0 {
+		return nil
+	}
+	return mb
+}
+
+// resolveCPU 三态解析：nil → 默认值(2.0) / 0 → NULL(无限制) / >0 → 传值。
+func resolveCPU(cpu *float64) *float64 {
+	if cpu == nil {
+		def := 2.0
+		return &def
+	}
+	if *cpu == 0 {
+		return nil
+	}
+	return cpu
+}
+
+// resolveDisk 三态解析：nil → 默认值(20) / 0 → NULL(无限制) / >0 → 传值。
+func resolveDisk(gb *int) *int {
+	if gb == nil {
+		def := 20
+		return &def
+	}
+	if *gb == 0 {
+		return nil
+	}
+	return gb
+}
+
+// resolveResourceMemory PATCH 端点的三态解析：nil=不修改，0→NULL(无限制)，>0→传值。
+func resolveResourceMemory(mb *int) *int {
+	if mb == nil {
+		return nil
+	}
+	if *mb == 0 {
+		return nil
+	}
+	return mb
+}
+
+// resolveResourceCPU PATCH 端点的三态解析：nil=不修改，0→NULL(无限制)，>0→传值。
+func resolveResourceCPU(cpu *float64) *float64 {
+	if cpu == nil {
+		return nil
+	}
+	if *cpu == 0 {
+		return nil
+	}
+	return cpu
+}
+
+// resolveResourceDisk PATCH 端点的三态解析：nil=不修改，0→NULL(无限制)，>0→传值。
+func resolveResourceDisk(gb *int) *int {
+	if gb == nil {
+		return nil
+	}
+	if *gb == 0 {
+		return nil
+	}
+	return gb
+}
+
