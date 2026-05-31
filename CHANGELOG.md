@@ -4,6 +4,34 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v4.1.0 - 2026-05-31
+## What's Changed
+
+### Backend (Go / API)
+- fix: skip TestWorker_CreateHost_CleanupOnFailure when docker unavailable (da698f7)
+- fix: add missing UpdateEgressIPAddress to mockWorkerRepo in agent tests (2f6d174)
+- feat: v4.0 managed-user image, egress IP auto-correction, and FK fix (bba9090)
+- feat(57-02): register PATCH resources route and add --storage-opt to worker (f21b6ea)
+- feat(57-02): add three-state pointer semantics to Create endpoint and PatchResources handler (e0b99fe)
+- feat(57-02): add DiskLimitGB to HostActionRequest, remove defaultIfZero fallbacks (bc9dd66)
+- feat(57-01): change resource limit fields to pointer types, remove defaultIfZero, add UpdateHostResources (a51e055)
+- feat(57-01): create migration 0022 to make host resource limit columns nullable (6050b3f)
+- refactor: firewall tests, enhance worker container configuration, and add E2E test suites (a2912a0)
+
+### Frontend (Admin Web)
+- feat: v4.0 managed-user image, egress IP auto-correction, and FK fix (bba9090)
+- docs(57-03): update config description to include resource limits (704fe46)
+- feat(57-03): add resource limits display and edit in host detail page (2693b6d)
+- feat(57-03): extend use-hosts types and integrate ResourceLimitsSelector in create dialog (227b1da)
+- feat(57-03): add ResourceLimitsSelector component with preset dropdown and custom input (21f5efb)
+
+### Runtime & Deployment
+- feat: v4.0 managed-user image, egress IP auto-correction, and FK fix (bba9090)
+- refactor: firewall tests, enhance worker container configuration, and add E2E test suites (a2912a0)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v4.0.3...v4.1.0
+
+
 ## v4.0.3 - 2026-05-29
 ## What's Changed
 
