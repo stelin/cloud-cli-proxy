@@ -52,7 +52,7 @@ func ApplyBypassRuleSet(ctx context.Context, hostID string, cidrsJSON, domainsJS
 }
 
 // VerifyBypassConsistency 读取容器内 whitelist-cidrs.json 与
-// nft -j list set ip cloudproxy whitelist_v4 输出，
+// nft -j list set inet cloud_proxy_v4 whitelist_v4 输出，
 // 分别按 CIDR 集合归一化 sha256 计算 hash 并比较。
 func VerifyBypassConsistency(ctx context.Context, hostID string) (ConsistencyResult, error) {
 	// 1. 文件侧

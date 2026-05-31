@@ -1,9 +1,12 @@
 -include .env
 export
 
+GOOS ?= linux
+GOARCH ?= amd64
+
 DEV_COMPOSE := docker compose -f deploy/compose/control-plane.dev.yml
 
-.PHONY: dev dev-api dev-web db test test-go test-smoke build build-cli install-cli clean up up-build up-rebuild up-api down logs release
+.PHONY: dev dev-api dev-web db test test-go test-smoke build build-local build-cli install-cli clean up up-build up-rebuild up-api down logs release
 
 # ── Development ──────────────────────────────────────────────
 
@@ -82,9 +85,15 @@ user-image: ## Build managed-user image (cloud desktop)
 
 # ── Build ────────────────────────────────────────────────────
 
-build: ## Build all artifacts
+build: ## Build all artifacts for target platform
+	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o bin/control-plane-$(GOOS)-$(GOARCH) ./cmd/control-plane
+	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o bin/host-agent-$(GOOS)-$(GOARCH) ./cmd/host-agent
+	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "-s -w" -trimpath -o bin/cloud-claude-$(GOOS)-$(GOARCH) ./cmd/cloud-claude
+	cd web/admin && pnpm build
+
+build-local: ## Build for current platform
 	go build -o bin/control-plane ./cmd/control-plane
-	GOOS=linux GOARCH=amd64 go build -o bin/host-agent ./cmd/host-agent
+	go build -o bin/host-agent ./cmd/host-agent
 	go build -ldflags "-s -w" -trimpath -o bin/cloud-claude ./cmd/cloud-claude
 	cd web/admin && pnpm build
 

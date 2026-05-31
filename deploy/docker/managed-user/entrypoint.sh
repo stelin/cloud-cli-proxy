@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# 平台检测：macOS Docker Desktop vs Linux 原生 Docker
+detect_platform() {
+  # macOS Docker Desktop / OrbStack 的特征：overlayfs 不支持 chattr +i、
+  # APFS 不支持 chown root:singbox、/dev/net/tun 行为不同
+  local testfile="/tmp/.dev_mode_test_$$"
+  if ! touch "$testfile" 2>/dev/null || ! chattr +i "$testfile" 2>/dev/null; then
+    DEV_MODE=true
+  else
+    chattr -i "$testfile" 2>/dev/null || true
+    rm -f "$testfile"
+    DEV_MODE=false
+  fi
+  if [ "$DEV_MODE" = false ] && [ ! -d /sys/class/net/tun0 ] && [ -f /.dockerenv ]; then
+    DEV_MODE=true
+  fi
+  readonly DEV_MODE
+  echo "[entrypoint] platform: DEV_MODE=$DEV_MODE"
+}
+detect_platform
+
 LOG_DIR=/workspace/.vnc
 XVNC_LOG="${LOG_DIR}/xvnc.log"
 FLUXBOX_LOG="${LOG_DIR}/fluxbox.log"
@@ -103,8 +123,8 @@ prepare_container_disguise() {
   # 删除容器检测标志
   rm -f /.dockerenv
 
-  # 遥测阻断环境变量（写入 /etc/environment 供所有用户 session 继承）
-  cat >> /etc/environment <<'ENVTELEM'
+  # 遥测阻断环境变量。覆盖写入（非追加）防止容器 restart 重复追加。
+  cat > /etc/environment <<'ENVTELEM'
 DISABLE_TELEMETRY=1
 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=
@@ -190,8 +210,17 @@ start_singbox_or_die() {
   # macOS Docker Desktop 开发环境：host-agent chown root:singbox 必失败（APFS 不支持），
   # config 文件保持 host user 权限。entrypoint 以 root 身份在容器内修复权限后
   # 继续 hard-assert，prod Linux 上修复操作是 no-op。
-  chown root:singbox "$SING_BOX_CONFIG" 2>/dev/null || true
-  chmod 0640 "$SING_BOX_CONFIG" 2>/dev/null || true
+  if ! chown root:singbox "$SING_BOX_CONFIG" 2>/dev/null; then
+    if [ "$DEV_MODE" = true ]; then
+      echo "[entrypoint] DEV: chown failed, falling back to 644"
+      chmod 0644 "$SING_BOX_CONFIG" 2>/dev/null || true
+    else
+      echo "[entrypoint] FATAL: chown root:singbox failed" >&2
+      exit 1
+    fi
+  else
+    chmod 0640 "$SING_BOX_CONFIG" 2>/dev/null || true
+  fi
 
   local perm owner group
   perm="$(stat -c '%a' "$SING_BOX_CONFIG")"
@@ -259,7 +288,11 @@ EOF
   # chattr +i 让用户无法修改（即便 user 是 root，没 cap_linux_immutable 也改不了）
   # T5: overlay2 storage driver 可能不支持 immutable bit，仅 WARN，依赖 nft 兜底
   if ! chattr +i /etc/resolv.conf 2>/dev/null; then
-    echo "[entrypoint] WARN: chattr +i /etc/resolv.conf 失败（可能是 overlayfs），依赖 nft drop 兜底"
+    if [ "$DEV_MODE" = true ]; then
+      echo "[entrypoint] DEV: chattr +i not supported (overlayfs), relying on nft"
+    else
+      echo "[entrypoint] WARN: chattr +i failed unexpectedly, checking nft fallback"
+    fi
   fi
 }
 
@@ -270,6 +303,8 @@ apply_nft_or_die() {
     if [ -n "$SING_BOX_PID" ]; then kill "$SING_BOX_PID" 2>/dev/null || true; fi
     exit 1
   fi
+  # 清理 v3.x 残留的 ip cloudproxy 表，避免双表 shadow 导致规则不生效
+  nft delete table ip cloudproxy 2>/dev/null || true
   if ! nft -f "$NFT_RULESET"; then
     echo "[entrypoint] FATAL: nft 应用失败" >&2
     if [ -n "$SING_BOX_PID" ]; then kill "$SING_BOX_PID" 2>/dev/null || true; fi
@@ -289,14 +324,17 @@ remove_singbox_config() {
   echo "[entrypoint] removing sing-box config from fs (D-V4-2)"
   # dev 环境：config 以 :ro bind mount 注入，无法删除；跳过即可。
   if touch "$SING_BOX_CONFIG" 2>/dev/null; then
-    shred -u "$SING_BOX_CONFIG" 2>/dev/null || rm -f "$SING_BOX_CONFIG"
-    if [ -f "$SING_BOX_CONFIG" ]; then
-      echo "[entrypoint] FATAL: config rm 失败" >&2
+    if ! shred -u "$SING_BOX_CONFIG" 2>/dev/null && ! rm -f "$SING_BOX_CONFIG" 2>/dev/null; then
+      echo "[entrypoint] FATAL: config rm failed" >&2
       if [ -n "$SING_BOX_PID" ]; then kill "$SING_BOX_PID" 2>/dev/null || true; fi
       exit 1
     fi
   else
-    echo "[entrypoint] WARN: config 在只读挂载上，跳过删除（仅限 dev 环境）" >&2
+    if [ "$DEV_MODE" = true ]; then
+      echo "[entrypoint] DEV: config on ro bind mount, skip shred"
+    else
+      echo "[entrypoint] WARN: config remove failed, continuing"
+    fi
   fi
 }
 
@@ -390,12 +428,61 @@ if [ -c /dev/fuse ]; then
   chmod 666 /dev/fuse
 fi
 
+fix_singbox_routing() {
+  # v4.0 (Phase 54): sing-box auto_route 默认在规则 9001 上设置
+  # suppress_prefixlength 0，该选项会压制 table 2022 中的默认路由，
+  # 导致用户流量回退到 main 表走 eth0 → 被 nft default-deny 丢弃。
+  #
+  # 修复分三步：
+  #   1. 为 sing-box 自身 (uid=9000) 添加优先规则走 main 表，
+  #      防止移除 suppress_prefixlength 后 sing-box 代理流量环路。
+  #   2. 删除规则 9001 并用无 suppress_prefixlength 的版本替换。
+  #   3. 在 table 2022 中添加所有本地子网的直连路由，确保 VNC/SSH
+  #      的返回流量不走 tun0 → sing-box（sing-box 无法处理内网流量）。
+  #
+  # 关键操作失败时输出 ERROR 但不退出。set +e 防止 macOS Docker Desktop
+  # 或特定内核版本下 ip 命令的非预期返回码触发 set -e 终止整个 entrypoint。
+
+  set +e
+  local failed=0
+
+  ip rule add pref 8999 uidrange 9000-9000 lookup main 2>/dev/null || {
+    echo "[entrypoint] ERROR: cannot add ip rule 8999 (sing-box main route)" >&2
+    failed=1
+  }
+
+  ip rule del pref 9001 2>/dev/null || true
+  ip rule add pref 9001 from all lookup 2022 2>/dev/null || {
+    echo "[entrypoint] ERROR: cannot add ip rule 9001 (user tun0 route)" >&2
+    failed=1
+  }
+
+  # 从主路由表复制本地子网直连路由到 table 2022。
+  # ip addr show 返回的是主机 IP 如 192.168.107.5/24，不是网络地址，
+  # 直接用于 ip route add 会报 Invalid prefix 错误。
+  # 改为从 main 表已有的 proto kernel 路由复制，避免手动计算网络地址。
+  while read -r r; do
+    [ -n "$r" ] && ip route add $r table 2022 2>/dev/null || true
+  done < <(ip route show | grep "proto kernel")
+  ip route add 127.0.0.0/8 dev lo table 2022 2>/dev/null || true
+
+  if [ "$failed" -eq 1 ]; then
+    echo "[entrypoint] WARN: some routing fixes failed — fail-closed by nft" >&2
+  else
+    echo "[entrypoint] sing-box routing fixed (uid 9000 → main, user → tun0)"
+  fi
+  set -e
+}
+
 # ===== v4.0: sing-box 启动序列（所有 MODE 都跑，fail-fast）=====
 # 顺序固定，任一步失败 entrypoint 非 0 退出 → tini 关停容器（EP-01 / D-V4-4）
+# H8: nft 尽早应用（start_singbox → apply_nft → fix_routing → lock_resolv），
+# 避免 sing-box 启动后 nft 应用前的泄漏窗口。
 prepare_bypass_rule_sets
 start_singbox_or_die
-lock_resolv_conf
 apply_nft_or_die
+fix_singbox_routing
+lock_resolv_conf
 remove_singbox_config
 monitor_singbox_fail_closed
 

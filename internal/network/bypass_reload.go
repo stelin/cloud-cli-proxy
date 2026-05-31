@@ -12,19 +12,14 @@ import (
 	"strings"
 )
 
-// BypassNftFamily / BypassNftTable / bypassNftSetName 与 worker_firewall_linux.go
-// applyWorkerIPv4Rules 中创建的表保持一致：
-//
-//	conn.AddTable(&nftables.Table{Family: nftables.TableFamilyIPv4, Name: "cloudproxy"})
-//
-// 对应 nft CLI 字面值是 `ip cloudproxy`（不是 `inet sbfw`）。
-// bypassNftSetName 与 types.go::BypassNftSetName 保持同源（`whitelist_v4`）。
+// bypassNftFamily / bypassNftTable / bypassNftSetName 与 default-deny.nft
+// 保持一致：单表 inet cloud_proxy_v4，set whitelist_v4。
 //
 // 这一组常量是 ApplyBypassRuleSet / VerifyBypassConsistency 拼 nft 命令的唯一事实源，
 // 凡涉及 family/table/set 字面值的地方必须经此处。
 const (
-	bypassNftFamily  = "ip"
-	bypassNftTable   = "cloudproxy"
+	bypassNftFamily  = "inet"
+	bypassNftTable   = "cloud_proxy_v4"
 	bypassNftSetName = BypassNftSetName
 )
 
@@ -116,12 +111,12 @@ func extractCIDRsFromRuleSetJSON(raw json.RawMessage) ([]string, error) {
 	return out, nil
 }
 
-// extractCIDRsFromNftJSON 解析 `nft -j list set ip cloudproxy whitelist_v4` 的输出。
+// extractCIDRsFromNftJSON 解析 `nft -j list set inet cloud_proxy_v4 whitelist_v4` 的输出。
 // nft 9.x 输出 schema 大致为：
 //
 //	{"nftables":[
 //	  {"metainfo":{...}},
-//	  {"set":{"family":"ip","table":"cloudproxy","name":"whitelist_v4",
+//	  {"set":{"family":"inet","table":"cloud_proxy_v4","name":"whitelist_v4",
 //	          "type":"ipv4_addr","flags":["interval"],
 //	          "elem":[{"prefix":{"addr":"10.0.0.0","len":8}}, "192.168.1.1", ...]}}
 //	]}
@@ -217,8 +212,8 @@ func normalizedSHA256(cidrs []string) string {
 
 // buildNftWhitelistUpdateScript 拼 nft 事务 stdin：
 //
-//	flush set ip cloudproxy whitelist_v4
-//	add element ip cloudproxy whitelist_v4 { 10.0.0.0/8, 192.168.0.0/16 }
+//	flush set inet cloud_proxy_v4 whitelist_v4
+//	add element inet cloud_proxy_v4 whitelist_v4 { 10.0.0.0/8, 192.168.0.0/16 }
 //
 // 空 cidrs 时只发 flush，把 set 清空（这是合法语义，不是错误）。
 // IPv6 留 placeholder 注释，等后续阶段（whitelist_v6 set）落地再加 add 元素。

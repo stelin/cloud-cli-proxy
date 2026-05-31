@@ -13,6 +13,7 @@ import (
 )
 
 const ipprotoTCP = 6
+const ipprotoUDP = 17
 
 func applyIPv6Rules(conn *nftables.Conn, loIfIndex int) {
 	policyDrop := nftables.ChainPolicyDrop

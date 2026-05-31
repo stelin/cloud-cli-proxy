@@ -33,6 +33,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "${SSH_PROXY_PORT:-2222}:2222"
+    pid: host
     cap_add:
       - NET_ADMIN
       - SYS_ADMIN
@@ -56,12 +57,14 @@ services:
     ports:
       - "${ADMIN_PORT:-3000}:80"
 
+  # 预拉取镜像，保持本地缓存。host-agent 通过 docker create 使用此镜像。
   managed-user:
     image: ghcr.io/zanel1u/cloud-cli-proxy/managed-user:latest
     pull_policy: always
     restart: "no"
     command: ["true"]
 
+  # 预拉取探针镜像，供 egress IP 连通性测试使用。
   sing-box:
     image: ghcr.io/sagernet/sing-box:v1.13.3
     pull_policy: always

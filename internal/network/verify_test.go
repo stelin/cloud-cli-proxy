@@ -198,15 +198,15 @@ func TestParseAllNameservers_Empty(t *testing.T) {
 }
 
 func TestParseAllNameservers_SingleNS(t *testing.T) {
-	got := parseAllNameservers("nameserver 172.19.0.1\n")
-	if len(got) != 1 || got[0] != "172.19.0.1" {
+	got := parseAllNameservers("nameserver 127.0.0.1\n")
+	if len(got) != 1 || got[0] != containerExpectedDNS {
 		t.Errorf("unexpected: %v", got)
 	}
 }
 
 func TestParseAllNameservers_MultipleNS(t *testing.T) {
-	got := parseAllNameservers("nameserver 172.19.0.1\nnameserver 8.8.8.8\nnameserver 1.1.1.1\n")
-	want := []string{"172.19.0.1", "8.8.8.8", "1.1.1.1"}
+	got := parseAllNameservers("nameserver 127.0.0.1\nnameserver 8.8.8.8\nnameserver 1.1.1.1\n")
+	want := []string{containerExpectedDNS, "8.8.8.8", "1.1.1.1"}
 	if len(got) != len(want) {
 		t.Fatalf("len mismatch: got %v want %v", got, want)
 	}
@@ -218,10 +218,10 @@ func TestParseAllNameservers_MultipleNS(t *testing.T) {
 }
 
 func TestParseAllNameservers_Comments(t *testing.T) {
-	in := "# auto-generated\n;another comment\nnameserver 172.19.0.1\noptions ndots:0\n"
+	in := "# auto-generated\n;another comment\nnameserver 127.0.0.1\noptions ndots:0\n"
 	got := parseAllNameservers(in)
-	if len(got) != 1 || got[0] != "172.19.0.1" {
-		t.Errorf("expected [172.19.0.1], got %v", got)
+	if len(got) != 1 || got[0] != containerExpectedDNS {
+		t.Errorf("expected [127.0.0.1], got %v", got)
 	}
 }
 
@@ -235,16 +235,17 @@ func TestParseAllNameservers_Garbage(t *testing.T) {
 
 func TestVerifyDNS_ReportsAllNameservers(t *testing.T) {
 	withFakeNsenterRunner(t, func(call fakeNsenterCall) ([]byte, error) {
-		return []byte("nameserver 172.19.0.1\nnameserver 8.8.8.8\n"), nil
+		return []byte("nameserver 127.0.0.1\nnameserver 8.8.8.8\n"), nil
 	})
 
 	var result VerifyResult
-	verifyDNS(context.Background(), []string{"nsenter"}, "172.19.0.1", &result)
-	if result.DNSCorrect {
-		t.Errorf("expected DNSCorrect=false when resolv.conf != locked content")
+	// v4.0: 只检查首行 nameserver，附加 nameserver 不再判定为 DNS lock-in 失效
+	verifyDNS(context.Background(), []string{"nsenter"}, containerExpectedDNS, &result)
+	if !result.DNSCorrect {
+		t.Errorf("expected DNSCorrect=true when first nameserver matches expected")
 	}
-	if result.ActualDNS != "172.19.0.1,8.8.8.8" {
-		t.Errorf("expected ActualDNS=172.19.0.1,8.8.8.8, got %q", result.ActualDNS)
+	if result.ActualDNS != "127.0.0.1,8.8.8.8" {
+		t.Errorf("expected ActualDNS=127.0.0.1,8.8.8.8, got %q", result.ActualDNS)
 	}
 }
 
@@ -372,7 +373,7 @@ func TestFirstNetworkError_EgressMismatch(t *testing.T) {
 func TestFirstNetworkError_DNSLeak(t *testing.T) {
 	// Phase 45 Plan 02：firstNetworkError 的 expected_dns 已经与
 	// EgressConfig.Proxy.DNSServer 解耦，永远是常量 containerExpectedDNS
-	// (172.19.0.1)。这里 Proxy.DNSServer 字段仍保留语义（gateway → 上游
+	// (127.0.0.1)。这里 Proxy.DNSServer 字段仍保留语义（gateway → 上游
 	// DNS），但不再用于断言。
 	cfg := EgressConfig{
 		ExpectedIP: "1.2.3.4",
@@ -387,14 +388,14 @@ func TestFirstNetworkError_DNSLeak(t *testing.T) {
 	if err.Type != ErrDNSLeak {
 		t.Errorf("expected ErrDNSLeak, got %s", err.Type)
 	}
-	if err.Metadata["expected_dns"] != "172.19.0.1" || err.Metadata["actual_dns"] != "8.8.8.8" {
+	if err.Metadata["expected_dns"] != containerExpectedDNS || err.Metadata["actual_dns"] != "8.8.8.8" {
 		t.Errorf("unexpected metadata: %v", err.Metadata)
 	}
 }
 
 func TestFirstNetworkError_DNSLeak_NilProxy(t *testing.T) {
 	// Phase 45 Plan 02：expected_dns 已与 EgressConfig.Proxy 字段解耦，
-	// 即使 Proxy 为 nil，预期值仍是常量 containerExpectedDNS (172.19.0.1)。
+	// 即使 Proxy 为 nil，预期值仍是常量 containerExpectedDNS (127.0.0.1)。
 	cfg := EgressConfig{ExpectedIP: "1.2.3.4", Proxy: nil}
 	result := withLegacyFail(func(r *VerifyResult) {
 		r.DNSCorrect = false
@@ -406,8 +407,8 @@ func TestFirstNetworkError_DNSLeak_NilProxy(t *testing.T) {
 		t.Errorf("expected ErrDNSLeak, got %s", err.Type)
 	}
 	expectedDNS, _ := err.Metadata["expected_dns"].(string)
-	if expectedDNS != "172.19.0.1" {
-		t.Errorf("expected_dns should be containerExpectedDNS 172.19.0.1 even when Proxy is nil, got %q", expectedDNS)
+	if expectedDNS != "127.0.0.1" {
+		t.Errorf("expected_dns should be containerExpectedDNS 127.0.0.1 even when Proxy is nil, got %q", expectedDNS)
 	}
 }
 

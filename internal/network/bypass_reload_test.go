@@ -67,8 +67,8 @@ func withFakeDockerListNftSet(t *testing.T, fn func(ctx context.Context, hostID 
 // ===== Test 1: nft transaction script format =====
 
 // TestApplyBypassRuleSet_NftTransaction 守护 acceptance Test 2：
-//   - nft 脚本首行严格是 `flush set ip cloudproxy whitelist_v4`
-//   - 紧跟一行 `add element ip cloudproxy whitelist_v4 { ... }`
+//   - nft 脚本首行严格是 `flush set inet cloud_proxy_v4 whitelist_v4`
+//   - 紧跟一行 `add element inet cloud_proxy_v4 whitelist_v4 { ... }`
 //   - 列表归一化后按字典序，包含全部入参 CIDR
 //   - 文件写入通过 dockerWriteFileHook 进行
 //   - 解析失败的 cidrsJSON 不下发 nft 也不写盘
@@ -96,10 +96,10 @@ func TestApplyBypassRuleSet_NftTransaction(t *testing.T) {
 	if len(lines) < 2 {
 		t.Fatalf("nft script must have at least 2 lines (flush + add), got %q", call.NftScript)
 	}
-	if lines[0] != "flush set ip cloudproxy whitelist_v4" {
-		t.Errorf("first line = %q, want 'flush set ip cloudproxy whitelist_v4'", lines[0])
+	if lines[0] != "flush set inet cloud_proxy_v4 whitelist_v4" {
+		t.Errorf("first line = %q, want 'flush set inet cloud_proxy_v4 whitelist_v4'", lines[0])
 	}
-	if !strings.HasPrefix(lines[1], "add element ip cloudproxy whitelist_v4 { ") || !strings.HasSuffix(lines[1], " }") {
+	if !strings.HasPrefix(lines[1], "add element inet cloud_proxy_v4 whitelist_v4 { ") || !strings.HasSuffix(lines[1], " }") {
 		t.Errorf("second line = %q, want add-element with braces", lines[1])
 	}
 	for _, want := range []string{"10.0.0.0/8", "192.168.1.0/24"} {
@@ -195,7 +195,7 @@ func TestVerifyBypassConsistency_HashMatch(t *testing.T) {
 
 	matchingNftJSON := []byte(`{"nftables":[
       {"metainfo":{}},
-      {"set":{"family":"ip","table":"cloudproxy","name":"whitelist_v4","type":"ipv4_addr",
+      {"set":{"family":"inet","table":"cloud_proxy_v4","name":"whitelist_v4","type":"ipv4_addr",
               "elem":[
                 {"prefix":{"addr":"10.0.0.0","len":8}},
                 {"prefix":{"addr":"192.168.1.0","len":24}}
@@ -229,7 +229,7 @@ func TestVerifyBypassConsistency_HashMatch(t *testing.T) {
 	// case B: drift
 	driftedNftJSON := []byte(`{"nftables":[
       {"metainfo":{}},
-      {"set":{"family":"ip","table":"cloudproxy","name":"whitelist_v4","type":"ipv4_addr",
+      {"set":{"family":"inet","table":"cloud_proxy_v4","name":"whitelist_v4","type":"ipv4_addr",
               "elem":[{"prefix":{"addr":"172.16.0.0","len":12}}]}}
     ]}`)
 	withFakeDockerListNftSet(t, func(_ context.Context, _ string) ([]byte, error) {

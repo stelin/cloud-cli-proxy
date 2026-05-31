@@ -229,7 +229,13 @@ func (w *Worker) buildCreateArgs(request agentapi.HostActionRequest, containerNa
 		// fail）。"no" 在 v3.x sidecar 模式下是合理的（gateway 与 user 容器解耦），
 		// 单容器下改 on-failure 让 sing-box 崩溃 / nft apply 失败 → 容器异常退出
 		// 时由 docker 兜底重启。
+		// 注意：on-failure 仅在容器进程以非零退出码退出时重启，Docker daemon
+		// 重启后容器变为 exited 状态不会自动恢复，需由外层 reconcile 逻辑兜底。
 		"--restart", "on-failure",
+		// 防止 fork 炸弹耗尽宿主机 pid；防止容器日志撑满磁盘。
+		"--pids-limit", "512",
+		"--log-opt", "max-size=10m",
+		"--log-opt", "max-file=3",
 		// Phase 51 QUAL-06 / 闭 Phase 49 GAP-1：worker capability 收紧。
 		//   - 保留 --cap-add NET_ADMIN：sing-box 在容器内 netns 创建 tun0 设备
 		//     需要 CAP_NET_ADMIN（Phase 54 单容器架构下由容器内 entrypoint 直接
@@ -267,9 +273,13 @@ func (w *Worker) buildCreateArgs(request agentapi.HostActionRequest, containerNa
 
 	if request.MemoryLimitMB > 0 {
 		args = append(args, "--memory", fmt.Sprintf("%dm", request.MemoryLimitMB))
+	} else {
+		args = append(args, "--memory", "4096m")
 	}
 	if request.CPULimit > 0 {
 		args = append(args, "--cpus", fmt.Sprintf("%.1f", request.CPULimit))
+	} else {
+		args = append(args, "--cpus", "2.0")
 	}
 
 	if request.EntryPassword == "" {
@@ -467,6 +477,12 @@ func (w *Worker) createHost(ctx context.Context, request agentapi.HostActionRequ
 
 	if err := w.runDocker(ctx, "start", containerName); err != nil {
 		return fmt.Errorf("start container after create: %w", err)
+	}
+
+	// 容器以 --network none 创建，避免网络泄漏窗口；start 后显式接入所需网络。
+	// bridge 用于出站流量，compose 网络用于控制面访问容器。
+	if err := w.connectContainerNetworks(ctx, containerName); err != nil {
+		return fmt.Errorf("connect container networks: %w", err)
 	}
 
 	if egressCfg != nil {
@@ -1236,6 +1252,27 @@ func (w *Worker) runDocker(ctx context.Context, args ...string) error {
 		return fmt.Errorf("docker %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
 
+	return nil
+}
+
+// connectContainerNetworks 将容器接入 compose 网络（控制面 VNC 访问需要）。
+// 容器已经在 create 时通过 --network bridge 接入了 bridge 网络。
+func (w *Worker) connectContainerNetworks(ctx context.Context, containerName string) error {
+	composeNetwork := os.Getenv("COMPOSE_NETWORK")
+	if composeNetwork == "" {
+		composeNetwork = "cloud-cli-proxy_default"
+	}
+
+	// compose 网络允许控制面通过容器 IP 直连 VNC/SSH 等端口。
+	// docker network connect 对已连接容器幂等，不需额外判重。
+	if err := w.runDocker(ctx, "network", "connect", composeNetwork, containerName); err != nil {
+		// compose 网络不存在时降级为警告（非 compose 部署场景）
+		slog.Warn("connect container to compose network failed, continuing",
+			"container", containerName,
+			"network", composeNetwork,
+			"error", err,
+		)
+	}
 	return nil
 }
 

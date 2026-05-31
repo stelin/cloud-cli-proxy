@@ -98,7 +98,7 @@ func Test_CleanupHost_RemovesConfigDir(t *testing.T) {
 		t.Fatalf("write stub config.json: %v", err)
 	}
 
-	p := NewContainerProxyProvider(slog.Default())
+	p := NewContainerProxyProvider(slog.Default(), &NopVerifier{})
 	if err := p.CleanupHost(context.Background(), HostNetworkSpec{HostID: hostID}); err != nil {
 		t.Fatalf("CleanupHost returned err: %v", err)
 	}
@@ -109,12 +109,15 @@ func Test_CleanupHost_RemovesConfigDir(t *testing.T) {
 }
 
 func TestNewContainerProxyProvider(t *testing.T) {
-	p := NewContainerProxyProvider(nil)
+	p := NewContainerProxyProvider(nil, nil)
 	if p == nil {
 		t.Fatal("NewContainerProxyProvider returned nil")
 	}
 	if p.logger != nil {
 		t.Error("expected nil logger when passed nil")
+	}
+	if p.verifier != nil {
+		t.Error("expected nil verifier when passed nil")
 	}
 }
 
@@ -130,7 +133,7 @@ func TestContainerProxyProvider_PrepareGateway_DarwinChownNotFatal(t *testing.T)
 	}
 	tmp := t.TempDir()
 	t.Setenv("DATA_DIR", tmp)
-	p := NewContainerProxyProvider(slog.Default())
+	p := NewContainerProxyProvider(slog.Default(), &NopVerifier{})
 	err := p.PrepareGateway(context.Background(), HostNetworkSpec{
 		HostID: "h-darwin",
 		Egress: &EgressConfig{

@@ -55,6 +55,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         nftables \
         libcap2-bin \
         dnsutils \
+        nano \
+        less \
+        unzip \
     && rm -rf /var/lib/apt/lists/*
 
 RUN sed -i 's/^#user_allow_other/user_allow_other/' /etc/fuse.conf \
@@ -72,13 +75,16 @@ RUN ARCH=$(dpkg --print-architecture) \
 
 # Chromium：Ubuntu 24.04 的 chromium-browser 是 snap 包装器，Docker 不支持 snap。
 # 从 Debian bookworm 仓库安装真正的 .deb（支持 amd64 + arm64）。
-RUN echo "deb [trusted=yes arch=$(dpkg --print-architecture)] http://deb.debian.org/debian bookworm main" \
-        > /etc/apt/sources.list.d/debian-chromium.list \
-    && apt-get update \
+# 通过 Debian 官方 release-12.asc GPG 密钥 + HTTPS 源防止供应链投毒。
+RUN curl -fsSL https://ftp-master.debian.org/keys/release-12.asc \
+    | gpg --dearmor -o /usr/share/keyrings/debian-bookworm.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/debian-bookworm.gpg] https://deb.debian.org/debian bookworm main" \
+        > /etc/apt/sources.list.d/debian-bookworm.list
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update \
     && apt-get install -y --no-install-recommends -t bookworm chromium \
-    && rm /etc/apt/sources.list.d/debian-chromium.list \
-    && apt-get update \
-    && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+    && rm /etc/apt/sources.list.d/debian-bookworm.list
 
 # mergerfs 2.41.1 — GitHub release static .deb（D-04 / M3 防御）
 ARG MERGERFS_VERSION=2.41.1

@@ -1,15 +1,17 @@
 #!/usr/sbin/nft -f
 # v4.0 同容器架构 default-deny ruleset
-# 等价于 v3.6 worker_firewall_linux.go::ApplyWorkerFirewallRules 输出链
-# 但应用位置从 host netns 切到容器内自身 netns。
-#
-# 策略：默认 DROP，仅放行 tun0 出口 + sing-box uid 直连 eth0 + lo + 反向已建立连接。
-# DNS 强制走 sing-box stub resolver（127.0.0.1:53）—— D-V4-3。
 
 table inet cloud_proxy_v4
 delete table inet cloud_proxy_v4
 
 table inet cloud_proxy_v4 {
+
+    # bypass 白名单 set：ApplyBypassRuleSet 通过 nsenter 动态填充
+    set whitelist_v4 {
+        type ipv4_addr
+        flags interval
+    }
+
     chain output {
         type filter hook output priority filter; policy drop;
 
@@ -20,21 +22,30 @@ table inet cloud_proxy_v4 {
         oifname "tun0" counter accept
 
         # 放行 sing-box (uid=9000) 通过 eth0 直连代理服务器
-        # sing-box direct outbound (proxy-out → direct) 使用 eth0 发起连接，
-        # 不走 tun0 避免回环。用户进程仍被 policy drop 限制在 tun0 内。
         meta skuid 9000 oifname "eth0" counter accept comment "singbox-direct-egress"
 
         # 显式 drop 外部 DNS（防止用户 dig @8.8.8.8 旁路）
-        # D-V4-3：外部 UDP/53、TCP/53、TCP/853 全 drop
-        # 注：这条规则其实被 policy drop 兜底，显式写出来是为了 counter 可观测
         meta l4proto udp udp dport 53 ip daddr != 127.0.0.0/8 counter drop comment "extdns-udp-drop"
         meta l4proto tcp tcp dport { 53, 853 } ip daddr != 127.0.0.0/8 counter drop comment "extdns-tcp-drop"
 
         # 显式 drop link-local（v3.6 LEAK-07 同款）
         ip daddr 169.254.0.0/16 counter drop comment "linklocal-drop"
 
+        # mDNS / LLMNR / NetBIOS 显式 drop（在白名单之前，防止误放行）
+        meta l4proto udp udp dport 5353 counter drop comment "mdns-drop"
+        meta l4proto udp udp dport 5355 counter drop comment "llmnr-drop"
+        meta l4proto udp udp dport 137 counter drop comment "netbios-ns-drop"
+        meta l4proto udp udp dport 138 counter drop comment "netbios-dgm-drop"
+
+        # ICMP PMTUD（Path MTU Discovery 需要 ICMP type 3 code 4）
+        # 缺失会导致 TCP MSS clamping 失效，大包连接挂起。
+        ip protocol icmp icmp type { destination-unreachable, time-exceeded, parameter-problem } counter accept comment "icmp-pmtud"
+
         # 反向连接放行
         ct state established,related counter accept
+
+        # 白名单 set：ApplyBypassRuleSet 动态填充，仅 eth0 生效（tun0 已在前面放行）
+        oifname "eth0" ip daddr @whitelist_v4 counter accept comment "bypass-whitelist"
 
         # 兜底（policy drop 已覆盖，这条 counter 用于可观测）
         counter drop comment "default-deny-tail"
@@ -46,6 +57,9 @@ table inet cloud_proxy_v4 {
         # 放行 lo
         iifname "lo" counter accept
 
+        # 放行 tun0 返回流量（sing-box 代理回包）
+        iifname "tun0" counter accept
+
         # 放行 SSH 入向（端口由 host-agent 配置，默认 22）
         tcp dport 22 counter accept comment "ssh-in"
 
@@ -56,44 +70,5 @@ table inet cloud_proxy_v4 {
         ct state established,related counter accept
 
         counter drop comment "default-deny-input-tail"
-    }
-}
-
-# ===== Bypass 白名单表 =====
-# Phase 54 迁移遗留：ApplyBypassRuleSet（bypass_reload_linux.go）通过
-#   nsenter -t <pid> -n -- nft -f -
-# 下发 flush set ip cloudproxy whitelist_v4 + add element … 事务。
-# 必须在 entrypoint 阶段预建表 + 空 set，否则 reload 时 nft 找不到目标 set。
-# 规则与 bypass_firewall.go::ConfigureBypassFirewall 输出对齐。
-
-table ip cloudproxy
-delete table ip cloudproxy
-
-table ip cloudproxy {
-    set whitelist_v4 {
-        type ipv4_addr
-        flags interval
-    }
-
-    chain output {
-        type filter hook output priority filter; policy drop;
-
-        oifname "lo" counter accept
-        oifname "tun0" counter accept
-        ct state established,related counter accept
-
-        # sing-box 直连代理（uid=9000）
-        meta skuid 9000 oifname "eth0" counter accept comment "singbox-direct-egress"
-
-        # mDNS / LLMNR / NetBIOS 显式 drop（防止白名单误放行）
-        meta l4proto udp udp dport 5353 counter drop comment "mdns-drop"
-        meta l4proto udp udp dport 5355 counter drop comment "llmnr-drop"
-        meta l4proto udp udp dport 137 counter drop comment "netbios-ns-drop"
-        meta l4proto udp udp dport 138 counter drop comment "netbios-dgm-drop"
-
-        # 白名单 set：ApplyBypassRuleSet 动态填充
-        oifname "eth0" ip daddr @whitelist_v4 counter accept comment "bypass-whitelist"
-
-        counter log prefix "[bypass-drop] " drop comment "bypass-default-deny"
     }
 }

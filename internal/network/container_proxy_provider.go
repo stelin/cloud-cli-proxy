@@ -19,11 +19,15 @@ import (
 const singboxGroupGID = 9000
 
 type ContainerProxyProvider struct {
-	logger *slog.Logger
+	logger   *slog.Logger
+	verifier NetworkVerifier
 }
 
-func NewContainerProxyProvider(logger *slog.Logger) *ContainerProxyProvider {
-	return &ContainerProxyProvider{logger: logger}
+// NewContainerProxyProvider 创建一个 container-proxy 风格的 Provider。
+// verifier 负责 PrepareHost 阶段的网络完整性验证；
+// 通过注入不同实现来适应不同平台 / 部署形态。
+func NewContainerProxyProvider(logger *slog.Logger, verifier NetworkVerifier) *ContainerProxyProvider {
+	return &ContainerProxyProvider{logger: logger, verifier: verifier}
 }
 
 // PrepareGateway 在 worker 容器 docker create 之前把 sing-box config 写到 host 端
@@ -62,7 +66,7 @@ func (p *ContainerProxyProvider) PrepareGateway(ctx context.Context, spec HostNe
 		// chown 失败时文件已存在但 owner 仍是 dev user）。降级为 Warn 让 PrepareGateway
 		// 继续返回 nil；下游链路上：
 		//   - darwin docker desktop 由于无 /dev/net/tun，host create 本来就跑不通，
-		//     verifyWorkerNetwork 会更早失败；
+		//     verifier.Verify 会更早失败；
 		//   - Linux 非 root 控制面（不是生产形态）会被容器内 entrypoint
 		//     start_singbox_or_die 的 hard-assert (perm/owner/group) 兜底 exit 1，
 		//     fail-closed 语义不漏。
@@ -114,6 +118,19 @@ func writeContainerSingBoxConfig(hostID string, egress *EgressConfig) error {
 		return fmt.Errorf("mkdir config dir: %w", err)
 	}
 	cfgPath := filepath.Join(dir, "config.json")
+
+	// 防御：当用户直接 docker run -v <源>:... 且源路径尚不存在时，Docker 会
+	// 自动把源路径创建为目录（而非文件）。后续 os.WriteFile 遇到 "is a directory"
+	// 错误会直接失败，且 PrepareGateway 的调用链中 worker 只报 "write config"，
+	// 排查体验极差。这里显式检测并清除该异常状态。
+	if info, statErr := os.Stat(cfgPath); statErr == nil {
+		if info.IsDir() {
+			if rmErr := os.RemoveAll(cfgPath); rmErr != nil {
+				return fmt.Errorf("remove stale config.json directory (Docker auto-created it because source path did not exist): %w", rmErr)
+			}
+		}
+	}
+
 	if err := os.WriteFile(cfgPath, cfg, 0o600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
@@ -161,7 +178,7 @@ func isChownPermissionError(err error) bool {
 //   - applyWorkerFirewall（容器内 entrypoint 自己 apply）
 //   - join 控制面到隔离网络（无隔离网络存在）
 //
-// 仅保留 verifyWorkerNetwork 做出口 IP / DNS / leak 三检，确认 Phase 53 entrypoint
+// 仅保留 verifier.Verify 做出口 IP / DNS / leak 三检，确认 Phase 53 entrypoint
 // 启动序列真的把流量导到 tun0。
 func (p *ContainerProxyProvider) PrepareHost(ctx context.Context, spec HostNetworkSpec) error {
 	if spec.Egress == nil {
@@ -174,7 +191,7 @@ func (p *ContainerProxyProvider) PrepareHost(ctx context.Context, spec HostNetwo
 	}
 
 	workerName := workerContainerName(spec.HostID)
-	result, verifyErr := verifyWorkerNetwork(ctx, workerName, *spec.Egress)
+	result, verifyErr := p.verifier.Verify(ctx, workerName, *spec.Egress)
 	if verifyErr != nil {
 		p.logger.Error("container-proxy: network verification failed",
 			"host_id", spec.HostID,

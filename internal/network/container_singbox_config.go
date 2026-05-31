@@ -35,11 +35,18 @@ func buildContainerSingBoxConfig(outboundRaw json.RawMessage, _ /*dnsServer*/, p
 	if err != nil {
 		return nil, err
 	}
+	// v4.0 (Phase 54): 本地 SOCKS5 inbound 供出口 IP 验证使用。
+	// curl -x socks5h://127.0.0.1:1080 直接走 sing-box 代理，绕开 auto_route
+	// 与 nft default-deny 在内核协议栈的交互不确定性。
+	socksIn, err := buildContainerSocksInbound()
+	if err != nil {
+		return nil, err
+	}
 
 	cfg := map[string]any{
 		"log":      map[string]any{"level": "info"},
 		"dns":      buildContainerDNS(),
-		"inbounds": []json.RawMessage{tunIn, dnsDirectIn},
+		"inbounds": []json.RawMessage{tunIn, dnsDirectIn, socksIn},
 		"outbounds": []json.RawMessage{proxyOut, directOut},
 		"route":    buildContainerRoute(proxyServerIP),
 	}
@@ -81,8 +88,9 @@ func buildContainerDNS() map[string]any {
 				"server":   "dns-direct",
 			},
 		},
-		"final":    "dns-proxy",
-		"strategy": "ipv4_only",
+		"final":           "dns-proxy",
+		"strategy":        "ipv4_only",
+		"cache_capacity":  256,
 	}
 }
 
@@ -132,15 +140,32 @@ func buildContainerDNSDirectInbound() (json.RawMessage, error) {
 	return raw, nil
 }
 
+// buildContainerSocksInbound 渲染本地 SOCKS5 inbound，供出口 IP 验证使用。
+// curl -x socks5h://127.0.0.1:1080 直接走 sing-box 代理，绕开 auto_route
+// 与 nft default-deny 在内核协议栈的交互不确定性。
+func buildContainerSocksInbound() (json.RawMessage, error) {
+	raw, err := json.Marshal(map[string]any{
+		"type":        "socks",
+		"tag":         "socks-in",
+		"listen":      "127.0.0.1",
+		"listen_port": 1080,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal container socks inbound: %w", err)
+	}
+	return raw, nil
+}
+
 // buildContainerTunInbound 渲染容器内 tun inbound。
 func buildContainerTunInbound() (json.RawMessage, error) {
 	raw, err := json.Marshal(map[string]any{
 		"type":         "tun",
 		"tag":          "tun-in",
 		"address":      []string{"172.19.0.1/30"},
+		"mtu":          1500,
 		"auto_route":   true,
 		"strict_route": true,
-		"stack":        "gvisor",
+		"stack":        "system",
 		"sniff":        true,
 	})
 	if err != nil {
@@ -159,6 +184,16 @@ func buildGatewayProxyOutbound(userConfig json.RawMessage, resolvedIP string) (j
 	delete(m, "bind_interface")
 	m["tag"] = "proxy-out"
 	if resolvedIP != "" {
+		// 替换 server 为 IP 前，将原始域名保存到 TLS SNI。
+		// sing-box 默认用 server 值作为 TLS server_name，
+		// 替换成 IP 后会导致证书校验失败。
+		if tls, ok := m["tls"].(map[string]any); ok {
+			if _, hasSNI := tls["server_name"]; !hasSNI {
+				if originalServer, ok := m["server"].(string); ok && isDomain(originalServer) {
+					tls["server_name"] = originalServer
+				}
+			}
+		}
 		m["server"] = resolvedIP
 	}
 	if tls, ok := m["tls"].(map[string]any); ok {
@@ -171,6 +206,22 @@ func buildGatewayProxyOutbound(userConfig json.RawMessage, resolvedIP string) (j
 		}
 	}
 	return json.Marshal(m)
+}
+
+// isDomain 判断字符串是否看起来像域名（含 . 且不以数字开头）。
+func isDomain(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	if s[0] >= '0' && s[0] <= '9' {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] == '.' {
+			return true
+		}
+	}
+	return false
 }
 
 // buildGatewayDirectOutbound 渲染 direct outbound (bind eth0)。

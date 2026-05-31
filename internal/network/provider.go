@@ -1,9 +1,12 @@
 package network
 
-import "context"
+import (
+	"context"
+	"log/slog"
+	"runtime"
+)
 
-// Provider defines the contract for setting up and tearing down per-host
-// network isolation.
+// Provider 定义了每个 host 的网络隔离的建立与拆除契约。
 //
 // 并发语义（Phase 45 WR-08 修正）：
 //   - 同一 hostID 上的 Prepare* / Cleanup* 调用 **必须由调用方串行化**。
@@ -21,7 +24,7 @@ import "context"
 //   - PrepareGateway 负责「mkdir SingBoxConfigDir + 写 sing-box config」，保证
 //     worker 容器启动时 ro bind mount 引用的 /etc/sing-box/config.json 已存在；
 //   - PrepareHost 在 worker 容器 docker start 之后调用，仅负责
-//     verifyWorkerNetwork（出口 IP / DNS / leak 三检）。
+//     verifier.Verify（出口 IP / DNS / leak 三检）。
 //
 // CleanupHost 是反操作：清理 host 端 SingBoxConfigDir 目录（best-effort 幂等）。
 // 容器自身的销毁由 worker.stopHost / rebuildHost 路径上的 docker stop / rm 负责。
@@ -29,4 +32,24 @@ type Provider interface {
 	PrepareGateway(context.Context, HostNetworkSpec) error
 	PrepareHost(context.Context, HostNetworkSpec) error
 	CleanupHost(context.Context, HostNetworkSpec) error
+}
+
+// NetworkVerifier 是网络验证的抽象接口。
+// 不同平台 / 部署形态提供各自的验证实现。
+type NetworkVerifier interface {
+	Verify(ctx context.Context, containerName string, egress EgressConfig) (VerifyResult, error)
+}
+
+// NewProvider 返回平台适配的 Provider 实现。
+// 内部根据 runtime.GOOS 选择 NetworkVerifier：
+//   - Linux：DockerVerifier，通过 docker exec 进入容器做真实网络验证
+//   - 非 Linux：NopVerifier，返回 safe-pass 结果不阻塞开发
+func NewProvider(logger *slog.Logger) Provider {
+	var verifier NetworkVerifier
+	if runtime.GOOS == "linux" {
+		verifier = &DockerVerifier{}
+	} else {
+		verifier = &NopVerifier{}
+	}
+	return NewContainerProxyProvider(logger, verifier)
 }

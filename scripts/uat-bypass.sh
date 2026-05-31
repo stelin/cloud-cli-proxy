@@ -233,7 +233,7 @@ assert_invariant_I2() {
   fi
   local pid
   pid=$(worker_pid)
-  if sudo nsenter -t "$pid" -n nft list chain ip cloudproxy output 2>/dev/null | grep -q 'policy drop'; then
+  if sudo nsenter -t "$pid" -n nft list chain inet cloud_proxy_v4 output 2>/dev/null | grep -q 'policy drop'; then
     pass "I2 nft output policy=drop"
   else
     fail "I2 nft output policy missing"
@@ -338,7 +338,7 @@ assert_invariant_I9() {
   # 即视为通过；严格 counter ≥ 1 的注入验证为已知 follow-up。
   local pid
   pid=$(worker_pid)
-  if sudo nsenter -t "$pid" -n nft list chain ip cloudproxy output 2>/dev/null \
+  if sudo nsenter -t "$pid" -n nft list chain inet cloud_proxy_v4 output 2>/dev/null \
        | grep -qE 'udp dport (5353|5355|137|138).*drop'; then
     pass "I9 mDNS/LLMNR/NetBIOS drop 规则存在"
   else
