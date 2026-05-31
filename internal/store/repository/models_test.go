@@ -88,6 +88,9 @@ func TestUser_JSONOmitEmpty(t *testing.T) {
 
 func TestHost_JSONMarshaling(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
+	memLimit := 4096
+	cpuLimit := 2.0
+	diskLimit := 50
 	h := Host{
 		ID:               "host-1",
 		UserID:           "user-1",
@@ -98,9 +101,9 @@ func TestHost_JSONMarshaling(t *testing.T) {
 		SlotKey:          "primary",
 		Timezone:         "Asia/Shanghai",
 		Hostname:         "dev-box",
-		MemoryLimitMB:    4096,
-		CPULimit:         2.0,
-		DiskLimitGB:      50,
+		MemoryLimitMB:    &memLimit,
+		CPULimit:         &cpuLimit,
+		DiskLimitGB:      &diskLimit,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
@@ -121,11 +124,11 @@ func TestHost_JSONMarshaling(t *testing.T) {
 	if decoded.Status != "running" {
 		t.Errorf("Status = %q, want running", decoded.Status)
 	}
-	if decoded.MemoryLimitMB != 4096 {
-		t.Errorf("MemoryLimitMB = %d, want 4096", decoded.MemoryLimitMB)
+	if decoded.MemoryLimitMB == nil || *decoded.MemoryLimitMB != 4096 {
+		t.Errorf("MemoryLimitMB = %v, want 4096", decoded.MemoryLimitMB)
 	}
-	if decoded.CPULimit != 2.0 {
-		t.Errorf("CPULimit = %f, want 2.0", decoded.CPULimit)
+	if decoded.CPULimit == nil || *decoded.CPULimit != 2.0 {
+		t.Errorf("CPULimit = %v, want 2.0", decoded.CPULimit)
 	}
 }
 
@@ -272,6 +275,9 @@ func TestCreateUserWithRoleParams_Defaults(t *testing.T) {
 }
 
 func TestUpsertHostParams_AllFields(t *testing.T) {
+	memLimit := 8192
+	cpuLimit := 4.0
+	diskLimit := 100
 	p := UpsertHostParams{
 		UserID:           "u1",
 		Status:           "running",
@@ -281,17 +287,17 @@ func TestUpsertHostParams_AllFields(t *testing.T) {
 		SlotKey:          "primary",
 		Timezone:         "UTC",
 		Hostname:         "box1",
-		MemoryLimitMB:    8192,
-		CPULimit:         4.0,
-		DiskLimitGB:      100,
+		MemoryLimitMB:    &memLimit,
+		CPULimit:         &cpuLimit,
+		DiskLimitGB:      &diskLimit,
 	}
 	if p.UserID == "" {
 		t.Error("UserID is required")
 	}
-	if p.MemoryLimitMB <= 0 {
+	if p.MemoryLimitMB == nil || *p.MemoryLimitMB <= 0 {
 		t.Error("MemoryLimitMB should be positive")
 	}
-	if p.CPULimit <= 0 {
+	if p.CPULimit == nil || *p.CPULimit <= 0 {
 		t.Error("CPULimit should be positive")
 	}
 }

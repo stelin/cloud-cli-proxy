@@ -41,9 +41,9 @@ type Host struct {
 	SlotKey          string    `json:"slot_key"`
 	Timezone         string    `json:"timezone"`
 	Hostname         string    `json:"hostname"`
-	MemoryLimitMB    int       `json:"memory_limit_mb"`
-	CPULimit         float64   `json:"cpu_limit"`
-	DiskLimitGB      int       `json:"disk_limit_gb"`
+	MemoryLimitMB    *int      `json:"memory_limit_mb"`
+	CPULimit         *float64  `json:"cpu_limit"`
+	DiskLimitGB      *int      `json:"disk_limit_gb"`
 	HostMounts       HostMounts `json:"host_mounts"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
@@ -274,9 +274,9 @@ type UpsertHostParams struct {
 	SlotKey          string
 	Timezone         string
 	Hostname         string
-	MemoryLimitMB    int
-	CPULimit         float64
-	DiskLimitGB      int
+	MemoryLimitMB    *int
+	CPULimit         *float64
+	DiskLimitGB      *int
 	HostMounts       HostMounts
 }
 

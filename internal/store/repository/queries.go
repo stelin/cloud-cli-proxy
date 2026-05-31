@@ -357,20 +357,6 @@ func (r *Repository) ListTasksWithLastErrorSummary(ctx context.Context) ([]Task,
 }
 
 func (r *Repository) UpsertHost(ctx context.Context, params UpsertHostParams) (Host, error) {
-	// Apply defaults for zero-value resource limits
-	memoryLimitMB := params.MemoryLimitMB
-	if memoryLimitMB == 0 {
-		memoryLimitMB = 4096
-	}
-	cpuLimit := params.CPULimit
-	if cpuLimit == 0 {
-		cpuLimit = 2.0
-	}
-	diskLimitGB := params.DiskLimitGB
-	if diskLimitGB == 0 {
-		diskLimitGB = 20
-	}
-
 	mountsJSON, err := json.Marshal(params.HostMounts)
 	if err != nil {
 		return Host{}, fmt.Errorf("marshal host mounts: %w", err)
@@ -404,9 +390,9 @@ func (r *Repository) UpsertHost(ctx context.Context, params UpsertHostParams) (H
 		params.SlotKey,
 		params.Timezone,
 		params.Hostname,
-		memoryLimitMB,
-		cpuLimit,
-		diskLimitGB,
+		params.MemoryLimitMB,
+		params.CPULimit,
+		params.DiskLimitGB,
 		mountsJSON,
 	).Scan(
 		&item.ID,
@@ -1539,6 +1525,24 @@ func (r *Repository) UpdateHostMounts(ctx context.Context, hostID string, mounts
 	}
 	_, err = r.db.Exec(ctx, `UPDATE hosts SET host_mounts = $1, updated_at = NOW() WHERE id = $2`, data, hostID)
 	return err
+}
+
+// UpdateHostResources 更新主机的资源限制（内存/CPU/磁盘）。
+// 三个参数均为指针：nil 表示不更新该字段，非 nil 的 0 值表示无限制（写入 NULL）。
+// 仅在 host.Status == "stopped" 时由 PATCH API 调用；Repository 层不做状态校验。
+func (r *Repository) UpdateHostResources(ctx context.Context, hostID string, memoryLimitMB *int, cpuLimit *float64, diskLimitGB *int) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE hosts
+		SET memory_limit_mb = COALESCE($1, memory_limit_mb),
+		    cpu_limit = COALESCE($2, cpu_limit),
+		    disk_limit_gb = COALESCE($3, disk_limit_gb),
+		    updated_at = NOW()
+		WHERE id = $4
+	`, memoryLimitMB, cpuLimit, diskLimitGB, hostID)
+	if err != nil {
+		return fmt.Errorf("update host resources: %w", err)
+	}
+	return nil
 }
 
 
