@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
-	"sort"
 	"strings"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -140,11 +139,5 @@ func getContainerIP(ctx context.Context, containerName string) (string, error) {
 	if len(ips) == 0 {
 		return "", fmt.Errorf("no IP found for container %s", containerName)
 	}
-	sort.Strings(ips)
-	for _, ip := range ips {
-		if strings.HasPrefix(ip, "10.") {
-			return ip, nil
-		}
-	}
-	return ips[0], nil
+	return ips[len(ips)-1], nil
 }
