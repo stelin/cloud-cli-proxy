@@ -1,3 +1,10 @@
+FROM node:24-alpine AS frontend-builder
+WORKDIR /app
+COPY web/admin/package.json web/admin/pnpm-lock.yaml ./
+RUN npm install -g pnpm && pnpm install --frozen-lockfile
+COPY web/admin ./
+RUN pnpm build
+
 FROM golang:1.26.1 AS builder
 
 WORKDIR /app
@@ -7,6 +14,7 @@ RUN go mod download
 
 COPY cmd ./cmd
 COPY internal ./internal
+COPY --from=frontend-builder /app/dist ./cmd/control-plane/dist
 
 RUN CGO_ENABLED=0 go build -o /usr/local/bin/control-plane ./cmd/control-plane
 

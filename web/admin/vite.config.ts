@@ -22,7 +22,7 @@ export default defineConfig({
     port: 2568,
     proxy: {
       "/v1": {
-        target: process.env.API_URL || "http://127.0.0.1:8090",
+        target: process.env.API_URL || "http://127.0.0.1:8080",
         changeOrigin: true,
         ws: true,
       },

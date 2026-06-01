@@ -41,6 +41,7 @@ type Config struct {
 	SSHProxyContainerUser     string
 	SSHProxyContainerPassword string
 	SSHProxyHostKeyPath       string
+	AdminUIHandler            http.Handler
 }
 
 type App struct {
@@ -182,6 +183,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		UserHosts:      repo,
 		SSHKeys:        repo,
 		ImageCache:     imageCache,
+		AdminUIHandler: cfg.AdminUIHandler,
 	})
 
 	var sshProxySrv *sshproxy.Server

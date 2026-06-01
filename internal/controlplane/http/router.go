@@ -63,6 +63,7 @@ type Dependencies struct {
 	UserHosts       UserHostStore
 	SSHKeys         SSHKeyStore
 	ImageCache      ImageCacheManager
+	AdminUIHandler  nethttp.Handler
 }
 
 type HealthChecker interface {
@@ -382,6 +383,10 @@ func NewRouter(deps Dependencies) nethttp.Handler {
 			mux.Handle("POST /v1/user/ssh-keys", userGuard(userSSHKeyHandler.Create()))
 			mux.Handle("DELETE /v1/user/ssh-keys/{keyID}", userGuard(userSSHKeyHandler.Delete()))
 		}
+	}
+
+	if deps.AdminUIHandler != nil {
+		mux.Handle("/", deps.AdminUIHandler)
 	}
 
 	return mux

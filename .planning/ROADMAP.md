@@ -14,13 +14,13 @@
 
 **Requirements:** DB-01, DB-02, DB-03, DB-04, DB-05
 
-**Plans:** 3 plans
+**Plans:** 3/3 plans complete
 
 Plans:
 
-- [ ] 58-01-PLAN.md — 依赖切换 + migrator 重写（Wave 1）
-- [ ] 58-02-PLAN.md — 迁移文件改写 + queries.go 重写（Wave 2）
-- [ ] 58-03-PLAN.md — queries_bypass + App 初始化 + 全项目 pgx 清除（Wave 3）
+- [x] 58-01-PLAN.md — 依赖切换 + migrator 重写（Wave 1）
+- [x] 58-02-PLAN.md — 迁移文件改写 + queries.go 重写（Wave 2）
+- [x] 58-03-PLAN.md — queries_bypass + App 初始化 + 全项目 pgx 清除（Wave 3）
 
 **Success Criteria:**
 

@@ -9,11 +9,11 @@
 
 ### DB — 数据库层迁移（PostgreSQL → SQLite）
 
-- [ ] **DB-01**: 依赖切换 — 移除 pgx/v5，引入 modernc.org/sqlite，go mod tidy 后编译通过
-- [ ] **DB-02**: 迁移系统重写 — migrator 支持 SQLite 语法 + embed.FS 嵌入迁移文件
-- [ ] **DB-03**: 24 个迁移文件改写为 SQLite 语法（TEXT 替代 UUID/TIMESTAMPTZ/JSONB，Go 侧生成 UUID）
-- [ ] **DB-04**: Repository 层重写 — pgxpool.Pool → *sql.DB，140+ 处 Query/QueryRow 调用改为标准库
-- [ ] **DB-05**: App 初始化重写 — sql.Open("sqlite", ...) + PRAGMA WAL/foreign_keys/busy_timeout
+- [x] **DB-01**: 依赖切换 — 移除 pgx/v5，引入 modernc.org/sqlite，go mod tidy 后编译通过
+- [x] **DB-02**: 迁移系统重写 — migrator 支持 SQLite 语法 + embed.FS 嵌入迁移文件
+- [x] **DB-03**: 24 个迁移文件改写为 SQLite 语法（TEXT 替代 UUID/TIMESTAMPTZ/JSONB，Go 侧生成 UUID）
+- [x] **DB-04**: Repository 层重写 — pgxpool.Pool → *sql.DB，140+ 处 Query/QueryRow 调用改为标准库
+- [x] **DB-05**: App 初始化重写 — sql.Open("sqlite", ...) + PRAGMA WAL/foreign_keys/busy_timeout
 
 ### UI — Admin 前端嵌入
 
@@ -63,11 +63,11 @@ None for this milestone.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DB-01 | 58 | Pending |
-| DB-02 | 58 | Pending |
-| DB-03 | 58 | Pending |
-| DB-04 | 58 | Pending |
-| DB-05 | 58 | Pending |
+| DB-01 | 58 | Complete |
+| DB-02 | 58 | Complete |
+| DB-03 | 58 | Complete |
+| DB-04 | 58 | Complete |
+| DB-05 | 58 | Complete |
 | UI-01 | 59 | Pending |
 | UI-02 | 59 | Pending |
 | UI-03 | 59 | Pending |

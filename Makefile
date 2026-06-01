@@ -85,18 +85,19 @@ user-image: ## Build managed-user image (cloud desktop)
 # ── Build ────────────────────────────────────────────────────
 
 build: ## Build all artifacts for target platform
+	cd web/admin && pnpm build && cp -r dist ../../cmd/control-plane/dist
 	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o bin/control-plane-$(GOOS)-$(GOARCH) ./cmd/control-plane
 	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o bin/host-agent-$(GOOS)-$(GOARCH) ./cmd/host-agent
 	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "-s -w" -trimpath -o bin/cloud-claude-$(GOOS)-$(GOARCH) ./cmd/cloud-claude
-	cd web/admin && pnpm build
 
 build-local: ## Build for current platform
+	cd web/admin && pnpm build && cp -r dist ../../cmd/control-plane/dist
 	go build -o bin/control-plane ./cmd/control-plane
 	go build -o bin/host-agent ./cmd/host-agent
 	go build -ldflags "-s -w" -trimpath -o bin/cloud-claude ./cmd/cloud-claude
-	cd web/admin && pnpm build
 
 build-api: ## Build Go backend only
+	@test -d cmd/control-plane/dist || (echo "dist not found, run 'cd web/admin && pnpm build && cp -r dist ../../cmd/control-plane/dist'" && exit 1)
 	go build -o bin/control-plane ./cmd/control-plane
 
 build-cli: ## Build cloud-claude CLI

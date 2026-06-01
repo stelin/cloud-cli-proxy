@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zanel1u/cloud-cli-proxy/internal/controlplane/app"
+	cphttp "github.com/zanel1u/cloud-cli-proxy/internal/controlplane/http"
 )
 
 func main() {
@@ -27,6 +28,7 @@ func main() {
 		SSHProxyContainerUser:     envOrDefault("SSH_PROXY_CONTAINER_USER", "workspace"),
 		SSHProxyContainerPassword: envOrDefault("SSH_PROXY_CONTAINER_PASSWORD", "workspace"),
 		SSHProxyHostKeyPath:       envOrDefault("SSH_PROXY_HOST_KEY_PATH", "/var/lib/cloud-cli-proxy/ssh_host_ed25519_key"),
+		AdminUIHandler:            cphttp.NewSPAHandler(adminDist, "dist"),
 	}
 
 	// Phase 47 Plan 01：允许通过 EXPIRY_SCAN_INTERVAL 环境变量缩短到期扫描周期，
