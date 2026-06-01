@@ -14,6 +14,14 @@
 
 **Requirements:** DB-01, DB-02, DB-03, DB-04, DB-05
 
+**Plans:** 3 plans
+
+Plans:
+
+- [ ] 58-01-PLAN.md — 依赖切换 + migrator 重写（Wave 1）
+- [ ] 58-02-PLAN.md — 迁移文件改写 + queries.go 重写（Wave 2）
+- [ ] 58-03-PLAN.md — queries_bypass + App 初始化 + 全项目 pgx 清除（Wave 3）
+
 **Success Criteria:**
 
 1. `go build ./cmd/control-plane` 编译通过，无 pgx 引用
@@ -129,4 +137,5 @@ Phase 09-17
 Phase 01-08
 
 ---
-Last updated: 2026-06-01 after v4.2.0 milestone setup
+
+Last updated: 2026-06-01 after Phase 58 planning
