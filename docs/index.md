@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: Cloud CLI Proxy
-  text: 为团队提供隔离的云端开发环境
-  tagline: 每个用户一个独立容器，预装 Claude Code，所有出网流量走指定出口 IP
+  text: 一个更聪明的 Claude Code Wrapper
+  tagline: 把 Claude Code 装进容器，从 IP 到系统指纹全层伪装，像地道的美国开发者在本地写代码
   image:
     src: /logo.svg
     alt: Cloud CLI Proxy Logo
@@ -17,27 +17,21 @@ hero:
       link: https://github.com/ZaneL1u/cloud-cli-proxy
 
 features:
-  - icon: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-    title: 每用户独立容器
-    details: 每个用户一个 Ubuntu 24.04 容器，通过 sshfs 将本地目录映射到容器内同名路径。CPU、内存、磁盘均可限制。
-  - icon: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-    title: 全流量隧道出口
-    details: sing-box tun + Linux netns 接管容器所有出网流量，nftables 默认拒绝直连。支持 6 种代理协议，出口 IP 可绑定、可测试、可自动修正。
   - icon: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-    title: 环境伪装
-    details: 替换 CPU 型号、MAC 地址、machine-id 等硬件指纹，拦截系统探测命令。自动生成 Windows 风格主机名，uTLS Chrome 指纹，屏蔽遥测上报。
+    title: 全层身份伪装
+    details: CPU 型号伪装成 AMD EPYC，MAC 地址和 machine-id 重写，系统探测命令输出拦截篡改。Windows 风格主机名，uTLS Chrome 指纹，遥测 DNS 级别屏蔽。Claude Code 从里到外看到的都是一个普通美国用户。
+  - icon: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    title: IP 严格隔离
+    details: 每个容器绑定独立出口 IP，全流量 sing-box tun 隧道强制出网，nftables 默认拒绝直连。DNS、WebRTC 不会漏。支持 6 种代理协议。推荐 AT&T 家宽 IP，干净，风控通过率高。
   - icon: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-    title: cloud-claude CLI
-    details: 本地终端透明运行远端 Claude Code，支持 Auto / Full / SSHFS-Only 三层映射、tmux 多端会话、断线自动重连、五维度自检和错误码解释。
-  - icon: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-    title: 远程桌面
-    details: 容器内置 KasmVNC + Chromium，管理后台一键打开，直接在浏览器里操作桌面环境。
+    title: 代码映射——跟本地一样
+    details: 本地项目目录通过 sshfs 挂载到容器内同名路径。你在 ~/my-project 里干活，容器里也是 ~/my-project。Claude Code 看到的路径跟你本地完全一致。Auto/Full/SSHFS-Only 三种模式，断线 30s 内自动重连。
+  - icon: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+    title: 一条命令就开写
+    details: 管理员后台建好容器，发你一条 curl 命令。终端里跑一下，输密码，等容器启动，自动 SSH 进去。Claude Code 已预装，直接敲 claude 就能用。
   - icon: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
     title: 管理后台
-    details: 用户与主机的全生命周期管理、出口 IP 增删改查与连通性测试、bypass 防火墙配置、事件审计、SSE 实时推送、用户自助门户。
-  - icon: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-    title: 一条命令接入
-    details: 管理员在后台创建用户和容器后，把 curl 命令发给用户。用户在终端输入密码，等容器启动后自动 SSH 进入。
+    details: 用户和容器全生命周期管理，出口 IP 增删改查与连通性测试，bypass 防火墙，事件审计，SSE 实时推送。容器内置 KasmVNC 远程桌面。
   - icon: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
     title: 到期自动回收
     details: 后台定时扫描用户到期状态，过期自动停机并禁止登录。所有操作写入审计事件，完整可追溯。

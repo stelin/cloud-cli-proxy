@@ -4,7 +4,7 @@
 
 # Cloud CLI Proxy
 
-在单台宿主机上，为每个用户提供一个独立的 Docker 容器作为云开发环境。容器预装 Claude Code 和常用工具，所有出网流量通过 sing-box 全隧道强制走你指定的出口 IP。
+**一个更聪明的 Claude Code Wrapper。把 Claude Code 装进容器，让你看起来像个地地道道的美国开发者。**
 
 [![CI](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/ci.yml)
 [![Images](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/build-images.yml/badge.svg)](https://github.com/ZaneL1u/cloud-cli-proxy/actions/workflows/build-images.yml)
@@ -17,66 +17,48 @@
 
 ---
 
-## 这是什么？
+## 解决什么问题？
 
-管理员在后台创建用户、分配容器、绑定出口 IP。用户拿到 `curl` 命令，在终端里跑一下，输入密码，等容器启动后直接 SSH 进去。每个容器是独立的 Ubuntu 24.04 环境，里面已经装好 Claude Code、OpenSSH、KasmVNC 远程桌面。容器的所有出网流量走 sing-box tun 隧道，从指定的出口 IP 出去，DNS 和 WebRTC 也不会漏。
+Claude Code 好用，但风控越来越严。IP 不对、环境特征像 VPS、遥测数据出卖你——封号只是时间问题。
 
-做这个项目主要解决几个实际问题：
+Cloud CLI Proxy 做的事情很简单：**把你的 Claude Code 包装成一个坐在洛杉矶家里用 Windows 电脑的普通美国人。** 从 IP 到系统指纹到 TLS 握手，每一层都做了伪装。Anthropic 看到的就是一个正常的美国住宅用户，不是什么奇奇怪怪的云服务。
 
-- 团队共用 Claude Code，API 请求统一走公司出口 IP，不需要每人自己配代理
-- 出海场景需要特定地区的出口 IP，容器绑上去就行
-- 外包或临时人员需要隔离的开发机，用完可以回收，操作有审计记录
-- 合规要求所有研发流量必须从指定 IP 出去，不能有旁路
+部署在你自己的机器上，SSH 进去就直接写代码。本地的项目目录会自动挂载到容器里，路径一模一样——你用 Claude Code 的感觉跟本地跑没有任何区别。
 
 ---
 
-## 核心能力
+## 它怎么做到的？
 
-### 网络与安全
+### 身份伪装
 
-- **全流量强制隧道** — sing-box tun + Linux netns 接管容器所有出网流量，nftables 默认拒绝直连，不允许 DNS / WebRTC 泄漏
-- **6 种代理协议** — 出口 IP 支持 SOCKS5、VMess、VLESS、Shadowsocks、Trojan、HTTP
-- **bypass 防火墙** — 按域名、CIDR、端口配置白名单直连，预设规则集（loopback 强制启用、LAN 可选），快照版本化管理，预览→应用→回滚，完整审计日志
-- **出口 IP 自动修正** — 定时探测容器实际出口 IP，与配置不一致时自动更新数据库记录
-- **容器安全加固** — 仅授予 NET_ADMIN，移除 NET_RAW，IPv6 内核级禁用，PID 限制，日志轮转
+这套伪装不是装个代理就完事的。Claude Code 会从多个维度判断你在哪、用什么机器：
 
-### 环境伪装
+- **系统指纹替换** — CPU 型号伪装成 AMD EPYC，MAC 地址、machine-id 全部重写。`ioreg`、`system_profiler`、`sysctl` 这些命令的输出也被拦截篡改过，Claude Code 读到的是我们想让它看到的
+- **Windows 主机名** — 自动生成 `DESKTOP-XXXXXXX` 或 `LAPTOP-XXXXXXX`，就是普通人家里的电脑命名
+- **容器痕迹擦除** — `/.dockerenv` 删了，cgroup 里的 docker/containerd 字符串过滤掉，常规的容器检测手段扫不出来
+- **时区与语言** — 默认太平洋时区 + `en_US.UTF-8`，创建容器时可以改成别的
+- **TLS 指纹** — 出口流量走 uTLS，指纹设成 Chrome 浏览器，跟普通人上网的 TLS 握手特征没区别
+- **遥测拦截** — DNS 级别屏蔽 `statsig.anthropic.com`、`sentry.io`、`cdn.growthbook.io`，Claude Code 没法偷偷上报
 
-让容器内的 Claude Code 看起来像在真实物理机上运行，而非云环境。默认伪装成 macOS 或 Windows 桌面环境：
+### IP 严格隔离
 
-- **系统指纹** — 替换 Node.js 读取到的 CPU 型号（伪装为 AMD EPYC）、MAC 地址、`/etc/machine-id` 等硬件标识；拦截 `ioreg`、`system_profiler`、`sysctl` 等探测命令的输出
-- **主机名伪装** — 自动生成 `DESKTOP-XXXXXXX` 或 `LAPTOP-XXXXXXX` 风格的主机名
-- **容器检测绕过** — 隐藏 `/.dockerenv`、过滤 cgroup 中的 docker/containerd 字符串，避免被识别为容器环境
-- **时区与语言环境** — 创建容器时可指定时区和 locale，默认 `America/Los_Angeles` / `en_US.UTF-8`
-- **TLS 指纹** — sing-box 出口连接自动启用 uTLS，指纹设为 Chrome，握手特征与普通浏览器一致
-- **遥测屏蔽** — 容器内预置 DNS 级别拦截，阻止 Claude Code 向 `statsig.anthropic.com`、`sentry.io`、`cdn.growthbook.io` 等遥测端点上报数据
+每个容器绑定独立的出口 IP，所有流量——HTTP、DNS、WebRTC，全部走 sing-box tun 隧道从指定 IP 出去。nftables 默认拒绝直连，不存在漏网之鱼。
 
-### 容器与运行环境
+支持 SOCKS5、VMess、VLESS、Shadowsocks、Trojan、HTTP 六种协议。
 
-- **独立 Docker 容器** — 每用户独立 Ubuntu 24.04 容器，CPU / 内存 / 磁盘均可限制
-- **Claude Code 预装** — 进入即用，API 请求自动走出口 IP，无需额外配置
-- **KasmVNC 远程桌面** — 内置 Chromium 浏览器，管理后台一键打开容器桌面；支持通过 VNC 代理在浏览器中直接操作
-- **持久化存储** — Claude 状态经命名卷持久化，容器重建不丢失工作数据
-- **宿主机目录挂载** — 支持将宿主机路径绑定挂载到容器内
+**关键是你得有自己的家宽 IP。** 机房的 IP 段早就被标记烂了。推荐 AT&T 家宽，干净，风控通过率高。我一直在用这家：
 
-### 接入体验
+👉 [VIRCS 房产公司自有公寓 提供真实住宅宽带 - 加州合法注册的房产公司 **所有 IP 均为真实住宅宽带**。](https://www.vircs.com/welcome?vcd=70685425)
 
-- **一条命令接入** — 用户只需 `curl | bash`，自动完成认证、容器创建和 SSH 接入
-- **cloud-claude 本地 CLI** — 在本地终端透明运行远端 Claude Code，当前目录经 sshfs 挂载到容器内同名路径；支持 Auto / Full / SSHFS-Only 三层映射模式，单文件超过阈值自动走冷路径
-- **tmux 多端会话** — 多客户端 attach 同一 tmux 会话，断线工作区不丢失；支持 `--new-session` 独占、`--take-over` 接管
-- **断线自动恢复** — 内置 Reconnector，30s 内自动重连，输入缓冲不丢
-- **doctor 五维度自检** — `cloud-claude doctor [network|auth|ssh|mount|disk]`，带 `--fix` 自动修复
-- **错误码自解释** — `cloud-claude explain <CODE>` 查看详细说明和修复建议
+### 代码映射——跟本地一模一样
 
-### 管理后台与治理
+这是跟普通 VPS 最大的区别。容器通过 sshfs 把你本地的项目目录挂载进去，**路径完全一致**。
 
-- **仪表盘** — 活跃用户、运行主机、可用出口 IP、最近事件总览
-- **用户生命周期** — 创建、暂停、过期自动停机、禁止登录、密码轮换
-- **主机生命周期** — 创建、启动、停止、重建（保留或清空 /workspace）、删除
-- **出口 IP 管理** — 增删改查、连通性测试（流式输出）、绑定到主机
-- **事件审计** — 所有操作写入 events 表，可追溯
-- **SSE 实时推送** — 任务进度、主机状态、事件通过 Server-Sent Events 实时更新
-- **用户自助门户** — 用户可查看自己的主机、重建、重启 VNC、管理 SSH 密钥
+什么意思？你在本地 `~/my-project` 里写代码，容器里也是 `~/my-project`。Claude Code 读到的路径跟你本地没有丝毫差别，就像在本机跑一样。挂载支持三种模式：全量同步、智能热同步、纯挂载。断线了自动重连，30 秒内恢复，输入不丢。tmux 多端会话，断开也不丢工作区。
+
+### 开箱即用
+
+管理员在后台把容器建好，用户拿到 `curl` 命令，终端里跑一下，输密码，等容器启动，自动 SSH 进去。里面 Claude Code 已经装好，直接 `claude` 就能用。
 
 ---
 
@@ -101,11 +83,11 @@ curl http://127.0.0.1:8080/healthz
 - API：`http://YOUR_HOST:8080`
 - SSH 代理：`YOUR_HOST:2222`
 
-首次使用：登录管理后台 → 添加出口 IP → 创建用户 → 创建主机 → 将接入命令分发给用户。
+首次使用：登录管理后台 → 添加出口 IP → 创建用户 → 创建主机 → 把接入命令发给用户。
 
 ---
 
-## 安装与部署
+## 安装
 
 ### 环境要求
 
@@ -119,15 +101,6 @@ curl http://127.0.0.1:8080/healthz
 bash deploy/scripts/setup-env.sh  # 交互式生成密码和密钥
 docker compose pull               # 拉取预构建镜像
 docker compose up -d              # 启动
-```
-
-`setup-env.sh` 自动生成 JWT 密钥、管理员密码，支持内置 Docker PostgreSQL 或外部数据库。
-
-本地源码构建（预构建镜像不可用时的兜底）：
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.build.yaml --profile build-only build --no-cache
-docker compose -f docker-compose.yml -f docker-compose.build.yaml up -d --force-recreate
 ```
 
 ### 宿主机直接部署
@@ -153,98 +126,19 @@ sudo bash deploy/scripts/deploy.sh
 
 ---
 
-## 使用指南
+---
 
-### 管理员操作
+## 管理后台
 
-1. **添加出口 IP** — 支持 6 种代理协议，可一键测试连通性
-2. **创建用户** — 设置用户名、密码、到期时间
-3. **创建主机** — 为用户创建容器，绑定出口 IP
-4. **分发接入信息** — 复制主机详情页的 `curl` 命令给用户
+除了伪装和 IP 隔离，平台还提供完整的管理能力：
 
-### 用户接入（curl 方式）
-
-```bash
-curl -sSf http://YOUR_HOST/entry/abc123 | bash
-# 输入密码 → 等待容器就绪 → 自动 SSH 进入云主机
-```
-
-进入后直接使用 Claude Code：
-
-```bash
-claude
-```
-
-### cloud-claude CLI（推荐）
-
-安装 CLI 后在本地终端透明使用远端 Claude Code，当前目录自动挂载到容器内同名路径。
-
-#### 安装
-
-**Homebrew（macOS / Linux）：**
-
-```bash
-brew tap ZaneL1u/tap
-brew install cloud-claude
-```
-
-**一行脚本：**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ZaneL1u/cloud-cli-proxy/main/scripts/install.sh | bash
-```
-
-也可从 [Releases](https://github.com/ZaneL1u/cloud-cli-proxy/releases) 下载或源码构建：
-
-```bash
-go build -ldflags "-s -w" -trimpath -o cloud-claude ./cmd/cloud-claude
-```
-
-#### 初始化
-
-管理员提供三样信息：**网关地址**、**主机 Short ID**、**密码**。
-
-```bash
-cloud-claude init
-# 交互式输入 → 写入 ~/.cloud-claude/config.yaml
-```
-
-或使用 flag / 环境变量：
-
-```bash
-cloud-claude init --gateway https://gw.example.com --short-id abc123 --password your-password
-```
-
-#### 日常使用
-
-```bash
-cd ~/your-project
-alias claude=cloud-claude
-
-cloud-claude            # 默认 attach 已有 tmux 会话
-cloud-claude --new-session    # 新建独立会话
-cloud-claude --take-over      # 接管主会话，踢掉其他客户端
-cloud-claude sessions         # 列出当前会话
-```
-
-**自检与排障：**
-
-```bash
-cloud-claude doctor                     # 五维度全面自检
-cloud-claude doctor mount --fix         # 检查挂载并自动修复
-cloud-claude explain MOUNT_SSHFS_DISCONNECTED  # 错误码解释
-cloud-claude env check                  # 检查远端时区、出口 IP、FUSE 等
-```
-
-**配置参考：**
-
-- `proxy_commands` — 在本机执行的命令列表（默认仅 `git`），设空数组关闭代理
-- `hot_sync_max_file_mb` — 单文件熔断阈值（默认 50MB）
-- `CLOUD_CLAUDE_NO_PROMOTION=1` — 禁用冷文件读触发晋升
-
-### KasmVNC 远程桌面
-
-管理后台可直接打开容器的浏览器桌面环境，无需本地安装 GUI。
+- 用户创建、暂停、过期自动停机、密码轮换
+- 主机创建、启动、停止、重建（保留或清空 /workspace）、删除
+- 出口 IP 增删改查、连通性测试
+- Bypass 防火墙——按域名、CIDR、端口白名单直连，快照版本管理，预览→应用→回滚
+- 所有操作写入审计事件，可追溯
+- SSE 实时推送任务进度和主机状态
+- 容器内置 KasmVNC + Chromium，管理后台一键打开远程桌面
 
 ---
 
@@ -259,9 +153,6 @@ cloud-claude env check                  # 检查远端时区、出口 IP、FUSE 
               Admin SPA (:3000)                      │       ↓                           │
                     │                                │  指定出口 IP                      │
               SSH Proxy (:2222)                      └───────────────────────────────────┘
-                    ↑                                           ↑
-                    │                                           │
-用户 ──cloud-claude──> 认证 + SSH + sshfs ──────────────────────┘
 ```
 
 | 组件 | 说明 |
@@ -269,7 +160,6 @@ cloud-claude env check                  # 检查远端时区、出口 IP、FUSE 
 | **Control Plane** | Go API，认证、用户管理、任务编排、SSH 代理 |
 | **Host Agent** | 特权代理，管理 Docker 容器、网络命名空间和隧道 |
 | **用户容器** | Ubuntu 24.04，预装 OpenSSH + Claude Code + sshfs + KasmVNC + Chromium |
-| **cloud-claude** | Go CLI，透明替代本地 claude；sshfs 同名路径映射；Auto/Full/SSHFS-Only 三层映射、tmux 多端会话、断线自动重连、doctor 五维度自检与错误码解释 |
 | **PostgreSQL** | 持久化用户、主机、出口 IP、任务、事件、审计日志 |
 | **Admin SPA** | React 19 + TypeScript + Vite + Tailwind CSS |
 
