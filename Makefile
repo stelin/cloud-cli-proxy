@@ -6,53 +6,33 @@ GOARCH ?= amd64
 
 DEV_COMPOSE := docker compose -f deploy/compose/control-plane.dev.yml
 
-.PHONY: dev dev-api dev-web db test test-go test-smoke build build-local build-cli install-cli clean up up-build up-rebuild up-api down logs release
+.PHONY: dev dev-api dev-web test test-go test-smoke build build-local build-cli install-cli clean up up-build up-rebuild up-api down logs release
 
 # ── Development ──────────────────────────────────────────────
 
-dev: ## Start backend + frontend (auto-starts PostgreSQL if needed)
+dev: ## Start backend + frontend
 	@echo "Starting control-plane + admin frontend..."
 	@echo "  API  → http://$(CONTROL_PLANE_ADDR)"
 	@echo "  Web  → http://localhost:5173"
 	@echo "  Agent → embedded (in-process)"
 	@echo ""
 	@mkdir -p .data
-	@# Auto-start PostgreSQL if not running
-	@nc -z 127.0.0.1 $(POSTGRES_PORT) > /dev/null 2>&1 || \
-		{ echo "PostgreSQL not running, starting it now..."; $(MAKE) db; }
 	@# managed-user 镜像内置 sing-box，非 Linux host 直接跑无需 build。
 	@trap 'kill $$CP_PID $$VITE_PID 2>/dev/null; wait' INT EXIT; \
 		bash scripts/dev-backend.sh & CP_PID=$$!; \
 		cd web/admin && pnpm dev & VITE_PID=$$!; \
 		wait
 
-dev-api: ## Start backend only with hot reload (auto-starts PostgreSQL)
+dev-api: ## Start backend only with hot reload
 	@mkdir -p .data
-	@nc -z 127.0.0.1 $(POSTGRES_PORT) > /dev/null 2>&1 || \
-		{ echo "PostgreSQL not running, starting it now..."; $(MAKE) db; }
 	@bash scripts/dev-backend.sh
 
 dev-web: ## Start frontend only
 	cd web/admin && pnpm dev
 
-dev-all: dev ## Alias for 'make dev' (PostgreSQL is auto-started)
+dev-all: dev ## Alias for 'make dev'
 
-# ── Database ─────────────────────────────────────────────────
-
-db: ## Start PostgreSQL via Docker Compose
-	$(DEV_COMPOSE) up -d postgres
-	@echo "Waiting for PostgreSQL on port $(POSTGRES_PORT)..."
-	@until pg_isready -h 127.0.0.1 -p $(POSTGRES_PORT) -U $(POSTGRES_USER) -d $(POSTGRES_DB) > /dev/null 2>&1 || $(DEV_COMPOSE) exec -T postgres pg_isready -U $(POSTGRES_USER) -d $(POSTGRES_DB) > /dev/null 2>&1; do sleep 1; done
-	@echo "PostgreSQL ready."
-
-db-stop: ## Stop PostgreSQL
-	$(DEV_COMPOSE) down
-
-db-reset: ## Reset database (destroy volume and restart)
-	$(DEV_COMPOSE) down -v
-	$(MAKE) db
-
-# ── Testing ──────────────────────────────────────────────────
+# ── Testing ──────────────────────────────────────────────────# ── Testing ──────────────────────────────────────────────────
 
 test: test-go test-smoke ## Run all tests
 
@@ -147,10 +127,9 @@ setup: ## First-time setup: install deps, copy .env
 	@echo "Done. Edit .env if needed, then run: make dev"
 	@echo ""
 	@echo "常用命令:"
-	@echo "  make dev         一键启动 PostgreSQL + 后端 + 前端（推荐）"
-	@echo "  make dev-api     只启动后端（自动启动 PostgreSQL）"
+	@echo "  make dev         一键启动后端 + 前端（推荐）"
+	@echo "  make dev-api     只启动后端"
 	@echo "  make dev-web     只启动前端"
-	@echo "  make db          只启动 PostgreSQL"
 # ── Utilities ────────────────────────────────────────────────
 
 clean: ## Remove build artifacts

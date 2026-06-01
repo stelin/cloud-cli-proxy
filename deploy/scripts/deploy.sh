@@ -22,7 +22,7 @@ log "检查宿主机依赖..."
 bash deploy/scripts/host-preflight.sh
 log "依赖检查通过"
 
-for cmd in go psql; do
+for cmd in go; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     die "缺少必需命令: $cmd — 请参考 docs/deployment-guide.md 安装"
   fi
@@ -47,7 +47,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
   log "生成环境变量配置文件..."
 
   if [[ -z "${DATABASE_URL:-}" ]]; then
-    read -rp "PostgreSQL 连接字符串 (DATABASE_URL): " DATABASE_URL
+    read -rp "数据库路径 (DATABASE_URL, 默认 file:/data/cloud-cli-proxy.db): " DATABASE_URL
   fi
 
   if [[ -z "${ADMIN_PASSWORD:-}" ]]; then
@@ -77,8 +77,6 @@ source "$ENV_FILE"
 
 # ── 4. 数据库初始化 ──────────────────────────────────────────
 log "检查数据库连接..."
-if ! psql "$DATABASE_URL" -c "SELECT 1" >/dev/null 2>&1; then
-  die "无法连接数据库，请检查 DATABASE_URL 配置"
 fi
 log "数据库连接正常"
 
