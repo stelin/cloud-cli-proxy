@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v4.0
-milestone_name: sing-box 同容器化
-status: milestone_complete
-stopped_at: Phase 57 context gathered
-last_updated: "2026-05-31T05:02:07.687Z"
-last_activity: 2026-05-31
+milestone: v4.2.0
+milestone_name: 容器合并 · SQLite 迁移 · 配置统一
+status: planning
+last_updated: "2026-06-01T06:06:01.279Z"
+last_activity: 2026-06-01
 progress:
-  total_phases: 13
-  completed_phases: 6
-  total_plans: 16
-  completed_plans: 16
-  percent: 46
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-05-14)
 
 ## Current Position
 
-Phase: 57
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-05-31
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-06-01 — Milestone v4.2.0 started
 
 ## Accumulated Context
 
