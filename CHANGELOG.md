@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v4.2.3 - 2026-06-01
+## What's Changed
+
+### Backend (Go / API)
+- fix: strip leading slash in SPA handler and remove standalone managed-user service (e21a6ea)
+
+### Runtime & Deployment
+- fix: strip leading slash in SPA handler and remove standalone managed-user service (e21a6ea)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v4.2.2...v4.2.3
+
+
 ## v4.2.2 - 2026-06-01
 ## What's Changed
 
