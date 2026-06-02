@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 <!-- release-entries -->
 
+## v4.2.5 - 2026-06-02
+## What's Changed
+
+### Runtime & Deployment
+- fix: update chown command to prevent recursion into bind mount points (1d8a4ff)
+
+**Full Changelog:** https://github.com/ZaneL1u/cloud-cli-proxy/compare/v4.2.4...v4.2.5
+
+
 ## v4.2.4 - 2026-06-02
 ## What's Changed
 
