@@ -391,7 +391,9 @@ if [ "${RUN_USER}" != "workspace" ]; then
 fi
 
 mkdir -p /workspace/.ssh
-chown -R "${RUN_USER}:${RUN_USER}" /workspace 2>/dev/null || true
+# -xdev 防止 chown 递归进入 bind mount 点（如 macOS 挂载目录），
+# 避免在 virtiofs/FUSE 文件系统上遍历海量文件导致卡死。
+find /workspace -xdev -exec chown "${RUN_USER}:${RUN_USER}" {} + 2>/dev/null || true
 chmod 0700 /workspace/.ssh
 
 # 注入 SSH 公钥（local 模式或显式传入时）

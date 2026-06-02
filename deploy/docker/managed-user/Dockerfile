@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 FROM ubuntu:24.04
 
 # v4.0 (Phase 53): managed-user 镜像内置 sing-box，作单容器同容器架构基线。
