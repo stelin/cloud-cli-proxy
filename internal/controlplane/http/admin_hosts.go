@@ -1132,7 +1132,7 @@ func (h *AdminHostsHandler) PatchResources() nethttp.Handler {
 			return
 		}
 
-		if host.Status == "running" {
+		if host.Status == "running" || host.Status == "stopped" {
 			if err := dockerUpdateHostResources(r.Context(), "cloudproxy-"+hostID, body.MemoryLimitMB, body.CPULimit, body.PidsLimit); err != nil {
 				h.logger.Error("docker update resources failed", "host_id", hostID, "error", err)
 				writeJSON(w, nethttp.StatusBadGateway, map[string]string{"error": "docker update resources failed"})
